@@ -1,0 +1,271 @@
+// file_manager.* RPCs — implement directly on the local filesystem.
+// Scoped to the workspace root so a misbehaving frontend can't escape.
+
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+
+// Extensions that are always binary. Everything else is read as UTF-8 text;
+// if that decode produces replacement chars, we fall back to base64.
+const BINARY_EXTS = new Set([
+  // images
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "heic", "avif",
+  // documents
+  "pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp",
+  // archives
+  "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
+  // media
+  "mp4", "mov", "webm", "mkv", "avi", "mp3", "wav", "ogg", "flac", "m4a",
+  // sci-data
+  "h5", "hdf5", "h5ad", "rds", "feather", "arrow", "parquet", "npy", "npz", "pkl", "pickle", "mtx", "10x", "loom",
+  // compiled
+  "so", "dylib", "dll", "exe", "class", "jar",
+  // fonts
+  "ttf", "otf", "woff", "woff2", "eot",
+]);
+
+/** Names that must never appear in list_files or be readable via the API.
+ * Covers secrets and host-leakage surfaces. Matched by full basename only;
+ * .env-prefixed variants are handled with a prefix check. */
+const HIDDEN_NAMES = new Set([
+  ".env",
+  ".ssh",
+  ".aws",
+  ".netrc",
+  ".credentials",
+  ".npmrc",
+  ".pypirc",
+  ".docker",
+  ".executor",
+  ".git",
+]);
+
+function isHidden(name: string): boolean {
+  if (HIDDEN_NAMES.has(name)) return true;
+  // Any .env.* (e.g. .env.local, .env.production)
+  if (name.startsWith(".env.")) return true;
+  return false;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
+  ico: "image/x-icon", tif: "image/tiff", tiff: "image/tiff",
+  heic: "image/heic", avif: "image/avif",
+  pdf: "application/pdf",
+  json: "application/json", xml: "application/xml",
+  csv: "text/csv", tsv: "text/tab-separated-values",
+  html: "text/html", css: "text/css", txt: "text/plain",
+  md: "text/markdown", log: "text/plain",
+  py: "text/x-python", js: "application/javascript", ts: "application/typescript",
+  sh: "application/x-sh", yaml: "application/yaml", yml: "application/yaml",
+  r: "text/x-r", ipynb: "application/x-ipynb+json",
+  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime",
+  mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
+  zip: "application/zip", gz: "application/gzip",
+};
+
+function mimeForExt(ext: string): string {
+  return MIME_BY_EXT[ext.toLowerCase()] || "application/octet-stream";
+}
+
+export class FileManager {
+  constructor(private root: string) {}
+
+  private resolve(relPath: string): string {
+    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
+    const abs = path.resolve(this.root, normalized);
+    if (!abs.startsWith(this.root)) throw new Error("path escapes workspace");
+    return abs;
+  }
+
+  async listFiles(relPath = ""): Promise<unknown> {
+    const abs = this.resolve(relPath);
+    const entries = await fs.readdir(abs, { withFileTypes: true });
+    const out = [];
+    for (const e of entries) {
+      if (isHidden(e.name)) continue;
+      const entryPath = path.join(relPath, e.name);
+      const full = path.join(abs, e.name);
+      try {
+        const st = await fs.stat(full);
+        out.push({
+          name: e.name,
+          path: entryPath,
+          type: e.isDirectory() ? "directory" : "file",
+          size: e.isDirectory() ? undefined : st.size,
+          modified: Math.floor(st.mtimeMs / 1000),
+        });
+      } catch {
+        // skip unreadable
+      }
+    }
+    return { success: true, files: out };
+  }
+
+  async readFile(relPath: string, opts: { encoding?: "utf8" | "base64" } = {}): Promise<unknown> {
+    // Refuse to read secrets even if the path is known.
+    const segs = relPath.split("/").filter(Boolean);
+    if (segs.some((s) => isHidden(s))) {
+      throw new Error(`read_file: access denied for hidden/secret path: ${relPath}`);
+    }
+    const abs = this.resolve(relPath);
+    const ext = (relPath.split(".").pop() ?? "").toLowerCase();
+    const mime = mimeForExt(ext);
+    const wantBase64 = opts.encoding === "base64" || BINARY_EXTS.has(ext);
+
+    // Guard against oversized reads: NATS caps payload at ~128 MB, and base64
+    // adds 33%. Refuse early with a clear message instead of a cryptic NATS error.
+    const st = await fs.stat(abs);
+    const wireSize = wantBase64 ? st.size * 1.34 : st.size;
+    const WIRE_LIMIT = 100 * 1024 * 1024; // leaves headroom under 128 MB
+    if (wireSize > WIRE_LIMIT) {
+      throw new Error(
+        `file too large for in-browser transport: ${(st.size / 1024 / 1024).toFixed(1)} MB. ` +
+          `Files above ~90 MB need 'docker cp' from the host to download.`,
+      );
+    }
+
+    if (wantBase64) {
+      const buf = await fs.readFile(abs);
+      return {
+        success: true,
+        content: buf.toString("base64"),
+        encoding: "base64",
+        mime_type: mime,
+        size: buf.length,
+      };
+    }
+
+    // Try UTF-8; fall back to base64 if the decode produces replacement chars
+    // (i.e. the file is actually binary with an unknown extension).
+    const buf = await fs.readFile(abs);
+    const text = buf.toString("utf8");
+    if (text.includes("\uFFFD")) {
+      return {
+        success: true,
+        content: buf.toString("base64"),
+        encoding: "base64",
+        mime_type: "application/octet-stream",
+        size: buf.length,
+      };
+    }
+    return { success: true, content: text, encoding: "utf8", mime_type: mime, size: buf.length };
+  }
+
+  async writeFile(
+    relPath: string,
+    content: string,
+    opts: { encoding?: "utf8" | "base64" } = {},
+  ): Promise<unknown> {
+    const abs = this.resolve(relPath);
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    if (opts.encoding === "base64") {
+      await fs.writeFile(abs, Buffer.from(content, "base64"));
+    } else {
+      await fs.writeFile(abs, content, "utf8");
+    }
+    return { success: true };
+  }
+
+  async deleteFile(relPath: string): Promise<unknown> {
+    const abs = this.resolve(relPath);
+    const st = await fs.stat(abs);
+    if (st.isDirectory()) await fs.rm(abs, { recursive: true, force: true });
+    else await fs.unlink(abs);
+    return { success: true };
+  }
+
+  /** manage_path: create_dir | delete | move — used by the frontend's file CRUD. */
+  async managePath(
+    op: string,
+    relPath: string,
+    recursive = true,
+    extra: { from?: string; to?: string } = {},
+  ): Promise<unknown> {
+    if (op === "create_dir") {
+      const abs = this.resolve(relPath);
+      await fs.mkdir(abs, { recursive: true });
+      return { success: true };
+    }
+    if (op === "delete") {
+      const abs = this.resolve(relPath);
+      try {
+        const st = await fs.stat(abs);
+        if (st.isDirectory()) await fs.rm(abs, { recursive, force: true });
+        else await fs.unlink(abs);
+      } catch (e: unknown) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+      return { success: true };
+    }
+    if (op === "move") {
+      const from = extra.from ?? "";
+      const to = extra.to ?? "";
+      if (!from || !to) throw new Error("manage_path move: missing from/to");
+
+      // Hidden-name + traversal guard on every segment of both paths. The
+      // shared resolve() silently strips leading `../`, which is fine for
+      // single-path ops but unsafe for move (target gets rewritten to root).
+      for (const seg of from.split("/").filter(Boolean)) {
+        if (seg === "..") throw new Error(`manage_path move: traversal in from`);
+        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in from: ${seg}`);
+      }
+      for (const seg of to.split("/").filter(Boolean)) {
+        if (seg === "..") throw new Error(`manage_path move: traversal in to`);
+        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in to: ${seg}`);
+      }
+
+      const absFrom = this.resolve(from);
+      const absTo = this.resolve(to);
+
+      // Refuse if target already exists. No overwrite.
+      try {
+        await fs.stat(absTo);
+        throw new Error("manage_path move: target_exists");
+      } catch (e: unknown) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+
+      await fs.mkdir(path.dirname(absTo), { recursive: true });
+      await fs.rename(absFrom, absTo);
+      return { success: true };
+    }
+    throw new Error(`manage_path: unknown operation ${op}`);
+  }
+
+  async dispatch(method: string, args: Record<string, unknown>): Promise<unknown> {
+    // The frontend uses different arg names across methods:
+    //   list_files:   sub_dir
+    //   read/write:   file_path
+    //   manage_path:  path
+    // Accept all three keys so we're forgiving.
+    const rel =
+      (args.file_path as string) ??
+      (args.sub_dir as string) ??
+      (args.path as string) ??
+      "";
+    const encoding = args.encoding as "utf8" | "base64" | undefined;
+    switch (method) {
+      case "list_files":
+        return this.listFiles(rel);
+      case "read_file":
+        return this.readFile(rel, { encoding });
+      case "write_file":
+        return this.writeFile(rel, (args.content as string) ?? "", { encoding });
+      case "delete_file":
+        return this.deleteFile(rel);
+      case "manage_path":
+        return this.managePath(
+          (args.operation as string) ?? "delete",
+          rel,
+          (args.recursive as boolean) ?? true,
+          {
+            from: args.from as string | undefined,
+            to: args.to as string | undefined,
+          },
+        );
+      default:
+        throw new Error(`file_manager: unknown method ${method}`);
+    }
+  }
+}

@@ -1,0 +1,39 @@
+# Overlay build: upgrades an EXISTING per-user image (one built from
+# image/Dockerfile, e.g. the pre-DeepSeek-Harness image) to the current
+# adapter without rebuilding the ~20 GB bio stack. Use it when the
+# `pantheon-agents-sc` base needed by image/Dockerfile is not available.
+#
+#   cd adapter && npm ci && npm run build && cd ..
+#   docker build -f image/Dockerfile.overlay \
+#     --build-arg BASE=<existing-image:tag> -t labweaver:dsh-dev .
+#
+# Only the layers this branch changed are replaced: Node 22 (dsh needs
+# >= 22.19), the adapter bundle + dependencies, and the entrypoint. The
+# memory MCP server comes from BASE and is re-linked under its current name.
+
+ARG BASE
+FROM ${BASE}
+
+USER root
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && (npm uninstall -g @anthropic-ai/claude-code || true)
+
+WORKDIR /opt/adapter
+RUN rm -rf node_modules dist
+COPY adapter/package.json adapter/package-lock.json ./
+# Node 22 changes the ABI, so node-pty is rebuilt here (build tools are in BASE).
+RUN npm ci --omit=dev --no-audit --no-fund
+COPY adapter/dist/ ./dist/
+COPY image/kernel-bridge.py ./kernel-bridge.py
+COPY image/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /opt/adapter/kernel-bridge.py \
+    && ln -sf /opt/mcp-memory/dist/index.js /usr/local/bin/labweaver-memory-mcp \
+    && mkdir -p /home/node/.dsh \
+    && chown -R node:node /opt/adapter /home/node/.dsh
+
+USER node
+WORKDIR /workspace
+ENV DSH_HOME=/home/node/.dsh \
+    DSH_PERMISSION_MODE=danger-full-access

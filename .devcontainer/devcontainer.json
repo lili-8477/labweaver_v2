@@ -1,0 +1,26 @@
+{
+  "name": "labweaver devcontainer",
+  "build": {
+    "context": "..",
+    "dockerfile": "../image/Dockerfile"
+  },
+  "remoteUser": "node",
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/skills,target=/home/node/.claude/skills,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/agents,target=/home/node/.claude/agents,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/chats,target=/workspace/.claude/chats,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.dsh,target=/home/node/.dsh,type=bind"
+  ],
+  "runArgs": [
+    "--network=host"
+  ],
+  "containerEnv": {
+    "ID_HASH": "devcontainer0",
+    "NATS_SERVERS": "nats://localhost:4223",
+    "WORKSPACE_ROOT": "/workspace",
+    "DEFAULT_PROJECT": "/workspace",
+    "HOME": "/home/node"
+  },
+  "postCreateCommand": "node --version && node /opt/adapter/node_modules/@deepseek-ai/dsh/lib/bin.js --help | head -1"
+}

@@ -1,0 +1,9 @@
+# Build context for image/Dockerfile*: only adapter/, mcp-memory/ and image/
+# are copied. Keep bulky or root-owned runtime state out of the context.
+**/node_modules
+frontend/
+hub/postgres-data/
+hub/workspaces/
+docs/
+final.mp4
+.git/

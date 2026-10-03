@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+hub/workspaces/*/
+!hub/workspaces/shared/
+hub/workspaces/shared/projects/
+hub/htpasswd
+hub/users.md
+hub/postgres-data/
+hub/.env
+.worktrees/
+
+# Host-specific compose override (ports/image for running beside another hub)
+docker-compose.dev.local.yml

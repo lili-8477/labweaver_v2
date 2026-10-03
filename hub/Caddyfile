@@ -1,0 +1,3 @@
+labweaver.selfai.cc {
+    reverse_proxy labweaver-nginx:80
+}

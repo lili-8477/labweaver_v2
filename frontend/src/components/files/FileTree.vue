@@ -1,0 +1,937 @@
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useFileStore } from '@/stores/files'
+import { useUploadsStore } from '@/stores/uploads'
+import { queueUpload, cancelUpload, retryUpload } from '@/services/upload'
+import { getFileIcon, formatFileSize } from '@/utils/format'
+import { basenameOf, isAncestorOrSelf, joinPath, parentOf } from '@/utils/path'
+import { walkDataTransferItems } from '@/utils/dnd'
+import { natsService } from '@/services/nats'
+import type { FileEntry } from '@/types'
+import FileContextMenu from './FileContextMenu.vue'
+import MoveToModal from './MoveToModal.vue'
+import UploadDestModal from './UploadDestModal.vue'
+import ShareFolderModal from './ShareFolderModal.vue'
+
+const emit = defineEmits<{
+  (e: 'open-file', path: string): void
+}>()
+
+const files = useFileStore()
+const uploads = useUploadsStore()
+
+const INTERNAL_PATH_MIME = 'application/x-labweaver-path'
+
+// Top-level bind-mount points in the user's container. The host filesystem
+// allows renames inside them, but the mount points themselves are pinned by
+// the kernel — fs.rename / fs.rm against them returns EBUSY. Short-circuit
+// rename / move / delete with a friendly message so users don't see the
+// raw EBUSY in the tree-error strip.
+const PROTECTED_MOUNT_POINTS = new Set<string>([
+  '.claude',
+  '.labweaver',
+  '.env',
+  'CLAUDE.md',
+  'local_projects',
+  'shared',
+])
+
+function isProtectedMountPoint(path: string): boolean {
+  return PROTECTED_MOUNT_POINTS.has(path)
+}
+
+// State: which dirs are expanded, their loaded children, loading status
+const expandedDirs = ref<Set<string>>(new Set())
+const dirChildren = ref<Map<string, FileEntry[]>>(new Map())
+const loadingDirs = ref<Set<string>>(new Set())
+
+// Retry support: keep the original File handle off the Pinia store (Vue's
+// reactivity proxy mangles XHR-related types). Component-local Map is fine
+// since retries only happen while the tree is mounted.
+const fileForUpload = new Map<string, File>()
+const dragOverPath = ref<string | null>(null)  // null = pane background
+const isDraggingFiles = ref(false)             // true while a file-drag is active over the tree
+const fileInput = ref<HTMLInputElement | null>(null)
+const dirInput = ref<HTMLInputElement | null>(null)
+const uploadTargetDir = ref<string>('')        // dest for the toolbar button picker
+
+// Inline "new file/folder" form. The base dir is locked (shown as a
+// non-editable prefix) so users can't accidentally write to the workspace
+// root — which is a tmpfs above the bind mounts and triggers EXDEV on
+// rename. `newItemName` is the only editable portion.
+const newItemBaseDir = ref('')
+const newItemName = ref('')
+const showNewInput = ref(false)
+const newItemType = ref<'file' | 'directory'>('file')
+
+// Build flat visible list with depth info
+interface FlatEntry {
+  entry: FileEntry
+  depth: number
+  path: string
+}
+
+const ctxMenu = ref<{ x: number; y: number; fe: FlatEntry } | null>(null)
+
+function openCtxMenuAt(ev: MouseEvent, fe: FlatEntry) {
+  ev.preventDefault()
+  ev.stopPropagation()
+  ctxMenu.value = { x: ev.clientX, y: ev.clientY, fe }
+}
+function closeCtxMenu() {
+  ctxMenu.value = null
+}
+
+const renamingPath = ref<string | null>(null)
+const renameInput = ref('')
+
+const moveSource = ref<string | null>(null)
+
+// Modal-open state for the upload destination picker. The modal itself
+// decides whether the user wants to upload files or a folder; we stay
+// out of that choice until the modal emits.
+const uploadModalOpen = ref<boolean>(false)
+
+const shareModal = ref<{ folderName: string } | null>(null)
+
+function isShareableProject(fe: FlatEntry): boolean {
+  if (fe.entry.type !== 'directory') return false
+  const m = fe.path.match(/^local_projects\/([^/]+)$/)
+  return m !== null
+}
+
+function openShareModalFor(fe: FlatEntry) {
+  const m = fe.path.match(/^local_projects\/([^/]+)$/)
+  if (m) shareModal.value = { folderName: m[1] }
+}
+
+function openMoveTo(fe: FlatEntry) {
+  moveSource.value = fe.path
+}
+
+async function onMovePick(targetDir: string) {
+  if (!moveSource.value) return
+  const source = moveSource.value
+  const basename = basenameOf(source)
+  const newPath = joinPath(targetDir, basename)
+  // Close modal optimistically; doMove surfaces errors via tree-error toast.
+  moveSource.value = null
+  await doMove(source, newPath)
+}
+
+function startRename(fe: FlatEntry) {
+  renamingPath.value = fe.path
+  renameInput.value = fe.entry.name
+}
+
+function cancelRename() {
+  renamingPath.value = null
+  renameInput.value = ''
+}
+
+async function commitRename(fe: FlatEntry) {
+  if (renameInFlight) return
+  const newName = renameInput.value.trim()
+  if (!newName || newName === fe.entry.name) {
+    cancelRename()
+    return
+  }
+  if (isProtectedMountPoint(fe.path)) {
+    showTreeError(`Cannot rename "${fe.path}" — it's a workspace mount point`)
+    cancelRename()
+    return
+  }
+  if (newName.includes('/')) {
+    showTreeError('Rename: name cannot contain "/"')
+    cancelRename()
+    return
+  }
+  const parent = parentOf(fe.path)
+  const targetPath = joinPath(parent, newName)
+
+  renameInFlight = true
+  try {
+    const result = await files.movePath(fe.path, targetPath)
+    if (!result.ok) {
+      showTreeError(`Rename failed: ${result.error}`)
+      cancelRename()
+      return
+    }
+    cancelRename()
+    await reloadTreeFromRoot()
+  } finally {
+    renameInFlight = false
+  }
+}
+
+function focusRenameInput(el: Element | null, originalName: string) {
+  const input = el as HTMLInputElement | null
+  if (!input) return
+  if (input === document.activeElement) return
+  input.focus()
+  const dot = originalName.lastIndexOf('.')
+  input.setSelectionRange(0, dot > 0 ? dot : originalName.length)
+}
+
+const treeError = ref<string | null>(null)
+let treeErrorTimer: number | null = null
+let renameInFlight = false
+const TREE_ERROR_DISMISS_MS = 5000
+
+function showTreeError(msg: string) {
+  treeError.value = msg
+  if (treeErrorTimer !== null) clearTimeout(treeErrorTimer)
+  treeErrorTimer = window.setTimeout(() => {
+    treeError.value = null
+    treeErrorTimer = null
+  }, TREE_ERROR_DISMISS_MS)
+}
+
+onMounted(() => {
+  if (files.tree.length === 0) files.loadTree()
+  if (dirInput.value) {
+    dirInput.value.setAttribute('webkitdirectory', '')
+    dirInput.value.setAttribute('directory', '')
+  }
+})
+
+const visibleEntries = computed<FlatEntry[]>(() => {
+  const result: FlatEntry[] = []
+
+  function walk(entries: FileEntry[], depth: number, parentPath: string) {
+    for (const entry of entries) {
+      const path = parentPath ? `${parentPath}/${entry.name}` : entry.name
+      result.push({ entry, depth, path })
+
+      if (entry.type === 'directory' && expandedDirs.value.has(path)) {
+        const children = dirChildren.value.get(path)
+        if (children) {
+          walk(children, depth + 1, path)
+        }
+      }
+    }
+  }
+
+  walk(files.tree, 0, '')
+  return result
+})
+
+async function toggleDir(path: string) {
+  if (expandedDirs.value.has(path)) {
+    expandedDirs.value.delete(path)
+    expandedDirs.value = new Set(expandedDirs.value)
+    return
+  }
+
+  expandedDirs.value.add(path)
+  expandedDirs.value = new Set(expandedDirs.value)
+
+  if (!dirChildren.value.has(path)) {
+    loadingDirs.value.add(path)
+    loadingDirs.value = new Set(loadingDirs.value)
+    try {
+      const result = await natsService.proxyToolset('list_files', {
+        sub_dir: path,
+        recursive: false,
+      }, 'file_manager') as { success: boolean; files: Array<{ name: string; type: string; size?: number }> }
+
+      if (result?.success && Array.isArray(result.files)) {
+        const children: FileEntry[] = result.files
+          .filter(f => f.name !== '.executor')
+          .map(f => ({
+            name: f.name,
+            path: `${path}/${f.name}`,
+            type: (f.type === 'directory' ? 'directory' : 'file') as 'file' | 'directory',
+            size: f.size,
+          }))
+          .sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+            return a.name.localeCompare(b.name)
+          })
+        dirChildren.value.set(path, children)
+        dirChildren.value = new Map(dirChildren.value)
+      }
+    } catch (e) {
+      console.error('Failed to list directory:', path, e)
+    } finally {
+      loadingDirs.value.delete(path)
+      loadingDirs.value = new Set(loadingDirs.value)
+    }
+  }
+}
+
+function handleClick(fe: FlatEntry) {
+  if (fe.entry.type === 'directory') {
+    toggleDir(fe.path)
+  } else {
+    emit('open-file', fe.path)
+  }
+}
+
+async function createItem() {
+  const name = newItemName.value.trim().replace(/^\/+/, '')
+  if (!name) return
+  const path = joinPath(newItemBaseDir.value, name)
+  if (newItemType.value === 'directory') {
+    await files.createDirectory(path)
+  } else {
+    await files.createFile(path)
+  }
+  showNewInput.value = false
+  newItemName.value = ''
+  await revealAndRefreshDir(parentOf(path))
+}
+
+function startNewItemIn(fe: FlatEntry, kind: 'file' | 'directory') {
+  const parent = fe.entry.type === 'directory' ? fe.path : parentOf(fe.path)
+  newItemType.value = kind
+  newItemBaseDir.value = parent
+  newItemName.value = ''
+  showNewInput.value = true
+  if (parent && fe.entry.type === 'directory' && !expandedDirs.value.has(parent)) {
+    toggleDir(parent)
+  }
+}
+
+// Toolbar "+" / folder buttons: default new items to local_projects/.
+// Workspace root is a tmpfs overlay above the bind mounts, so a folder
+// created there can't be `rename()`d into local_projects/ later (EXDEV).
+function startNewItemAtDefault(kind: 'file' | 'directory') {
+  newItemType.value = kind
+  newItemBaseDir.value = DEFAULT_DROP_DIR
+  newItemName.value = ''
+  showNewInput.value = true
+  if (!expandedDirs.value.has(DEFAULT_DROP_DIR)) {
+    toggleDir(DEFAULT_DROP_DIR)
+  }
+}
+
+async function handleDelete(fe: FlatEntry) {
+  if (isProtectedMountPoint(fe.path)) {
+    showTreeError(`Cannot delete "${fe.path}" — it's a workspace mount point`)
+    return
+  }
+  if (confirm(`Delete ${fe.entry.name}?`)) {
+    await files.deletePath(fe.path)
+    await reloadTreeFromRoot()
+  }
+}
+
+/** URL to nginx's direct-download endpoint for this file.
+ *  Scoped by HTTP Basic auth to the authenticated user's own workspace.
+ *  Works at any size — streams directly from disk, bypassing NATS. */
+function downloadUrl(filePath: string): string {
+  const segs = filePath.split('/').map(encodeURIComponent)
+  return `/download/${segs.join('/')}`
+}
+
+async function reloadTreeFromRoot() {
+  dirChildren.value.clear()
+  expandedDirs.value.clear()
+  await files.loadTree()
+}
+
+function refresh() {
+  void reloadTreeFromRoot()
+}
+
+/** Workspace-relative directory that this drop target represents.
+ *  null path = the empty tree-content pane → default writable subtree.
+ *  The upload server only allows writes under `local_projects/`, so
+ *  workspace root would 403. Default new drops there too. */
+const DEFAULT_DROP_DIR = 'local_projects'
+
+function dropDirFor(path: string | null): string {
+  if (path === null) return DEFAULT_DROP_DIR
+  // If the row is a directory, drop into it. If it's a file, drop into its parent.
+  const child = visibleEntries.value.find(fe => fe.path === path)
+  if (!child) return DEFAULT_DROP_DIR
+  if (child.entry.type === 'directory') return path
+  return parentOf(path) || DEFAULT_DROP_DIR
+}
+
+/** Reload every level from the root down to `destDir`, then ensure `destDir`
+ *  is expanded. Used after uploads / new-item creation so the new entry is
+ *  visible without the user having to click refresh or hand-expand parents.
+ *  An upload of `foo/a.txt` into `local_projects/` may have created both
+ *  `local_projects/foo/` and the file inside it, so every level below
+ *  `destDir` is busted and re-fetched, not just the leaf. */
+async function revealAndRefreshDir(destDir: string) {
+  if (destDir === '') {
+    await files.loadTree()
+    return
+  }
+  const segs = destDir.split('/')
+  for (let i = 1; i <= segs.length; i++) {
+    const dir = segs.slice(0, i).join('/')
+    dirChildren.value.delete(dir)
+    expandedDirs.value.delete(dir)
+    dirChildren.value = new Map(dirChildren.value)
+    expandedDirs.value = new Set(expandedDirs.value)
+    await toggleDir(dir)
+  }
+}
+
+function refreshAfterUpload(destDir: string) {
+  void revealAndRefreshDir(destDir)
+}
+
+function queueOne(file: File, destDir: string) {
+  const { id, promise } = queueUpload(file, destDir)
+  fileForUpload.set(id, file)
+  promise
+    .then(() => refreshAfterUpload(destDir))
+    .catch(() => { /* error state already in store */ })
+}
+
+function startUploads(fileList: FileList | File[], destDir: string) {
+  const arr = Array.from(fileList)
+  for (const file of arr) {
+    queueOne(file, destDir)
+  }
+}
+
+function onPickFiles(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files && input.files.length > 0) {
+    startUploads(input.files, uploadTargetDir.value)
+    input.value = ''  // allow re-picking the same file
+  }
+}
+
+function openFilePicker() {
+  uploadModalOpen.value = true
+}
+
+async function onUploadDestPick(dir: string, kind: 'file' | 'directory') {
+  uploadModalOpen.value = false
+  uploadTargetDir.value = dir
+  // Wait one tick so the modal is fully unmounted before opening the OS dialog.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  if (kind === 'file') {
+    fileInput.value?.click()
+  } else {
+    dirInput.value?.click()
+  }
+}
+
+function onPickDir(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (!input.files || input.files.length === 0) return
+  const baseDir = uploadTargetDir.value
+  for (const file of Array.from(input.files)) {
+    const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath
+    if (!rel) continue
+    const subDir = parentOf(rel)
+    const destDir = joinPath(baseDir, subDir)
+    queueOne(file, destDir)
+  }
+  input.value = ''
+}
+
+// Tree paths are relative to the workspace root, which is mounted at
+// /workspace inside the user's container. The agent runs there, so the
+// absolute container path is what's useful to paste into a prompt.
+function toContainerPath(p: string): string {
+  return '/workspace/' + p
+}
+
+async function copyPath(fe: FlatEntry) {
+  const text = toContainerPath(fe.path)
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // navigator.clipboard is unavailable outside secure contexts — fall back
+    // to a hidden textarea + execCommand.
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch { showTreeError('Could not copy path') }
+    document.body.removeChild(ta)
+  }
+}
+
+function onRowDragStart(ev: DragEvent, fe: FlatEntry) {
+  if (!ev.dataTransfer) return
+  // INTERNAL_PATH_MIME keeps the relative path for in-tree moves; text/plain
+  // carries the absolute container path for pasting/dropping elsewhere.
+  ev.dataTransfer.setData(INTERNAL_PATH_MIME, fe.path)
+  ev.dataTransfer.setData('text/plain', toContainerPath(fe.path))
+  ev.dataTransfer.effectAllowed = 'copyMove'
+}
+
+function onDragOver(e: DragEvent, path: string | null) {
+  if (!e.dataTransfer) return
+  const types = Array.from(e.dataTransfer.types)
+  const hasFiles = types.includes('Files')
+  const hasInternal = types.includes(INTERNAL_PATH_MIME)
+  if (!hasFiles && !hasInternal) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = hasInternal ? 'move' : 'copy'
+  isDraggingFiles.value = hasFiles
+  dragOverPath.value = path
+}
+
+function onDragLeave(e: DragEvent, path: string | null) {
+  // Leave only if we're moving to outside this drop zone, not into a child.
+  // The relatedTarget is the new element under the cursor.
+  const next = e.relatedTarget as Node | null
+  const current = e.currentTarget as Node
+  if (next && current.contains(next)) return
+  if (dragOverPath.value === path) {
+    dragOverPath.value = null
+    if (path === null) isDraggingFiles.value = false
+  }
+}
+
+function onDrop(e: DragEvent, path: string | null) {
+  e.preventDefault()
+  const dt = e.dataTransfer
+  dragOverPath.value = null
+  isDraggingFiles.value = false
+  if (!dt) return
+
+  const types = Array.from(dt.types)
+
+  // 1) Internal move
+  if (types.includes(INTERNAL_PATH_MIME)) {
+    const sourcePath = dt.getData(INTERNAL_PATH_MIME)
+    if (!sourcePath) return
+    if (path === null) return  // drop on empty pane: not a valid move target
+
+    const target = visibleEntries.value.find(fe => fe.path === path)
+    if (!target) return
+    const targetDir = target.entry.type === 'directory' ? target.path : parentOf(target.path)
+
+    const sourceParent = parentOf(sourcePath)
+
+    if (targetDir === sourceParent) return
+    if (isAncestorOrSelf(sourcePath, targetDir)) return
+
+    const basename = basenameOf(sourcePath)
+    const newPath = joinPath(targetDir, basename)
+
+    void doMove(sourcePath, newPath)
+    return
+  }
+
+  // 2) OS-file or folder upload
+  const dropDir = dropDirFor(path)
+  const items = dt.items
+  const hasItems = items && items.length > 0 && typeof (items[0] as DataTransferItem & {
+    webkitGetAsEntry?: unknown
+  }).webkitGetAsEntry === 'function'
+
+  if (hasItems) {
+    void (async () => {
+      const dropped = await walkDataTransferItems(items)
+      if (dropped.length === 0) return
+      for (const { file, relativePath } of dropped) {
+        // relativePath includes the filename. Compute the parent portion.
+        const subDir = parentOf(relativePath)
+        const destDir = joinPath(dropDir, subDir)
+        queueOne(file, destDir)
+      }
+    })()
+    return
+  }
+
+  const fileList = dt.files
+  if (!fileList || fileList.length === 0) return
+  startUploads(fileList, dropDir)
+}
+
+async function doMove(from: string, to: string) {
+  if (isProtectedMountPoint(from)) {
+    showTreeError(`Cannot move "${from}" — it's a workspace mount point`)
+    return
+  }
+  const result = await files.movePath(from, to)
+  if (!result.ok) {
+    showTreeError(`Move failed: ${result.error}`)
+    return
+  }
+  await reloadTreeFromRoot()
+}
+
+function onCancelUpload(id: string) {
+  cancelUpload(id)
+}
+
+function onRetryUpload(id: string) {
+  const file = fileForUpload.get(id)
+  if (!file) return
+  retryUpload(id, file)
+}
+
+function onClearUploads() {
+  uploads.clearFinished()
+}
+</script>
+
+<template>
+  <div class="file-tree">
+    <div class="tree-header">
+      <span class="title">Files</span>
+      <div class="tree-actions">
+        <button class="icon-btn" @click="refresh()" title="Refresh">&#8635;</button>
+        <button class="icon-btn" @click="openFilePicker()" title="Upload (max 2 GB)">&#x2B06;</button>
+        <button class="icon-btn" @click="startNewItemAtDefault('file')" title="New File">+</button>
+        <button class="icon-btn" @click="startNewItemAtDefault('directory')" title="New Folder">&#128193;</button>
+      </div>
+    </div>
+
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      style="display:none"
+      @change="onPickFiles"
+    />
+    <input
+      ref="dirInput"
+      type="file"
+      multiple
+      style="display:none"
+      @change="onPickDir"
+    />
+
+    <div v-if="showNewInput" class="new-item">
+      <span v-if="newItemBaseDir" class="new-item-prefix" :title="newItemBaseDir + '/'">{{ newItemBaseDir }}/</span>
+      <input
+        v-model="newItemName"
+        :placeholder="newItemType === 'file' ? 'filename.py' : 'dirname'"
+        @keyup.enter="createItem"
+        @keyup.escape="showNewInput = false"
+        autofocus
+      />
+      <button class="icon-btn sm" @click="createItem">&#10003;</button>
+      <button class="icon-btn sm" @click="showNewInput = false">&times;</button>
+    </div>
+
+    <div v-if="files.loading" class="loading">Loading...</div>
+
+    <div
+      class="tree-content"
+      :class="{ 'drag-over-pane': dragOverPath === null && isDraggingFiles }"
+      @dragover="onDragOver($event, null)"
+      @dragleave="onDragLeave($event, null)"
+      @drop="onDrop($event, null)"
+    >
+      <div
+        v-for="fe in visibleEntries"
+        :key="fe.path"
+        class="entry-row"
+        :class="{ 'drag-over': dragOverPath === fe.path }"
+        :style="{ paddingLeft: (12 + fe.depth * 16) + 'px' }"
+        draggable="true"
+        @dragstart="onRowDragStart($event, fe)"
+        @click="handleClick(fe)"
+        @contextmenu="openCtxMenuAt($event, fe)"
+        @dragover.stop="onDragOver($event, fe.path)"
+        @dragleave.stop="onDragLeave($event, fe.path)"
+        @drop.stop="onDrop($event, fe.path)"
+      >
+        <span v-if="fe.entry.type === 'directory'" class="expand-icon">
+          <span v-if="loadingDirs.has(fe.path)" class="spinner"></span>
+          <template v-else>{{ expandedDirs.has(fe.path) ? '&#9660;' : '&#9654;' }}</template>
+        </span>
+        <span v-else class="expand-icon">&nbsp;</span>
+        <span class="icon">{{ getFileIcon(fe.entry.name, fe.entry.type) }}</span>
+        <input
+          v-if="renamingPath === fe.path"
+          v-model="renameInput"
+          class="rename-input"
+          :ref="(el) => focusRenameInput(el as Element | null, fe.entry.name)"
+          @click.stop
+          @keyup.enter="commitRename(fe)"
+          @keyup.escape="cancelRename()"
+          @blur="commitRename(fe)"
+        />
+        <span v-else class="name">{{ fe.entry.name }}</span>
+        <a
+          v-if="fe.entry.type === 'file'"
+          class="download-btn"
+          :href="downloadUrl(fe.path)"
+          :download="fe.entry.name"
+          @click.stop
+          title="Download (works for any size)"
+          aria-label="Download"
+        >&#x2B07;</a>
+        <button
+          class="more-btn"
+          @click.stop="openCtxMenuAt($event, fe)"
+          title="More actions"
+          aria-label="More"
+        >&#x22EF;</button>
+        <button class="delete-btn" @click.stop="handleDelete(fe)" title="Delete">&times;</button>
+      </div>
+
+      <div v-if="!files.loading && files.tree.length === 0" class="empty">
+        No files found. Drop a file here to upload to the workspace root.
+      </div>
+    </div>
+
+    <FileContextMenu
+      v-if="ctxMenu"
+      :x="ctxMenu.x"
+      :y="ctxMenu.y"
+      :type="ctxMenu.fe.entry.type"
+      :shareable="isShareableProject(ctxMenu.fe)"
+      @copy-path="(copyPath(ctxMenu.fe), closeCtxMenu())"
+      @rename="(startRename(ctxMenu.fe), closeCtxMenu())"
+      @move-to="(openMoveTo(ctxMenu.fe), closeCtxMenu())"
+      @new-file="(startNewItemIn(ctxMenu.fe, 'file'), closeCtxMenu())"
+      @new-folder="(startNewItemIn(ctxMenu.fe, 'directory'), closeCtxMenu())"
+      @delete="(handleDelete(ctxMenu.fe), closeCtxMenu())"
+      @share="(openShareModalFor(ctxMenu.fe), closeCtxMenu())"
+      @close="closeCtxMenu"
+    />
+
+    <MoveToModal
+      v-if="moveSource"
+      :source-path="moveSource"
+      @pick="onMovePick"
+      @close="moveSource = null"
+    />
+
+    <UploadDestModal
+      v-if="uploadModalOpen"
+      @pick="onUploadDestPick"
+      @close="uploadModalOpen = false"
+    />
+
+    <ShareFolderModal
+      v-if="shareModal"
+      :folder-name="shareModal.folderName"
+      @close="shareModal = null"
+    />
+
+    <div v-if="treeError" class="tree-error" role="alert">
+      {{ treeError }}
+      <button class="link-btn" @click="treeError = null">×</button>
+    </div>
+
+    <div v-if="uploads.items.length > 0" class="upload-tray">
+      <div class="tray-header">
+        <span>Uploads ({{ uploads.items.length }})</span>
+        <button class="icon-btn sm" @click="onClearUploads()" title="Clear finished">&times;</button>
+      </div>
+      <div
+        v-for="u in uploads.items"
+        :key="u.id"
+        class="upload-row"
+        :class="{ 'state-error': u.state === 'error', 'state-done': u.state === 'done', 'state-canceled': u.state === 'canceled' }"
+      >
+        <div class="upload-meta">
+          <span class="upload-name" :title="u.destPath">{{ u.fileName }}</span>
+          <span class="upload-size">
+            {{ formatFileSize(u.bytesSent) }} / {{ formatFileSize(u.totalBytes) }}
+          </span>
+        </div>
+        <div class="upload-bar">
+          <div class="upload-bar-fill" :style="{ width: u.totalBytes > 0 ? (u.bytesSent / u.totalBytes * 100) + '%' : '0%' }"></div>
+        </div>
+        <div class="upload-status">
+          <template v-if="u.state === 'uploading' || u.state === 'pending'">
+            <button class="upload-btn upload-btn-cancel" @click="onCancelUpload(u.id)">Cancel</button>
+          </template>
+          <template v-else-if="u.state === 'error'">
+            <span class="upload-error" :title="u.error">{{ u.error || 'Failed' }}</span>
+            <button class="upload-btn" @click="onRetryUpload(u.id)">Retry</button>
+          </template>
+          <template v-else-if="u.state === 'done'">
+            <span class="upload-ok">Uploaded</span>
+          </template>
+          <template v-else-if="u.state === 'canceled'">
+            <span class="upload-muted">Canceled</span>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.file-tree { display: flex; flex-direction: column; height: 100%; }
+.tree-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.title { font-weight: 600; font-size: 0.9em; }
+.tree-actions { display: flex; gap: 4px; }
+.icon-btn {
+  width: 28px; height: 28px; background: transparent; border: none;
+  color: var(--text-secondary); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1em;
+}
+.icon-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.icon-btn.sm { width: 24px; height: 24px; font-size: 0.9em; }
+
+.new-item {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+}
+.new-item-prefix {
+  flex-shrink: 1; min-width: 0; max-width: 50%;
+  padding: 4px 0 4px 4px; color: var(--text-muted);
+  font-family: var(--font-mono); font-size: 0.85em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left;
+  user-select: none;
+}
+.new-item input {
+  flex: 1; min-width: 0; padding: 4px 8px; background: var(--bg-primary);
+  border: 1px solid var(--accent); border-radius: 4px;
+  color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85em;
+}
+
+.loading { padding: 12px 16px; color: var(--text-muted); font-size: 0.85em; }
+
+.tree-content { flex: 1; overflow-y: auto; padding: 4px 0; }
+.entry-row {
+  display: flex; align-items: center; gap: 4px; padding: 4px 12px;
+  cursor: pointer; font-size: 0.9em; transition: background 0.1s;
+}
+.entry-row:hover { background: var(--bg-tertiary); }
+.expand-icon { width: 14px; font-size: 0.7em; color: var(--text-muted); flex-shrink: 0; }
+.icon { flex-shrink: 0; font-size: 0.9em; }
+.name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delete-btn, .download-btn {
+  opacity: 0; width: 20px; height: 20px; background: transparent;
+  border: none; color: var(--text-muted); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75em; text-decoration: none;
+}
+.entry-row:hover .delete-btn,
+.entry-row:hover .download-btn { opacity: 1; }
+.delete-btn:hover { color: var(--danger); background: var(--bg-hover); }
+.download-btn:hover { color: var(--accent); background: var(--bg-hover); }
+
+.spinner {
+  display: inline-block; width: 8px; height: 8px;
+  border: 1.5px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty {
+  padding: 20px 16px; text-align: center;
+  color: var(--text-muted); font-size: 0.85em;
+}
+
+/* Drag-and-drop highlights */
+.tree-content.drag-over-pane {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.entry-row.drag-over {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* Upload tray */
+.upload-tray {
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  max-height: 220px; overflow-y: auto;
+  font-size: 0.82em;
+}
+.tray-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.upload-row {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 4px 8px; padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.upload-row:last-child { border-bottom: none; }
+.upload-meta {
+  grid-column: 1 / -1;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.upload-name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 180px;
+}
+.upload-size { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.upload-bar {
+  grid-column: 1 / 2;
+  height: 8px; background: var(--bg-tertiary); border-radius: 4px;
+  overflow: hidden;
+}
+.upload-bar-fill {
+  height: 100%; background: var(--accent);
+  transition: width 0.12s linear;
+}
+.upload-row.state-done .upload-bar-fill { background: var(--success, #4caf50); }
+.upload-row.state-error .upload-bar-fill { background: var(--danger); }
+.upload-row.state-canceled .upload-bar-fill { background: var(--text-muted); }
+.upload-status {
+  grid-column: 2 / 3; grid-row: 2;
+  display: flex; align-items: center; gap: 8px;
+}
+.upload-error {
+  color: var(--danger); max-width: 120px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.upload-ok { color: var(--success, #4caf50); }
+.upload-muted { color: var(--text-muted); }
+.link-btn {
+  background: none; border: none; padding: 0;
+  color: var(--accent); cursor: pointer; font-size: inherit;
+}
+.link-btn:hover { text-decoration: underline; }
+.upload-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-secondary); border-radius: 4px;
+  padding: 2px 10px; font-size: inherit; line-height: 1.4;
+  cursor: pointer;
+}
+.upload-btn:hover {
+  background: var(--bg-hover); color: var(--text-primary);
+}
+.upload-btn-cancel:hover {
+  color: var(--danger); border-color: var(--danger);
+}
+
+.tree-error {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-secondary));
+  color: var(--danger);
+  font-size: 0.82em;
+  padding: 6px 12px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.more-btn {
+  opacity: 0;
+  width: 20px; height: 20px;
+  background: transparent; border: none;
+  color: var(--text-muted); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9em; cursor: pointer;
+}
+.entry-row:hover .more-btn { opacity: 1; }
+.more-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.rename-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font: inherit;
+  padding: 1px 4px;
+  outline: none;
+}
+</style>

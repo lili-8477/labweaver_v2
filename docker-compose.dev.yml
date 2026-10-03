@@ -1,0 +1,94 @@
+# Single-user local dev — run the adapter + NATS without nginx, for fast iteration.
+# Point the frontend at ws://localhost:4223 directly (no /ws/ prefix proxy).
+
+name: labweaver-dev
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: labweaver-dev-nats
+    command: -c /etc/nats/nats.conf
+    ports:
+      - "4223:4222"
+      - "8081:8080"   # frontend connects here directly: ws://localhost:8081
+      - "8223:8222"
+    volumes:
+      - ./hub/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - labweaver-dev-net
+
+  adapter:
+    image: labweaver:dev
+    container_name: labweaver-dev-user
+    depends_on:
+      nats:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      ID_HASH: "devuser000"
+      NATS_SERVERS: "nats://nats:4222"
+      NATS_USER: "agent"
+      WORKSPACE_ROOT: "/workspace"
+      DEFAULT_PROJECT: "/workspace"
+      HOME: "/home/node"
+      PG_URL: "postgres://labweaver:${POSTGRES_PASSWORD}@postgres:5432/labweaver"
+      USERNAME: "devuser"
+      SIDECAR_IMPORT_ON_BOOT: "1"
+      # Auto-shutdown kernels idle (no in-flight cell) longer than this.
+      # Next execute re-spawns lazily. 0 disables culling.
+      KERNEL_IDLE_CULL_MS: "14400000"
+      KERNEL_CULL_CHECK_INTERVAL_MS: "60000"
+    env_file:
+      - path: ./hub/workspaces/devuser/.env
+        required: false
+    volumes:
+      - ./hub/workspaces/devuser/projects:/workspace/projects
+      - ./hub/workspaces/devuser/.claude/chats:/workspace/.claude/chats
+      - ./hub/workspaces/devuser/.claude/skills:/home/node/.claude/skills
+      - ./hub/workspaces/devuser/.claude/agents:/home/node/.claude/agents
+      - ./hub/workspaces/devuser/.claude/settings.json:/home/node/.claude/settings.json
+      # DeepSeek Harness state: session logs (resume) + generated patch.
+      - ./hub/workspaces/devuser/.dsh:/home/node/.dsh
+    working_dir: /workspace
+    networks:
+      - labweaver-dev-net
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: labweaver-dev-postgres
+    env_file: [ ./hub/.env ]
+    environment:
+      POSTGRES_USER: labweaver
+      POSTGRES_DB: labweaver
+    volumes:
+      - ./hub/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labweaver"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - labweaver-dev-net
+
+  indexer:
+    build: ./hub/indexer
+    container_name: labweaver-dev-indexer
+    env_file: [ ./hub/.env ]
+    environment:
+      PG_URL: "postgres://labweaver:${POSTGRES_PASSWORD}@postgres:5432/labweaver"
+      WORKSPACES_ROOT: /workspaces
+      MAX_CONCURRENT_FILES: "4"
+      LOG_LEVEL: debug
+    volumes:
+      - ./hub/workspaces:/workspaces:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - labweaver-dev-net
+
+networks:
+  labweaver-dev-net:
+    driver: bridge
