@@ -6,6 +6,7 @@ import {
   callMemoryDir,
   callMemoryWrite,
   callMemoryMerge,
+  callMemoryFeedback,
   callMemoryForget,
   callMemoryDistillSession,
   toolDefinitions,
@@ -40,11 +41,12 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the eight memory tools", () => {
+  it("exposes exactly the nine memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
       "memory_dir",
       "memory_distill_session",
+      "memory_feedback",
       "memory_forget",
       "memory_get",
       "memory_merge",
@@ -224,6 +226,20 @@ describe("callMemoryDir", () => {
     const { stub } = makeFetchStub(new Response('{"error":"directory not found"}', { status: 404 }));
     const r = await callMemoryDir({ dir: "nope/x" }, baseDeps(stub));
     expect(r.isError).toBe(true);
+  });
+});
+
+describe("callMemoryFeedback", () => {
+  it("POSTs ids and outcome as the env user", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response('{"updated":2}', { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const r = await callMemoryFeedback({ memory_ids: ["a", "b"], outcome: "success" }, baseDeps(stub));
+    expect(r.isError).toBeUndefined();
+    expect(calls[0]!.url).toBe("http://stub:8400/memory/feedback");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      username: "alice", memory_ids: ["a", "b"], outcome: "success",
+    });
   });
 });
 

@@ -26,6 +26,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   getMetrics:       ReturnType<typeof vi.fn>;
   listDirs:         ReturnType<typeof vi.fn>;
   getDir:           ReturnType<typeof vi.fn>;
+  recordFeedback:   ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
 } } {
   const repo = {
@@ -51,6 +52,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     })),
     listDirs:         vi.fn(async () => []),
     getDir:           vi.fn(async () => null),
+    recordFeedback:   vi.fn(async () => ({ updated: 0 })),
     writeDistillation: vi.fn(async () => ({ similar: [] as never[] })),
   };
   const deps: MemoryApiDeps = {
@@ -302,7 +304,7 @@ describe("memory-api", () => {
   // ────────────────────────────── /memory/context ─────────────────────────────
 
   describe("GET /memory/context", () => {
-    it("happy path: applies default budget_tokens=2000 when omitted", async () => {
+    it("happy path: applies default budget_tokens=800 when omitted", async () => {
       const ctx: MemoryContext = { system_prompt: "hi", memory_ids: ["a"] };
       depsBag.repo.getContext.mockResolvedValueOnce(ctx);
 
@@ -315,7 +317,7 @@ describe("memory-api", () => {
       const arg = depsBag.repo.getContext.mock.calls[0]![0];
       expect(arg.username).toBe("alice");
       expect(arg.project_path).toBe("/workspace/foo");
-      expect(arg.budget_tokens).toBe(2000);
+      expect(arg.budget_tokens).toBe(800);
     });
 
     it("happy path: honours explicit budget_tokens", async () => {
@@ -714,6 +716,36 @@ describe("memory-api", () => {
   });
 
   // ────────────────────────────── /memory/metrics ──────────────────────────
+
+  // ────────────────────────────── tiered recall ───────────────────────────────
+  describe("tiered recall", () => {
+    it("POST /memory/feedback validates and forwards", async () => {
+      const id = "00000000-0000-4000-8000-000000000001";
+      const ok = await app.inject({
+        method: "POST", url: "/memory/feedback",
+        payload: { username: "alice", memory_ids: [id], outcome: "success" },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(depsBag.repo.recordFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({ username: "alice", memory_ids: [id], outcome: "success" }),
+      );
+      const bad = await app.inject({
+        method: "POST", url: "/memory/feedback",
+        payload: { username: "alice", memory_ids: [id], outcome: "meh" },
+      });
+      expect(bad.statusCode).toBe(400);
+    });
+
+    it("POST /memory/search encodes project_path server-side", async () => {
+      await app.inject({
+        method: "POST", url: "/memory/search",
+        payload: { username: "alice", project_path: "/workspace/pbmc3k", query: "q" },
+      });
+      expect(depsBag.repo.searchMemories).toHaveBeenCalledWith(
+        expect.objectContaining({ project_dir: "-workspace-pbmc3k" }),
+      );
+    });
+  });
 
   // ────────────────────────────── merge-on-write ──────────────────────────────
   describe("merge-on-write", () => {

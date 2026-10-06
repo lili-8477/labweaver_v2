@@ -15,8 +15,10 @@ import type {
   getMetrics,
   listDirs,
   getDir,
+  recordFeedback,
 } from "./memory-repo.js";
 import { InvalidDirError } from "./memory-dirs.js";
+import { encodeProjectDir } from "./path-decode.js";
 import type { writeDistillation } from "./distiller-repo.js";
 import { PROMPT_VERSION } from "./distiller-prompts.js";
 
@@ -42,6 +44,7 @@ export interface MemoryApiDeps {
     getMetrics:       typeof getMetrics;
     listDirs:         typeof listDirs;
     getDir:           typeof getDir;
+    recordFeedback:   typeof recordFeedback;
     writeDistillation: typeof writeDistillation;
   };
 }
@@ -52,6 +55,9 @@ export interface MemoryApiDeps {
 const SearchBody = z.object({
   username:    z.string().min(1),
   project_dir: z.string().nullable().optional(),
+  // Raw container path (e.g. /workspace/pbmc3k), encoded server-side like
+  // /memory/context; used by hooks that only know CLAUDE_PROJECT_DIR.
+  project_path: z.string().min(1).optional(),
   query:       z.string().min(1),
   limit:       z.number().int().positive().max(100).optional(),
   types:       z.array(z.string()).optional(),
@@ -133,6 +139,12 @@ const DirsQuery = z.object({
   limit:       z.coerce.number().int().positive().max(200).optional(),
 });
 
+const FeedbackBody = z.object({
+  username:   z.string().min(1),
+  memory_ids: z.array(z.string().uuid()).min(1).max(100),
+  outcome:    z.enum(["success", "failure"]),
+});
+
 const AuditQuery = z.object({
   actor: z.string().min(1),
   limit: z.coerce.number().int().positive().max(100).optional(),
@@ -202,7 +214,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       pool:           deps.pool,
       embedderClient: deps.embedderClient,
       username:       b.username,
-      project_dir:    b.project_dir ?? null,
+      project_dir:    b.project_path ? encodeProjectDir(b.project_path) : (b.project_dir ?? null),
       query:          b.query,
       limit:          b.limit,
       types:          b.types,
@@ -233,9 +245,8 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     return entries;
   });
 
-  // GET /memory/context — SessionStart bundle. Default budget_tokens=2000
-  // applied here per spec §7.2; the underlying getContext trusts whatever
-  // number arrives.
+  // GET /memory/context — SessionStart directory index. Default
+  // budget_tokens=800 (phase 3 gate); getContext trusts whatever arrives.
   app.get("/memory/context", async (req, reply) => {
     const parsed = ContextQuery.safeParse(req.query);
     if (!parsed.success) {
@@ -247,7 +258,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       pool:          deps.pool,
       username:      q.username,
       project_path:  q.project_path,
-      budget_tokens: q.budget_tokens ?? 2000,
+      budget_tokens: q.budget_tokens ?? 800,
     });
     return ctx;
   });
@@ -313,6 +324,16 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       return { error: "directory not found" };
     }
     return dir;
+  });
+
+  // POST /memory/feedback — outcome of a task that used these memories.
+  app.post("/memory/feedback", async (req, reply) => {
+    const parsed = FeedbackBody.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    return await deps.repo.recordFeedback({ pool: deps.pool, ...parsed.data });
   });
 
   // POST /memory/write — /memorize-style user-authored memory. Returns

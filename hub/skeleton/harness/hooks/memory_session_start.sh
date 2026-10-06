@@ -14,7 +14,7 @@ set -euo pipefail
 curl -fsS --max-time 3 -G \
   --data-urlencode "username=${USERNAME}" \
   --data-urlencode "project_path=${CLAUDE_PROJECT_DIR:-/workspace}" \
-  --data-urlencode "budget_tokens=2000" \
+  --data-urlencode "budget_tokens=800" \
   "${MEMORY_API_URL}/memory/context" \
   | jq -c '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: (.system_prompt // "")}}' \
   || true

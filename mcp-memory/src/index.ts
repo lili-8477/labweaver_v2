@@ -105,6 +105,19 @@ export const toolDefinitions = [
     },
   },
   {
+    name: "memory_feedback",
+    description:
+      "Report how a task went that used memories. Call once at the end of a task in which memories (from the memory index, recall, memory_search or memory_get) actually informed your work, with those ids. Ranking learns from these outcomes; merely retrieving a memory does not count.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memory_ids: { type: "array", items: { type: "string" }, minItems: 1 },
+        outcome:    { type: "string", enum: ["success", "failure"] },
+      },
+      required: ["memory_ids", "outcome"],
+    },
+  },
+  {
     name: "memory_merge",
     description:
       "Fold new information into an existing memory you own (the merge half of merge-on-write). Use after memory_write or memory_distill_session returns `similar` matches: rewrite the closest match's name/description/body so it covers both old and new content, without dropping facts from either. Works on distilled memories too.",
@@ -326,6 +339,19 @@ export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolRe
   }
 }
 
+export async function callMemoryFeedback(args: any, deps: ToolDeps): Promise<ToolResult> {
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}/memory/feedback`, {
+      method:  "POST",
+      headers: { "content-type": "application/json" },
+      body:    JSON.stringify({ username: deps.username, memory_ids: args?.memory_ids, outcome: args?.outcome }),
+    });
+    return await unwrap(res, "memory_feedback");
+  } catch (err) {
+    return fail(`memory_feedback network error: ${(err as Error).message}`);
+  }
+}
+
 export async function callMemoryMerge(args: any, deps: ToolDeps): Promise<ToolResult> {
   if (!args?.memory_id || typeof args.memory_id !== "string") {
     return fail("memory_merge: 'memory_id' is required");
@@ -434,6 +460,7 @@ async function main(): Promise<void> {
       case "memory_dir":      result = await callMemoryDir(args, deps); break;
       case "memory_write":    result = await callMemoryWrite(args, deps); break;
       case "memory_merge":    result = await callMemoryMerge(args, deps); break;
+      case "memory_feedback": result = await callMemoryFeedback(args, deps); break;
       case "memory_forget":   result = await callMemoryForget(args, deps); break;
       case "memory_distill_session": result = await callMemoryDistillSession(args, deps); break;
       default:                result = fail(`unknown tool: ${name}`); break;

@@ -8,7 +8,7 @@ import { contentHash } from "../src/content-hash.js";
 import { InvalidDirError } from "../src/memory-dirs.js";
 import {
   searchMemories, writeUserMemory, updateMemory, getAuditTrail, getMemory,
-  listMemories, listDirs, getDir,
+  listMemories, listDirs, getDir, recordFeedback,
 } from "../src/memory-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
@@ -259,5 +259,40 @@ describe("writes and directories", () => {
     ]);
     const { items } = await listMemories({ pool, username: "alice", project_dir: null, dir: "user/preferences" });
     expect(items.map((i) => i.memory_id)).toEqual([pref]);
+  });
+});
+
+describe("recordFeedback", () => {
+  it("counts outcomes and marks use only on memories the caller can see", async () => {
+    const [mine, org, bobs] = await seed([
+      { username: "alice", body: "a" },
+      { username: "__org__", body: "o" },
+      { username: "bob", body: "b" },
+    ]);
+    const r = await recordFeedback({ pool, username: "alice", memory_ids: [mine!, org!, bobs!, mine!], outcome: "success" });
+    expect(r).toEqual({ updated: 2 });
+    await recordFeedback({ pool, username: "alice", memory_ids: [mine!], outcome: "failure" });
+
+    const rows = await pool.query(
+      `SELECT memory_id, hit_count, success_count, failure_count, last_hit_at IS NOT NULL AS used
+         FROM memories ORDER BY username`,
+    );
+    const by = Object.fromEntries(rows.rows.map((x) => [x.memory_id, x]));
+    expect(by[mine!]).toMatchObject({ hit_count: 2, success_count: 1, failure_count: 1, used: true });
+    expect(by[org!]).toMatchObject({ hit_count: 1, success_count: 1, failure_count: 0 });
+    expect(by[bobs!]).toMatchObject({ hit_count: 0, used: false });
+  });
+
+  it("ranks a memory that helped tasks above one that preceded failures", async () => {
+    const [helped, hurt] = await seed([
+      { username: "alice", body: "x", type: "feedback", name: "helped" },
+      { username: "alice", body: "y", type: "feedback", name: "hurt" },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      await recordFeedback({ pool, username: "alice", memory_ids: [helped!], outcome: "success" });
+      await recordFeedback({ pool, username: "alice", memory_ids: [hurt!], outcome: "failure" });
+    }
+    const dir = await getDir({ pool, username: "alice", project_dir: null, dir_key: "user/preferences" });
+    expect(dir!.entries.map((e) => e.name)).toEqual(["helped", "hurt"]);
   });
 });

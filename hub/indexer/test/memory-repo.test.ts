@@ -107,7 +107,7 @@ const downEmbedder = {
 };
 
 describe("searchMemories", () => {
-  it("returns project > user > org for the same FTS body and increments hit_count", async () => {
+  it("returns project > user > org for the same FTS body and does not count retrieval as a hit", async () => {
     const orgId     = await seedMemory({ username: "__org__", project_dir: null,   body: QUERY_BODY, seed: 1 });
     const userId    = await seedMemory({ username: "alice",   project_dir: null,   body: QUERY_BODY, seed: 2 });
     const projectId = await seedMemory({ username: "alice",   project_dir: "-w-p", body: QUERY_BODY, seed: 3 });
@@ -139,14 +139,7 @@ describe("searchMemories", () => {
         WHERE memory_id = ANY($1::uuid[])`,
       [[orgId, userId, projectId]],
     );
-    for (const r of counts.rows) expect(r.hit_count).toBe(1);
-
-    const lastHit = await pool.query<{ memory_id: string; last_hit_at: Date | null }>(
-      `SELECT memory_id, last_hit_at FROM memories
-        WHERE memory_id = ANY($1::uuid[])`,
-      [[orgId, userId, projectId]],
-    );
-    for (const r of lastHit.rows) expect(r.last_hit_at).not.toBeNull();
+    for (const r of counts.rows) expect(r.hit_count).toBe(0);
   });
 
   it("excludes soft-deleted memories", async () => {
@@ -663,7 +656,7 @@ describe("getContext", () => {
     expect(ctx).toEqual({ system_prompt: "", memory_ids: [] });
   });
 
-  it("includes a single memory and emits the header line", async () => {
+  it("indexes a single memory under its directory with name, description and id", async () => {
     const id = await seedMemory({
       username: "alice", project_dir: null,
       body: "alice prefers fastp for adapter trimming", seed: 600,
@@ -671,15 +664,17 @@ describe("getContext", () => {
     const ctx = await getContext({
       pool, username: "alice",
       project_path: "/workspace",
-      budget_tokens: 2000,
+      budget_tokens: 800,
     });
     expect(ctx.memory_ids).toEqual([id]);
-    expect(ctx.system_prompt.startsWith("# Memory Context\n\n[")).toBe(true);
-    expect(ctx.system_prompt).toContain("[user:observation] seed-600");
-    expect(ctx.system_prompt).toContain("alice prefers fastp for adapter trimming");
+    expect(ctx.system_prompt.startsWith("# Memory index\n")).toBe(true);
+    expect(ctx.system_prompt).toContain("- user/experience (1): ");
+    expect(ctx.system_prompt).toContain(`  - seed-600: desc-600 [${id}]`);
+    // Index only: bodies are read on demand with memory_get.
+    expect(ctx.system_prompt).not.toContain("alice prefers fastp");
   });
 
-  it("orders multiple in-budget memories by score DESC (project > user > org)", async () => {
+  it("lists project directories first, then user, then org", async () => {
     // Encoded form of "/workspace/pbmc3k" → "-workspace-pbmc3k"
     const projectDir = "-workspace-pbmc3k";
     const orgId     = await seedMemory({ username: "__org__", project_dir: null,        body: "org body",     seed: 610 });
@@ -689,37 +684,30 @@ describe("getContext", () => {
     const ctx = await getContext({
       pool, username: "alice",
       project_path: "/workspace/pbmc3k",
-      budget_tokens: 2000,
+      budget_tokens: 800,
     });
     expect(ctx.memory_ids).toEqual([projectId, userId, orgId]);
 
-    // Order in the prompt mirrors memory_ids order
-    const prj = ctx.system_prompt.indexOf("seed-612");
-    const usr = ctx.system_prompt.indexOf("seed-611");
-    const org = ctx.system_prompt.indexOf("seed-610");
+    const prj = ctx.system_prompt.indexOf("- project/decisions (1)");
+    const usr = ctx.system_prompt.indexOf("- user/experience (1)");
+    const org = ctx.system_prompt.indexOf("- org/experience (1)");
     expect(prj).toBeGreaterThan(-1);
     expect(usr).toBeGreaterThan(prj);
     expect(org).toBeGreaterThan(usr);
-
-    // Header lines exist for each scope tier
-    expect(ctx.system_prompt).toContain("[project:observation] seed-612");
-    expect(ctx.system_prompt).toContain("[user:observation] seed-611");
-    expect(ctx.system_prompt).toContain("[org:observation] seed-610");
   });
 
-  it("includes at least one memory even when budget is too small to fit any", async () => {
-    const id = await seedMemory({
-      username: "alice", project_dir: null,
-      body: "x".repeat(500), seed: 620,
-    });
-    // budget_tokens=1 → 4 chars budget; the single memory will overshoot.
+  it("stays within the budget, cutting entries rather than overshooting", async () => {
+    for (let i = 0; i < 40; i++) {
+      await seedMemory({ username: "alice", project_dir: null, body: `b${i}`, seed: 620 + i, type: i % 2 ? "feedback" : "reference" });
+    }
     const ctx = await getContext({
       pool, username: "alice",
       project_path: "/workspace",
-      budget_tokens: 1,
+      budget_tokens: 150,
     });
-    expect(ctx.memory_ids).toEqual([id]);
-    expect(ctx.system_prompt.length).toBeGreaterThan(4);
+    expect(ctx.system_prompt.length).toBeLessThanOrEqual(150 * 4);
+    expect(ctx.memory_ids.length).toBeGreaterThan(0);
+    expect(ctx.memory_ids.length).toBeLessThan(6);  // at most 3 per non-empty dir
   });
 
   it("excludes soft-deleted memories", async () => {

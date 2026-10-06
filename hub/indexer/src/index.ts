@@ -23,6 +23,7 @@ import {
   getMetrics,
   listDirs,
   getDir,
+  recordFeedback,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { shareRoutesPlugin } from "./share-api.js";
@@ -158,6 +159,7 @@ async function main(): Promise<void> {
       getMetrics,
       listDirs,
       getDir,
+      recordFeedback,
       writeDistillation,
     },
   });

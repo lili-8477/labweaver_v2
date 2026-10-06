@@ -69,10 +69,12 @@ export interface SearchHit {
 const DISTILL_FAILED_NAME = "raw distillation failed";
 
 // Query-independent prior shared by search, context and directory L1:
-// scope tier × popularity × recency (90-day e-folding).
+// scope tier × task outcomes × recency (90-day e-folding). Outcomes come
+// from POST /memory/feedback; a memory that helped tasks succeed ranks up,
+// one that preceded failures ranks down.
 const PRIOR_SCORE_SQL = `
   (CASE m.scope WHEN 'org' THEN 1.00 WHEN 'user' THEN 1.10 ELSE 1.20 END
-   * (1.0 + LN(1 + m.hit_count) * 0.05)
+   * (1.0 + (LN(1 + m.success_count) - LN(1 + m.failure_count)) * 0.05)
    * EXP(-EXTRACT(EPOCH FROM (now() - m.created_at)) / (86400 * 90)))`;
 
 // Hybrid search. Params: $1 query vector (NULL when the embedder is down),
@@ -220,16 +222,8 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     deleted_at:  r.deleted_at  ? r.deleted_at.toISOString()  : null,
   }));
 
-  if (hits.length > 0) {
-    await args.pool.query(
-      `UPDATE memories
-          SET hit_count   = hit_count + 1,
-              last_hit_at = now()
-        WHERE memory_id = ANY($1::uuid[])`,
-      [hits.map((h) => h.memory_id)],
-    );
-  }
-
+  // Retrieval alone is not a signal (phase 3): hit_count moves only when a
+  // task reports using the memory via recordFeedback.
   return hits;
 }
 
@@ -1021,70 +1015,61 @@ export interface MemoryContext {
   memory_ids:    string[];
 }
 
-// SessionStart bundle: rank up to ~50 candidate memories by
-// scope_tier × popularity × recency (no FTS or vector — context isn't
-// query-driven), then walk them in score-DESC order and accumulate header +
-// body lines into a single system_prompt string until adding the next memory
-// would push the running char count past `budget_tokens * 4` (the
-// 4-chars-per-token heuristic). Always include at least one memory if any
-// candidates exist; an empty bundle is worse than slightly oversized.
+// SessionStart directory index (phase 3). Instead of dumping memory bodies,
+// list each non-empty directory with its L0 and its top few entries (name,
+// description, id), project first, then user, then org, until the budget
+// (`budget_tokens * 4` chars) is spent. The agent drills down with
+// memory_dir / memory_get. Returns {system_prompt: "", memory_ids: []} when
+// the caller has no memories: the hook then emits nothing.
 //
 // project_path is the raw absolute path inside the user's container (e.g.
-// "/workspace/pbmc3k"). It's encoded to "-workspace-pbmc3k" via
-// encodeProjectDir before filtering on memories.project_dir.
-//
-// Returns {system_prompt: "", memory_ids: []} when no rows match — the
-// caller checks `memory_ids.length === 0` to decide whether to emit a
-// SessionStart hook at all, so the empty string (not the bare header) is
-// the documented "skip" signal.
-const CONTEXT_SQL = `
-SELECT m.memory_id, m.type, m.name, m.body,
-       m.scope AS scope_tier,
-       ${PRIOR_SCORE_SQL} AS score
-FROM memories m
-WHERE m.deleted_at IS NULL
-  AND (m.username = $1 OR m.username = '__org__')
-  AND (m.project_dir IS NULL OR m.project_dir = $2)
-  AND m.name <> '${DISTILL_FAILED_NAME}'
-ORDER BY score DESC
-LIMIT 50
-`;
+// "/workspace/pbmc3k"), encoded via encodeProjectDir.
+const CONTEXT_ENTRIES_PER_DIR = 3;
+const CONTEXT_SCOPE_ORDER = { project: 0, user: 1, org: 2 } as const;
+const CONTEXT_HEADER =
+  "# Memory index\n\n" +
+  "Your long-term memory, by directory: each line is a directory's summary and entry count, " +
+  "followed by its top entries. Read a directory's full overview with memory_dir, " +
+  "an entry's full text with memory_get(id), or search with memory_search.\n" +
+  "After a task where a memory informed your work, call memory_feedback with those " +
+  "memory ids and whether the task succeeded.\n\n";
 
 export async function getContext(args: GetContextArgs): Promise<MemoryContext> {
-  const encodedProjectDir = encodeProjectDir(args.project_path);
+  const project_dir = encodeProjectDir(args.project_path);
+  const dirs = (await listDirs({ pool: args.pool, username: args.username, project_dir }))
+    .filter((d) => d.entry_count > 0)
+    .sort((a, b) => CONTEXT_SCOPE_ORDER[a.scope] - CONTEXT_SCOPE_ORDER[b.scope]);
+  if (dirs.length === 0) return { system_prompt: "", memory_ids: [] };
 
-  type Row = {
-    memory_id:  string;
-    type:       string;
-    name:       string;
-    body:       string;
-    scope_tier: "org" | "user" | "project";
-    score:      string;
-  };
-  const r = await args.pool.query<Row>(CONTEXT_SQL, [args.username, encodedProjectDir]);
-
-  if (r.rows.length === 0) {
-    return { system_prompt: "", memory_ids: [] };
-  }
-
-  const HEADER = "# Memory Context\n\n";
   const charBudget = args.budget_tokens * 4;
+  const parts = [CONTEXT_HEADER];
   const ids: string[] = [];
-  const parts: string[] = [HEADER];
-  let used = HEADER.length;
+  let used = CONTEXT_HEADER.length;
+  const fits = (line: string) => used + line.length <= charBudget;
 
-  for (const row of r.rows) {
-    const block = `[${row.scope_tier}:${row.type}] ${row.name}\n${row.body}\n\n`;
-    if (ids.length === 0 || used + block.length <= charBudget) {
-      parts.push(block);
-      used += block.length;
-      ids.push(row.memory_id);
-    } else {
-      break;
+  outer:
+  for (const d of dirs) {
+    const dirLine = `- ${d.dir_key} (${d.entry_count}): ${d.l0}\n`;
+    if (!fits(dirLine)) break;
+    parts.push(dirLine);
+    used += dirLine.length;
+    const entries = await dirEntries({
+      pool: args.pool, username: args.username, project_dir,
+      dir_key: d.dir_key, limit: CONTEXT_ENTRIES_PER_DIR,
+    });
+    for (const e of entries) {
+      const line = `  - ${e.name}: ${truncate(e.description, 120)} [${e.memory_id}]\n`;
+      if (!fits(line)) break outer;
+      parts.push(line);
+      used += line.length;
+      ids.push(e.memory_id);
     }
   }
-
   return { system_prompt: parts.join(""), memory_ids: ids };
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
 
 export async function getMetrics(pool: Pool): Promise<{
@@ -1225,7 +1210,16 @@ export async function getDir(args: {
 }): Promise<DirDetail | null> {
   const summary = (await listDirs(args)).find((d) => d.dir_key === args.dir_key);
   if (!summary) return null;
+  return { ...summary, entries: await dirEntries({ ...args, limit: args.limit ?? 20 }) };
+}
 
+async function dirEntries(args: {
+  pool:        Pool;
+  username:    string;
+  project_dir: string | null;
+  dir_key:     string;
+  limit:       number;
+}): Promise<DirDetail["entries"]> {
   type Row = { memory_id: string; name: string; description: string; updated_at: Date };
   const r = await args.pool.query<Row>(
     `SELECT m.memory_id, m.name, m.description, m.updated_at
@@ -1236,15 +1230,36 @@ export async function getDir(args: {
         AND ${DIR_OWNED_SQL}
       ORDER BY ${PRIOR_SCORE_SQL} DESC, m.memory_id
       LIMIT $4`,
-    [args.username, args.project_dir, args.dir_key, args.limit ?? 20],
+    [args.username, args.project_dir, args.dir_key, args.limit],
   );
-  return {
-    ...summary,
-    entries: r.rows.map((row) => ({
-      memory_id:   row.memory_id,
-      name:        row.name,
-      description: row.description,
-      updated_at:  row.updated_at.toISOString(),
-    })),
-  };
+  return r.rows.map((row) => ({
+    memory_id:   row.memory_id,
+    name:        row.name,
+    description: row.description,
+    updated_at:  row.updated_at.toISOString(),
+  }));
+}
+
+// Record the outcome of a task that used these memories. Counts toward
+// ranking (success_count / failure_count) and marks them used (hit_count,
+// last_hit_at). Only memories the caller can see are touched: their own and
+// org memories. Returns how many rows were updated.
+export async function recordFeedback(args: {
+  pool:       Pool;
+  username:   string;
+  memory_ids: string[];
+  outcome:    "success" | "failure";
+}): Promise<{ updated: number }> {
+  const r = await args.pool.query(
+    `UPDATE memories
+        SET hit_count     = hit_count + 1,
+            last_hit_at   = now(),
+            success_count = success_count + CASE WHEN $3 = 'success' THEN 1 ELSE 0 END,
+            failure_count = failure_count + CASE WHEN $3 = 'failure' THEN 1 ELSE 0 END
+      WHERE memory_id = ANY($1::uuid[])
+        AND deleted_at IS NULL
+        AND (username = $2 OR username = '__org__')`,
+    [[...new Set(args.memory_ids)], args.username, args.outcome],
+  );
+  return { updated: r.rowCount ?? 0 };
 }
