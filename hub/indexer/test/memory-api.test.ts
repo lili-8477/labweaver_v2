@@ -51,11 +51,12 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     })),
     listDirs:         vi.fn(async () => []),
     getDir:           vi.fn(async () => null),
-    writeDistillation: vi.fn(async (): Promise<void> => {}),
+    writeDistillation: vi.fn(async () => ({ similar: [] as never[] })),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
     embedderClient: { embedTexts: vi.fn(async () => []) },
+    mergeSimilarity: 0.9,
     repo,
   };
   return { deps, repo };
@@ -645,7 +646,7 @@ describe("memory-api", () => {
     it("happy path: forwards summary+observations to writeDistillation, returns attempted count", async () => {
       const res = await app.inject({ method: "POST", url: "/memory/distill", payload: validBody });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, attempted: 2 });
+      expect(res.json()).toEqual({ ok: true, attempted: 2, similar: [] });
       expect(depsBag.repo.writeDistillation).toHaveBeenCalledTimes(1);
       const arg = depsBag.repo.writeDistillation.mock.calls[0]![1];
       expect(arg.sessionMeta.username).toBe("alice");
@@ -662,7 +663,7 @@ describe("memory-api", () => {
         payload: { ...validBody, observations: [] },
       });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, attempted: 1 });
+      expect(res.json()).toEqual({ ok: true, attempted: 1, similar: [] });
     });
 
     it("source_session_id is forwarded when provided", async () => {
@@ -713,6 +714,37 @@ describe("memory-api", () => {
   });
 
   // ────────────────────────────── /memory/metrics ──────────────────────────
+
+  // ────────────────────────────── merge-on-write ──────────────────────────────
+  describe("merge-on-write", () => {
+    it("POST /memory/write passes force_new and the merge check", async () => {
+      await app.inject({
+        method: "POST", url: "/memory/write",
+        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", force_new: true },
+      });
+      expect(depsBag.repo.writeUserMemory).toHaveBeenCalledWith(expect.objectContaining({
+        force_new: true,
+        merge: expect.objectContaining({ similarity: 0.9 }),
+      }));
+    });
+
+    it("POST /memory/distill returns held-back observations", async () => {
+      depsBag.repo.writeDistillation.mockResolvedValueOnce({ similar: [{ name: "qc", matches: [] }] });
+      const res = await app.inject({
+        method: "POST", url: "/memory/distill",
+        payload: { username: "alice", summary: { name: "s", description: "d", body: "b" }, observations: [] },
+      });
+      expect(res.json()).toEqual({ ok: true, attempted: 1, similar: [{ name: "qc", matches: [] }] });
+    });
+
+    it("PUT /memory/:id forwards merge", async () => {
+      await app.inject({
+        method: "PUT", url: "/memory/m-1",
+        payload: { actor: "alice", name: "n", description: "d", body: "b", merge: true },
+      });
+      expect(depsBag.repo.updateMemory).toHaveBeenCalledWith(expect.objectContaining({ merge: true }));
+    });
+  });
 
   // ────────────────────────────── directories ─────────────────────────────────
   describe("memory directories", () => {

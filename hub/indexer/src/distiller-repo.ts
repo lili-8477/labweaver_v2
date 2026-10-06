@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { DistillationResult, Observation } from "./distiller-prompts.js";
 import { contentHash } from "./content-hash.js";
-import { defaultDir, InvalidDirError, isDirFkViolation, scopeOf } from "./memory-dirs.js";
+import { InvalidDirError, isDirFkViolation, resolveDir, scopeOf } from "./memory-dirs.js";
+import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from "./memory-merge.js";
 
 export interface SettledSession {
   session_id:          string;
@@ -55,6 +56,9 @@ export interface InsertMemoryRowArgs {
   content_hash:       Buffer;
   // Directory to file the memory under; defaults by (scope, type).
   dir_key?:           string;
+  // Embedding already computed for the merge check: stored on the chunk
+  // directly instead of going through embedder_queue.
+  embedding?:         number[];
 }
 
 export async function insertMemoryRow(
@@ -62,8 +66,7 @@ export async function insertMemoryRow(
   args:   InsertMemoryRowArgs,
 ): Promise<string | null> {
   const memId = randomUUID();
-  const scope = scopeOf(args.username, args.project_dir);
-  const dirKey = args.dir_key ?? defaultDir(scope, args.type);
+  const dirKey = resolveDir(args.username, args.project_dir, args.type, args.dir_key);
   let ins;
   try {
     ins = await client.query<{ memory_id: string }>(
@@ -80,21 +83,23 @@ export async function insertMemoryRow(
       ],
     );
   } catch (e) {
-    if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, scope);
+    if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, scopeOf(args.username, args.project_dir));
     throw e;
   }
   if (ins.rowCount === 0) return null; // dedup; nothing else to write
 
   const writtenId = ins.rows[0]!.memory_id;
   const chunk = await client.query<{ chunk_id: string }>(
-    `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
-     VALUES ($1, 0, $2) RETURNING chunk_id`,
-    [writtenId, args.body],
+    `INSERT INTO memory_chunks (memory_id, chunk_idx, content, embedding)
+     VALUES ($1, 0, $2, $3::vector) RETURNING chunk_id`,
+    [writtenId, args.body, args.embedding ? "[" + args.embedding.join(",") + "]" : null],
   );
-  await client.query(
-    `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-    [chunk.rows[0]!.chunk_id],
-  );
+  if (!args.embedding) {
+    await client.query(
+      `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+      [chunk.rows[0]!.chunk_id],
+    );
+  }
   for (const [k, vs] of Object.entries(args.facets)) {
     if (!vs) continue;
     for (const v of vs) {
@@ -108,25 +113,60 @@ export async function insertMemoryRow(
   return writtenId;
 }
 
+export interface DistillationOutcome {
+  // Observations held back because a near match already exists in their
+  // directory; the agent merges them with PUT /memory/:id (merge=true).
+  similar: Array<{ name: string; matches: SimilarMemory[] }>;
+}
+
+// Writes one session summary plus its observations in one transaction. With
+// `merge`, each observation is first checked against its directory and held
+// back when similar; session summaries are always written.
 export async function writeDistillation(
   pool: Pool,
-  args: WriteDistillationArgs,
-): Promise<void> {
+  args: WriteDistillationArgs & { merge?: MergeCheck },
+): Promise<DistillationOutcome> {
+  const meta = args.sessionMeta;
+  const summary = {
+    name:        args.result.summary.name,
+    description: args.result.summary.description,
+    body:        args.result.summary.body,
+    facets:      {},
+  };
+  const rows = [
+    { memType: "session_summary", payload: summary as Pick<Observation, "name" | "description" | "body" | "facets"> },
+    ...args.result.observations.map((obs) => ({
+      memType: obs.type === "user-preference" ? "feedback" : "observation",
+      payload: obs as Pick<Observation, "name" | "description" | "body" | "facets">,
+    })),
+  ];
+  const embeddings = args.merge
+    ? await embedForMerge(args.merge, rows.map((r) => r.payload.body))
+    : null;
+
+  const outcome: DistillationOutcome = { similar: [] };
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await insertDistilled(client, args.sessionMeta, "session_summary", {
-      name:        args.result.summary.name,
-      description: args.result.summary.description,
-      body:        args.result.summary.body,
-      facets:      {},
-    }, args.promptVersion);
-
-    for (const obs of args.result.observations) {
-      const memType = obs.type === "user-preference" ? "feedback" : "observation";
-      await insertDistilled(client, args.sessionMeta, memType, obs, args.promptVersion);
+    for (const [i, row] of rows.entries()) {
+      const embedding = embeddings?.[i];
+      if (args.merge && embedding && row.memType !== "session_summary") {
+        const matches = await findSimilar(client, {
+          username:    meta.username,
+          project_dir: meta.project_dir,
+          dir_key:     resolveDir(meta.username, meta.project_dir, row.memType),
+          embedding,
+          similarity:  args.merge.similarity,
+        });
+        if (matches.length > 0) {
+          outcome.similar.push({ name: row.payload.name, matches });
+          continue;
+        }
+      }
+      await insertDistilled(client, meta, row.memType, row.payload, args.promptVersion, embedding);
     }
     await client.query("COMMIT");
+    return outcome;
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -141,6 +181,7 @@ async function insertDistilled(
   memType:       string,
   payload:       Pick<Observation, "name" | "description" | "body" | "facets">,
   promptVersion: number,
+  embedding?:    number[],
 ): Promise<void> {
   const hash = contentHash({ body: `${payload.name}\n${payload.body}`, promptVersion });
   await insertMemoryRow(client, {
@@ -154,5 +195,6 @@ async function insertDistilled(
     body:              payload.body,
     facets:            payload.facets,
     content_hash:      hash,
+    embedding,
   });
 }

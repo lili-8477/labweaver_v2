@@ -29,6 +29,13 @@ export function defaultDir(scope: Scope, type: string): string {
   }
 }
 
+// The directory a write lands in: the caller's choice, else the default.
+export function resolveDir(
+  username: string, project_dir: string | null, type: string, dir?: string,
+): string {
+  return dir ?? defaultDir(scopeOf(username, project_dir), type);
+}
+
 // Thrown when a caller names a directory that doesn't exist or belongs to a
 // different scope than the memory (the memories_dir_fk violation).
 export class InvalidDirError extends Error {

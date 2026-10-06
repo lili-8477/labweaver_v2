@@ -3,12 +3,13 @@ import { logger } from "./config.js";
 import { contentHash } from "./content-hash.js";
 import { insertMemoryRow } from "./distiller-repo.js";
 import { encodeProjectDir } from "./path-decode.js";
-import { defaultDir, InvalidDirError, isDirFkViolation, scopeOf } from "./memory-dirs.js";
+import { InvalidDirError, isDirFkViolation, resolveDir } from "./memory-dirs.js";
+import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from "./memory-merge.js";
 
 export interface AuditEntry {
   memory_id: string;
   actor:     string;
-  action:    'write' | 'update' | 'forget' | 'restore';
+  action:    'write' | 'update' | 'forget' | 'restore' | 'merge';
   before:    Record<string, unknown> | null;
   after:     Record<string, unknown> | null;
 }
@@ -464,6 +465,10 @@ export interface WriteUserMemoryArgs {
   body:        string;
   facets?:     Record<string, string[]>;
   dir?:        string;            // dir_key; defaults by (scope, type)
+  // When set, look for near matches in the target directory first and return
+  // them instead of writing. force_new skips the check.
+  merge?:      MergeCheck;
+  force_new?:  boolean;
 }
 
 // Persist a /memorize-style user-authored memory. Shares the chunk + facet +
@@ -475,10 +480,11 @@ export interface WriteUserMemoryArgs {
 // cannot be issued from inside a user container, so we reject them here.
 //
 // Returns { memory_id: null } when the row collides on
-// (username, project_dir, type, content_hash) — that is dedup, not failure.
+// (username, project_dir, type, content_hash) — that is dedup, not failure —
+// and { memory_id: null, similar } when the merge check found near matches.
 export async function writeUserMemory(
   args: WriteUserMemoryArgs,
-): Promise<{ memory_id: string | null }> {
+): Promise<{ memory_id: string | null; similar?: SimilarMemory[] }> {
   if (args.scope === "org") {
     throw new Error("org-scope writes are admin-only; use the operator administration path");
   }
@@ -495,9 +501,24 @@ export async function writeUserMemory(
     promptVersion: 0,
   });
 
+  const dirKey = resolveDir(args.username, project_dir, args.type, args.dir);
+  const embedding = args.merge
+    ? (await embedForMerge(args.merge, [args.body]))?.[0]
+    : undefined;
+
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
+    if (args.merge && embedding && !args.force_new) {
+      const similar = await findSimilar(client, {
+        username: args.username, project_dir, dir_key: dirKey,
+        embedding, similarity: args.merge.similarity,
+      });
+      if (similar.length > 0) {
+        await client.query("ROLLBACK");
+        return { memory_id: null, similar };
+      }
+    }
     const memory_id = await insertMemoryRow(client, {
       username:          args.username,
       project_dir,
@@ -509,7 +530,8 @@ export async function writeUserMemory(
       body:              args.body,
       facets:            args.facets ?? {},
       content_hash:      hash,
-      dir_key:           args.dir,
+      dir_key:           dirKey,
+      embedding,
     });
     if (memory_id !== null) {
       await appendAudit(client, {
@@ -519,7 +541,7 @@ export async function writeUserMemory(
         before: null,
         after:  {
           type: args.type, name: args.name, description: args.description, body: args.body,
-          dir_key: args.dir ?? defaultDir(scopeOf(args.username, project_dir), args.type),
+          dir_key: dirKey,
         },
       });
     }
@@ -614,6 +636,9 @@ export async function updateMemory(args: {
   description: string;
   body:        string;
   dir?:        string;            // move to another dir in the same scope
+  // Fold a near-duplicate into this memory (merge-on-write). Unlike a plain
+  // edit it may rewrite distilled rows; audited as 'merge'.
+  merge?:      boolean;
 }): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> {
   const client = await args.pool.connect();
   try {
@@ -648,7 +673,7 @@ export async function updateMemory(args: {
       return { ok: false, reason: 'forbidden' };
     }
 
-    if (row.source !== 'user') {
+    if (row.source !== 'user' && !args.merge) {
       await client.query("ROLLBACK");
       return { ok: false, reason: 'distilled' };
     }
@@ -695,7 +720,7 @@ export async function updateMemory(args: {
     await appendAudit(client, {
       memory_id: args.memoryId,
       actor:     args.actor,
-      action:    'update',
+      action:    args.merge ? 'merge' : 'update',
       before:    { name: row.name, description: row.description, body: row.body, dir_key: row.dir_key },
       after:     { name: args.name, description: args.description, body: args.body, dir_key: dirKey },
     });

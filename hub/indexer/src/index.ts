@@ -143,6 +143,7 @@ async function main(): Promise<void> {
     embedderClient: {
       embedTexts: (texts) => embedTexts({ baseUrl: cfg.embedderUrl, texts }),
     },
+    mergeSimilarity: cfg.memoryMergeSimilarity,
     repo: {
       searchMemories,
       getMemory,

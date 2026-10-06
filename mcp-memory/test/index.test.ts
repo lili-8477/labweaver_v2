@@ -5,6 +5,7 @@ import {
   callMemoryTimeline,
   callMemoryDir,
   callMemoryWrite,
+  callMemoryMerge,
   callMemoryForget,
   callMemoryDistillSession,
   toolDefinitions,
@@ -39,13 +40,14 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the seven memory tools", () => {
+  it("exposes exactly the eight memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
       "memory_dir",
       "memory_distill_session",
       "memory_forget",
       "memory_get",
+      "memory_merge",
       "memory_search",
       "memory_timeline",
       "memory_write",
@@ -222,6 +224,30 @@ describe("callMemoryDir", () => {
     const { stub } = makeFetchStub(new Response('{"error":"directory not found"}', { status: 404 }));
     const r = await callMemoryDir({ dir: "nope/x" }, baseDeps(stub));
     expect(r.isError).toBe(true);
+  });
+});
+
+describe("callMemoryMerge", () => {
+  it("PUTs the merged text as the env user with merge=true", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response('{"ok":true}', { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const r = await callMemoryMerge(
+      { memory_id: "m 1", name: "n", description: "d", body: "merged" },
+      baseDeps(stub),
+    );
+    expect(r.isError).toBeUndefined();
+    expect(calls[0]!.url).toBe("http://stub:8400/memory/m%201");
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      actor: "alice", name: "n", description: "d", body: "merged", merge: true,
+    });
+  });
+
+  it("requires memory_id", async () => {
+    const { stub, calls } = makeFetchStub(new Response("{}"));
+    expect((await callMemoryMerge({}, baseDeps(stub))).isError).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -87,7 +87,7 @@ export const toolDefinitions = [
   {
     name: "memory_write",
     description:
-      "Author a new memory. scope='user' for personal memories, scope='project' (with project_dir) for project-scoped. scope='org' is admin-only and rejected here.",
+      "Author a new memory. scope='user' for personal memories, scope='project' (with project_dir) for project-scoped. scope='org' is admin-only and rejected here. If near-duplicates already exist in the target directory nothing is written and the result carries `similar` matches: merge into one with memory_merge, or re-send with force_new if it is genuinely distinct.",
     inputSchema: {
       type: "object",
       properties: {
@@ -99,8 +99,24 @@ export const toolDefinitions = [
         body:        { type: "string" },
         facets:      { type: "object", additionalProperties: { type: "array", items: { type: "string" } } },
         dir:         { type: "string", description: "Directory in the same scope (e.g. project/decisions). Omit to file by type." },
+        force_new:   { type: "boolean", description: "Write even if similar memories exist. Only after reviewing a `similar` response and deciding the new memory is distinct." },
       },
       required: ["scope", "type", "name", "description", "body"],
+    },
+  },
+  {
+    name: "memory_merge",
+    description:
+      "Fold new information into an existing memory you own (the merge half of merge-on-write). Use after memory_write or memory_distill_session returns `similar` matches: rewrite the closest match's name/description/body so it covers both old and new content, without dropping facts from either. Works on distilled memories too.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        memory_id:   { type: "string" },
+        name:        { type: "string" },
+        description: { type: "string" },
+        body:        { type: "string", description: "The full merged body (replaces the old one)." },
+      },
+      required: ["memory_id", "name", "description", "body"],
     },
   },
   {
@@ -118,7 +134,7 @@ export const toolDefinitions = [
   {
     name: "memory_distill_session",
     description:
-      "Pin the current conversation to long-term memory. The agent itself produces a structured summary + 0..8 observations from its own context (no server-side re-summarisation). Call ONCE per /memory invocation; subsequent calls in the same session create duplicate rows. Observations should capture decisions, findings, file changes, command results, or user preferences worth recalling later — skip operational noise.",
+      "Pin the current conversation to long-term memory. The agent itself produces a structured summary + 0..8 observations from its own context (no server-side re-summarisation). Call ONCE per /memory invocation; subsequent calls in the same session create duplicate rows. Observations should capture decisions, findings, file changes, command results, or user preferences worth recalling later — skip operational noise. Observations that duplicate an existing memory are not written; they come back under `similar` with their matches — fold each into its best match with memory_merge.",
     inputSchema: {
       type: "object",
       properties: {
@@ -297,6 +313,7 @@ export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolRe
   if (args?.project_dir !== undefined) body.project_dir = args.project_dir;
   if (args?.facets      !== undefined) body.facets      = args.facets;
   if (args?.dir         !== undefined) body.dir         = args.dir;
+  if (args?.force_new   !== undefined) body.force_new   = args.force_new;
   try {
     const res = await deps.fetch(`${deps.baseUrl}/memory/write`, {
       method:  "POST",
@@ -306,6 +323,28 @@ export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolRe
     return await unwrap(res, "memory_write");
   } catch (err) {
     return fail(`memory_write network error: ${(err as Error).message}`);
+  }
+}
+
+export async function callMemoryMerge(args: any, deps: ToolDeps): Promise<ToolResult> {
+  if (!args?.memory_id || typeof args.memory_id !== "string") {
+    return fail("memory_merge: 'memory_id' is required");
+  }
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}/memory/${encodeURIComponent(args.memory_id)}`, {
+      method:  "PUT",
+      headers: { "content-type": "application/json" },
+      body:    JSON.stringify({
+        actor:       deps.username,
+        name:        args.name,
+        description: args.description,
+        body:        args.body,
+        merge:       true,
+      }),
+    });
+    return await unwrap(res, "memory_merge");
+  } catch (err) {
+    return fail(`memory_merge network error: ${(err as Error).message}`);
   }
 }
 
@@ -394,6 +433,7 @@ async function main(): Promise<void> {
       case "memory_timeline": result = await callMemoryTimeline(args, deps); break;
       case "memory_dir":      result = await callMemoryDir(args, deps); break;
       case "memory_write":    result = await callMemoryWrite(args, deps); break;
+      case "memory_merge":    result = await callMemoryMerge(args, deps); break;
       case "memory_forget":   result = await callMemoryForget(args, deps); break;
       case "memory_distill_session": result = await callMemoryDistillSession(args, deps); break;
       default:                result = fail(`unknown tool: ${name}`); break;

@@ -24,6 +24,7 @@ interface WriteParams {
   body: string;
   facets?: Record<string, string[]>;
   dir?: string;
+  force_new?: boolean;
 }
 
 export class MemoryRpcClient {
@@ -68,7 +69,7 @@ export class MemoryRpcClient {
 
   async update(
     id: string,
-    p: { name: string; description: string; body: string; dir?: string },
+    p: { name: string; description: string; body: string; dir?: string; merge?: boolean },
   ): Promise<unknown> {
     return this.put(`/memory/${encodeURIComponent(id)}`, { actor: this.username, ...p });
   }

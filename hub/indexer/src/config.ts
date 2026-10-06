@@ -15,6 +15,7 @@ export interface Config {
   embedderIntervalMs:   number;
   memoryApiPort:        number;
   memoryOrgManagers:    string[];
+  memoryMergeSimilarity: number;
   shareSnapshotsDir:          string;
   shareMaxFolderBytes:        number;
   shareSnapshotTtlDays:       number;
@@ -41,6 +42,16 @@ function parseBigintVar(env: Record<string, string | undefined>, name: string, f
   } catch {
     throw new Error(`${name} must be a valid bigint literal; got ${JSON.stringify(raw)}`);
   }
+}
+
+function parseUnitVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw new Error(`${name} must be a number in [0, 1]; got ${JSON.stringify(raw)}`);
+  }
+  return n;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -72,6 +83,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     embedderIntervalMs:   parseIntVar(env, "EMBEDDER_INTERVAL_MS",   5000),
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
     memoryOrgManagers,
+    memoryMergeSimilarity: parseUnitVar(env, "MEMORY_MERGE_SIMILARITY", 0.9),
     shareSnapshotsDir,
     shareMaxFolderBytes,
     shareSnapshotTtlDays,

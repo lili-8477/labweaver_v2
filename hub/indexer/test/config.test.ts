@@ -40,6 +40,12 @@ describe("loadConfig", () => {
       .toThrow(/MAX_CONCURRENT_FILES/);
   });
 
+  it('memoryMergeSimilarity defaults to 0.9 and rejects values outside [0, 1]', () => {
+    expect(loadConfig({ PG_URL: 'postgres://x' }).memoryMergeSimilarity).toBe(0.9);
+    expect(loadConfig({ PG_URL: 'postgres://x', MEMORY_MERGE_SIMILARITY: '0.85' }).memoryMergeSimilarity).toBe(0.85);
+    expect(() => loadConfig({ PG_URL: 'postgres://x', MEMORY_MERGE_SIMILARITY: '1.5' })).toThrow(/MEMORY_MERGE_SIMILARITY/);
+  });
+
   it('memoryOrgManagers defaults to [] when MEMORY_ORG_MANAGER is unset', () => {
     const cfg = loadConfig({ PG_URL: 'postgres://x' });
     expect(cfg.memoryOrgManagers).toEqual([]);

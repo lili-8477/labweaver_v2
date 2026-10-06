@@ -26,6 +26,8 @@ import { PROMPT_VERSION } from "./distiller-prompts.js";
 export interface MemoryApiDeps {
   pool:           Pool;
   embedderClient: { embedTexts: (texts: string[]) => Promise<number[][]> };
+  // Cosine similarity at which a write is held back as a near-duplicate.
+  mergeSimilarity: number;
   repo: {
     searchMemories:   typeof searchMemories;
     getMemory:        typeof getMemory;
@@ -78,6 +80,7 @@ const WriteBody = z.object({
   body:        z.string(),
   facets:      z.record(z.string(), z.array(z.string())).optional(),
   dir:         z.string().optional(),
+  force_new:   z.boolean().optional(),
 });
 
 const ForgetBody = z.object({
@@ -97,6 +100,7 @@ const UpdateBody = z.object({
   description: z.string(),
   body:        z.string().min(1),
   dir:         z.string().optional(),
+  merge:       z.boolean().optional(),
 });
 
 const RestoreBody = z.object({ actor: z.string().min(1) });
@@ -167,6 +171,7 @@ const DistillBody = z.object({
 
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
+  const mergeCheck = { embedderClient: deps.embedderClient, similarity: deps.mergeSimilarity };
 
   // A write/update naming a directory outside the memory's scope is a client
   // error, not a 500.
@@ -330,6 +335,8 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       body:        b.body,
       facets:      b.facets,
       dir:         b.dir,
+      force_new:   b.force_new,
+      merge:       mergeCheck,
     });
   });
 
@@ -344,7 +351,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       return { error: "validation failed", issues: parsed.error.issues };
     }
     const b = parsed.data;
-    await deps.repo.writeDistillation(deps.pool, {
+    const { similar } = await deps.repo.writeDistillation(deps.pool, {
       sessionMeta: {
         username:          b.username,
         project_dir:       b.project_dir ?? null,
@@ -352,11 +359,13 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       },
       result: { summary: b.summary, observations: b.observations },
       promptVersion: PROMPT_VERSION,
+      merge:         mergeCheck,
     });
     // Counts (1 summary + N observations) are best-effort; the underlying
     // insert is idempotent so dedup may suppress some rows. Returning the
     // attempted count keeps the surface honest without an extra SELECT.
-    return { ok: true, attempted: 1 + b.observations.length };
+    // `similar` lists observations held back as near-duplicates.
+    return { ok: true, attempted: 1 + b.observations.length, similar };
   });
 
   // POST /memory/forget — soft-delete with username scoping; idempotent
@@ -392,6 +401,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       description: parsed.data.description,
       body:        parsed.data.body,
       dir:         parsed.data.dir,
+      merge:       parsed.data.merge,
     });
     if (!r.ok && r.reason === 'not_found') { reply.code(404); return { error: 'memory not found' }; }
     if (!r.ok && r.reason === 'forbidden')  { reply.code(403); return { error: 'not the owner' }; }

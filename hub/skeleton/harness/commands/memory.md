@@ -7,7 +7,8 @@ Pin the *current chat* to long-term memory. Auto-distillation is off; this is th
 1. Review the current conversation. Identify what's worth recalling later. Skip operational noise (file listings, command echoes, retries, transient errors).
 2. Build a single distill payload matching the schema below. Be terse. Keep `body` lengths under the caps.
 3. Call the MCP tool `memory_distill_session` (server: `labweaver-memory`) **once** with that payload. Do not call it multiple times — each invocation creates rows; repeats produce duplicates that are only suppressed by content hash.
-4. Report the returned `attempted` count in one line so the user can confirm.
+4. For each entry in the result's `similar` list (an observation held back because a near-duplicate exists), call `memory_merge` on its best match with a body that folds the new observation into the old one without dropping facts from either. Merging is not "supplementing" — it is how a held-back observation lands.
+5. Report in one line: `attempted`, and how many observations were merged into existing memories.
 
 ## Payload schema
 
