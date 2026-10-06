@@ -48,6 +48,9 @@ async function main(): Promise<void> {
   logger.info({ dir: cfg.shareSnapshotsDir }, "share snapshots dir ready");
 
   const pool = new Pool({ connectionString: cfg.pgUrl, max: Math.max(10, cfg.maxConcurrentFiles * 2) });
+  // An idle client losing its connection (e.g. postgres restart) emits here;
+  // unhandled, it would crash the indexer. The pool reconnects on next use.
+  pool.on("error", (err) => logger.warn({ err }, "idle PG client error"));
 
   await waitForPg(pool, cfg.pgStartupMaxWaitSec, logger);
 
@@ -69,9 +72,8 @@ async function main(): Promise<void> {
   // Auto-distill loop removed: was generating low-signal session_summary +
   // observation rows on every settled session, polluting recall. Replaced by
   // agent-on-demand distill via the /memory slash command → labweaver-memory
-  // memory_distill_session MCP tool → POST /memory/distill. Distillation
-  // helpers (writeDistillation, distiller.ts, llm-client.ts) are kept in
-  // place because tests and the new endpoint still use writeDistillation.
+  // memory_distill_session MCP tool → POST /memory/distill, which still
+  // uses writeDistillation.
 
   const startEmbedderLoop = (): void => {
     const tick = async (): Promise<void> => {

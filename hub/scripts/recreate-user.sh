@@ -95,26 +95,7 @@ fi
 
 # Ensure the labweaver-memory MCP server is registered in the per-user
 # .mcp.json. Mirrors add-user.sh; merge keeps any pre-existing servers.
-MCP_FILE="${WORKSPACE}/.mcp.json"
-[[ -f "$MCP_FILE" ]] || echo '{}' > "$MCP_FILE"
-python3 - "$MCP_FILE" "$USERNAME" <<'PY'
-import json, sys, pathlib
-p, username = pathlib.Path(sys.argv[1]), sys.argv[2]
-try:
-    cur = json.loads(p.read_text() or "{}")
-except json.JSONDecodeError:
-    cur = {}
-servers = cur.setdefault("mcpServers", {})
-servers["labweaver-memory"] = {
-    "command": "labweaver-memory-mcp",
-    "env": {
-        "USERNAME": username,
-        "MEMORY_API_URL": "http://labweaver-indexer:8400",
-    },
-}
-with p.open("w") as f:
-    json.dump(cur, f, indent=2); f.write("\n")
-PY
+python3 "${HUB_DIR}/scripts/merge-mcp-config.py" "${WORKSPACE}/.mcp.json" "${USERNAME}"
 
 # Keep the user's existing service ID so their frontend link keeps working.
 SERVICE_ID=$("${HUB_DIR}/scripts/service-id.sh" get "${USERNAME}") \
@@ -141,7 +122,6 @@ docker run -d \
     -e "DEFAULT_PROJECT=/workspace" \
     -e "PG_URL=postgres://labweaver:${POSTGRES_PASSWORD}@labweaver-postgres:5432/labweaver" \
     -e "USERNAME=${USERNAME}" \
-    -e "SIDECAR_IMPORT_ON_BOOT=1" \
     -e "HOME=/home/node" \
     -e "MEMORY_API_URL=http://labweaver-indexer:8400" \
     -e "MEMORY_ENABLED=1" \

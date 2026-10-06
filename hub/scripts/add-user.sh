@@ -265,31 +265,12 @@ EOF
     chmod 600 "${WORKSPACE}/.env"
 fi
 
-# Register the labweaver-memory MCP server for this user. Claude Code reads
+# Register the labweaver-memory MCP server for this user. The adapter reads
 # .mcp.json from the project root (cwd = /workspace inside the container,
 # i.e. ${WORKSPACE} on the host). Merged via Python so we don't clobber
 # any pre-existing servers (e.g. an adapter MCP added later); idempotent
 # on re-runs since the same key just overwrites itself.
-MCP_FILE="${WORKSPACE}/.mcp.json"
-[[ -f "$MCP_FILE" ]] || echo '{}' > "$MCP_FILE"
-python3 - "$MCP_FILE" "$USERNAME" <<'PY'
-import json, sys, pathlib
-p, username = pathlib.Path(sys.argv[1]), sys.argv[2]
-try:
-    cur = json.loads(p.read_text() or "{}")
-except json.JSONDecodeError:
-    cur = {}
-servers = cur.setdefault("mcpServers", {})
-servers["labweaver-memory"] = {
-    "command": "labweaver-memory-mcp",
-    "env": {
-        "USERNAME": username,
-        "MEMORY_API_URL": "http://labweaver-indexer:8400",
-    },
-}
-with p.open("w") as f:
-    json.dump(cur, f, indent=2); f.write("\n")
-PY
+python3 "${HUB_DIR}/scripts/merge-mcp-config.py" "${WORKSPACE}/.mcp.json" "${USERNAME}"
 
 # --- 2. HTTP Basic auth entry ------------------------------------------------
 echo "[2/4] Setting up HTTP auth"
@@ -389,7 +370,6 @@ docker run -d \
     -e "DEFAULT_PROJECT=/workspace" \
     -e "PG_URL=postgres://labweaver:${POSTGRES_PASSWORD}@labweaver-postgres:5432/labweaver" \
     -e "USERNAME=${USERNAME}" \
-    -e "SIDECAR_IMPORT_ON_BOOT=1" \
     -e "HOME=/home/node" \
     -e "MEMORY_API_URL=http://labweaver-indexer:8400" \
     -e "MEMORY_ENABLED=1" \

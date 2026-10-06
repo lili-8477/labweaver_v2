@@ -7,6 +7,7 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: labweaver-dev-nats
+    restart: unless-stopped
     command: -c /etc/nats/nats.conf
     ports:
       - "4223:4222"
@@ -20,6 +21,7 @@ services:
   adapter:
     image: labweaver:dev
     container_name: labweaver-dev-user
+    restart: unless-stopped
     depends_on:
       nats:
         condition: service_started
@@ -33,7 +35,6 @@ services:
       HOME: "/home/node"
       PG_URL: "postgres://labweaver:${POSTGRES_PASSWORD}@postgres:5432/labweaver"
       USERNAME: "devuser"
-      SIDECAR_IMPORT_ON_BOOT: "1"
       # Auto-shutdown kernels idle (no in-flight cell) longer than this.
       # Next execute re-spawns lazily. 0 disables culling.
       KERNEL_IDLE_CULL_MS: "14400000"
@@ -44,12 +45,18 @@ services:
         required: true
     volumes:
       - ./hub/workspaces/devuser/projects:/workspace/projects
+      # Auto-mode projects and uploads; persisted across recreates like prod.
+      - ./hub/workspaces/devuser/local_projects:/workspace/local_projects
+      # Written by hub/scripts/setup-dev-user.sh (labweaver-memory MCP server).
+      - ./hub/workspaces/devuser/.mcp.json:/workspace/.mcp.json:ro
       - ./hub/workspaces/devuser/.claude/chats:/workspace/.claude/chats
       - ./hub/workspaces/devuser/.claude/skills:/home/node/.claude/skills
-      - ./hub/workspaces/devuser/.claude/agents:/home/node/.claude/agents
       - ./hub/workspaces/devuser/.claude/settings.json:/home/node/.claude/settings.json
-      # Hook scripts straight from the skeleton, so dev runs the live copies.
-      # settings.json gets its hook entries from hub/scripts/merge-harness-hooks.py.
+      # Harness commands, agents and hook scripts straight from the skeleton,
+      # so dev runs the live copies. settings.json gets its hook entries from
+      # hub/scripts/setup-dev-user.sh.
+      - ./hub/skeleton/harness/commands:/home/node/.claude/commands:ro
+      - ./hub/skeleton/harness/agents:/home/node/.claude/agents:ro
       - ./hub/skeleton/harness/hooks:/home/node/.claude/hooks:ro
       # DeepSeek Harness state: session logs (resume) + generated patch.
       - ./hub/workspaces/devuser/.dsh:/home/node/.dsh
@@ -60,6 +67,7 @@ services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg16  # >=0.8 for hnsw.iterative_scan (memory search)
     container_name: labweaver-dev-postgres
+    restart: unless-stopped
     env_file: [ ./hub/.env ]
     environment:
       POSTGRES_USER: labweaver
@@ -78,6 +86,7 @@ services:
   indexer:
     build: ./hub/indexer
     container_name: labweaver-dev-indexer
+    restart: unless-stopped
     env_file: [ ./hub/.env ]
     environment:
       PG_URL: "postgres://labweaver:${POSTGRES_PASSWORD}@postgres:5432/labweaver"
