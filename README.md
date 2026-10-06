@@ -140,12 +140,15 @@ the username/password you chose.
 ## Quick start (single-user local dev)
 
 ```bash
+# The image copies the prebuilt adapter and memory MCP bundles.
+(cd adapter && npm ci && npm run build) && (cd mcp-memory && npm ci && npm run build)
 docker build -f image/Dockerfile -t labweaver:dev .
 
-# Create a minimal devuser workspace.
-mkdir -p hub/workspaces/devuser/.claude/{skills,agents,chats,claude-projects}
-mkdir -p hub/workspaces/devuser/{projects,.dsh}
+# hub/.env needs POSTGRES_PASSWORD (add-user.sh generates it on a real hub).
+# Create the devuser workspace: dirs, harness hooks, memory MCP server.
+mkdir -p hub/workspaces/devuser/.claude
 echo '{"model":"deepseek-official/deepseek-v4-pro"}' > hub/workspaces/devuser/.claude/settings.json
+hub/scripts/setup-dev-user.sh
 printf 'DEEPSEEK_API_KEY=sk-...\nOLLAMA_API_KEY=...\n' > hub/workspaces/devuser/.env
 # Random service ID, recorded in hub/users.md and handed to the adapter.
 echo "SERVICE_ID=$(hub/scripts/service-id.sh ensure devuser)" >> hub/workspaces/devuser/.env
@@ -218,14 +221,14 @@ drive the frontend against a test user and verify each scenario:
 2. `chat` RPC (frontend send) — streams text, rendered live in ChatPanel.
 3. Tool calls render in ExecutionTimeline with name, JSON-parsed args, duration, cumulative tokens and cost.
 4. Subagent delegation shows the `→` `transfer` badge.
-5. `chat_finished` flips the running indicator off; no orphan `claude` child (`pgrep -af claude` inside the container).
+5. `chat_finished` flips the running indicator off; no orphan `dsh` child (`pgrep -af dsh` inside the container).
 6. Reload the page → `list_chats` + `get_chat_messages` reconstruct the timeline from session JSONL + sidecar.
 7. `delete_chat` removes JSONL + sidecar.
 8. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
 9. Drop a `SKILL.md` into `hub/workspaces/<user>/.claude/skills/<name>/` → it appears at `/home/node/.claude/skills/` inside the container → invoking by name works.
 10. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
 
-Then soak: 48h under representative load. Watch `pgrep -af claude` (stable),
+Then soak: 48h under representative load. Watch `pgrep -af dsh` (stable),
 session JSONL tails (not truncated), nats-server logs (no `slow consumer`).
 
 ## Contract
