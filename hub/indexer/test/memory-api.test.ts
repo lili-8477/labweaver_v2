@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Pool } from "pg";
 import { buildApp, type MemoryApiDeps } from "../src/memory-api.js";
+import { InvalidDirError } from "../src/memory-dirs.js";
 import type {
   SearchHit,
   MemoryDetail,
@@ -23,6 +24,8 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   listMemories:     ReturnType<typeof vi.fn>;
   getAuditTrail:    ReturnType<typeof vi.fn>;
   getMetrics:       ReturnType<typeof vi.fn>;
+  listDirs:         ReturnType<typeof vi.fn>;
+  getDir:           ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
 } } {
   const repo = {
@@ -46,6 +49,8 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
       distill_cursor_lag_seconds_max: 0,
       audit_log_size: 0,
     })),
+    listDirs:         vi.fn(async () => []),
+    getDir:           vi.fn(async () => null),
     writeDistillation: vi.fn(async (): Promise<void> => {}),
   };
   const deps: MemoryApiDeps = {
@@ -708,6 +713,43 @@ describe("memory-api", () => {
   });
 
   // ────────────────────────────── /memory/metrics ──────────────────────────
+
+  // ────────────────────────────── directories ─────────────────────────────────
+  describe("memory directories", () => {
+    it("GET /memory/dirs passes owner through", async () => {
+      depsBag.repo.listDirs.mockResolvedValueOnce([{ dir_key: "user/notes" }]);
+      const res = await app.inject({ method: "GET", url: "/memory/dirs?username=alice&project_dir=-w-p" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([{ dir_key: "user/notes" }]);
+      expect(depsBag.repo.listDirs).toHaveBeenCalledWith(
+        expect.objectContaining({ username: "alice", project_dir: "-w-p" }),
+      );
+    });
+
+    it("GET /memory/dirs/:dir_key decodes the key and 404s when absent", async () => {
+      const res = await app.inject({ method: "GET", url: "/memory/dirs/user%2Fnotes?username=alice&limit=5" });
+      expect(res.statusCode).toBe(404);
+      expect(depsBag.repo.getDir).toHaveBeenCalledWith(
+        expect.objectContaining({ dir_key: "user/notes", project_dir: null, limit: 5 }),
+      );
+    });
+
+    it("GET /memory/dirs requires username", async () => {
+      const res = await app.inject({ method: "GET", url: "/memory/dirs" });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("POST /memory/write forwards dir and maps InvalidDirError to 400", async () => {
+      depsBag.repo.writeUserMemory.mockRejectedValueOnce(new InvalidDirError("project/decisions", "user"));
+      const res = await app.inject({
+        method: "POST", url: "/memory/write",
+        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", dir: "project/decisions" },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/project\/decisions/);
+      expect(depsBag.repo.writeUserMemory).toHaveBeenCalledWith(expect.objectContaining({ dir: "project/decisions" }));
+    });
+  });
 
   describe("GET /memory/metrics", () => {
     it("returns metrics from repo.getMetrics", async () => {

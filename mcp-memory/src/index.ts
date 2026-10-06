@@ -43,6 +43,7 @@ export const toolDefinitions = [
         types:       { type: "array",  items: { type: "string" }, description: "Filter to memory types (user, feedback, project, reference)." },
         limit:       { type: "integer", minimum: 1, maximum: 100 },
         since:       { type: "string", description: "ISO-8601 cutoff; only memories created after are returned." },
+        dirs:        { type: "array",  items: { type: "string" }, description: "Restrict to directories (dir_key, e.g. project/decisions); see memory_dir." },
       },
       required: ["query"],
     },
@@ -71,6 +72,19 @@ export const toolDefinitions = [
     },
   },
   {
+    name: "memory_dir",
+    description:
+      "Browse memory directories. Without dir: every directory visible to you with its one-line summary (L0) and entry count. With dir: that directory's overview (L1) — its top entries' names and one-line descriptions; read an entry's full body with memory_get. Directories: user/{preferences,experience,notes}, project/{entities,trajectories,decisions}, org/{entities,experience,references}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dir:         { type: "string", description: "dir_key, e.g. project/decisions. Omit to list directories." },
+        project_dir: { type: "string", description: "Encoded project dir; required to see project/* directories." },
+        limit:       { type: "integer", minimum: 1, maximum: 200, description: "Max entries in the overview (default 20)." },
+      },
+    },
+  },
+  {
     name: "memory_write",
     description:
       "Author a new memory. scope='user' for personal memories, scope='project' (with project_dir) for project-scoped. scope='org' is admin-only and rejected here.",
@@ -84,6 +98,7 @@ export const toolDefinitions = [
         description: { type: "string" },
         body:        { type: "string" },
         facets:      { type: "object", additionalProperties: { type: "array", items: { type: "string" } } },
+        dir:         { type: "string", description: "Directory in the same scope (e.g. project/decisions). Omit to file by type." },
       },
       required: ["scope", "type", "name", "description", "body"],
     },
@@ -207,6 +222,7 @@ export async function callMemorySearch(args: any, deps: ToolDeps): Promise<ToolR
   if (args?.limit       !== undefined) body.limit       = args.limit;
   if (args?.types       !== undefined) body.types       = args.types;
   if (args?.since       !== undefined) body.since       = args.since;
+  if (args?.dirs        !== undefined) body.dirs        = args.dirs;
   try {
     const res = await deps.fetch(`${deps.baseUrl}/memory/search`, {
       method:  "POST",
@@ -245,6 +261,21 @@ export async function callMemoryTimeline(args: any, deps: ToolDeps): Promise<Too
   }
 }
 
+export async function callMemoryDir(args: any, deps: ToolDeps): Promise<ToolResult> {
+  const params = new URLSearchParams({ username: deps.username });
+  if (args?.project_dir !== undefined) params.set("project_dir", String(args.project_dir));
+  if (args?.limit       !== undefined) params.set("limit",       String(args.limit));
+  const path = args?.dir !== undefined
+    ? `/memory/dirs/${encodeURIComponent(String(args.dir))}`
+    : "/memory/dirs";
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}${path}?${params.toString()}`);
+    return await unwrap(res, "memory_dir");
+  } catch (err) {
+    return fail(`memory_dir network error: ${(err as Error).message}`);
+  }
+}
+
 export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolResult> {
   // Hard reject org-scope BEFORE any HTTP traffic. The memory-api will
   // happily accept it (it's used by the indexer's own admin writes), so
@@ -265,6 +296,7 @@ export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolRe
   };
   if (args?.project_dir !== undefined) body.project_dir = args.project_dir;
   if (args?.facets      !== undefined) body.facets      = args.facets;
+  if (args?.dir         !== undefined) body.dir         = args.dir;
   try {
     const res = await deps.fetch(`${deps.baseUrl}/memory/write`, {
       method:  "POST",
@@ -360,6 +392,7 @@ async function main(): Promise<void> {
       case "memory_search":   result = await callMemorySearch(args, deps); break;
       case "memory_get":      result = await callMemoryGet(args, deps); break;
       case "memory_timeline": result = await callMemoryTimeline(args, deps); break;
+      case "memory_dir":      result = await callMemoryDir(args, deps); break;
       case "memory_write":    result = await callMemoryWrite(args, deps); break;
       case "memory_forget":   result = await callMemoryForget(args, deps); break;
       case "memory_distill_session": result = await callMemoryDistillSession(args, deps); break;

@@ -13,7 +13,10 @@ import type {
   listMemories,
   getAuditTrail,
   getMetrics,
+  listDirs,
+  getDir,
 } from "./memory-repo.js";
+import { InvalidDirError } from "./memory-dirs.js";
 import type { writeDistillation } from "./distiller-repo.js";
 import { PROMPT_VERSION } from "./distiller-prompts.js";
 
@@ -35,6 +38,8 @@ export interface MemoryApiDeps {
     listMemories:     typeof listMemories;
     getAuditTrail:    typeof getAuditTrail;
     getMetrics:       typeof getMetrics;
+    listDirs:         typeof listDirs;
+    getDir:           typeof getDir;
     writeDistillation: typeof writeDistillation;
   };
 }
@@ -49,6 +54,7 @@ const SearchBody = z.object({
   limit:       z.number().int().positive().max(100).optional(),
   types:       z.array(z.string()).optional(),
   since:       z.string().datetime().optional(),
+  dirs:        z.array(z.string()).optional(),
 });
 
 const TimelineQuery = z.object({
@@ -71,6 +77,7 @@ const WriteBody = z.object({
   description: z.string(),
   body:        z.string(),
   facets:      z.record(z.string(), z.array(z.string())).optional(),
+  dir:         z.string().optional(),
 });
 
 const ForgetBody = z.object({
@@ -89,6 +96,7 @@ const UpdateBody = z.object({
   name:        z.string().min(1),
   description: z.string(),
   body:        z.string().min(1),
+  dir:         z.string().optional(),
 });
 
 const RestoreBody = z.object({ actor: z.string().min(1) });
@@ -104,6 +112,7 @@ const ListQuery = z.object({
     typeof v === 'string' ? [v] : v
   ).optional(),
   source:          z.enum(['user', 'distilled']).optional(),
+  dir:             z.string().optional(),
   // Querystring booleans need explicit literal parsing — `z.coerce.boolean`
   // calls JS `Boolean(x)` which returns `true` for any non-empty string,
   // so `?include_deleted=false` would incorrectly include deleted rows.
@@ -112,6 +121,12 @@ const ListQuery = z.object({
   sort:            z.enum(['created', 'hit']).optional(),
   limit:           z.coerce.number().int().positive().max(200).optional(),
   cursor:          z.string().datetime().optional(),
+});
+
+const DirsQuery = z.object({
+  username:    z.string().min(1),
+  project_dir: z.string().optional(),
+  limit:       z.coerce.number().int().positive().max(200).optional(),
 });
 
 const AuditQuery = z.object({
@@ -153,6 +168,16 @@ const DistillBody = z.object({
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
 
+  // A write/update naming a directory outside the memory's scope is a client
+  // error, not a 500.
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof InvalidDirError) {
+      reply.code(400).send({ error: err.message });
+      return;
+    }
+    reply.send(err);
+  });
+
   app.get("/healthz", async () => ({ ok: true }));
 
   // GET /memory/metrics — debug surface returning metrics across memory,
@@ -177,6 +202,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       limit:          b.limit,
       types:          b.types,
       since:          b.since ? new Date(b.since) : undefined,
+      dirs:           b.dirs,
     });
     return hits;
   });
@@ -238,11 +264,50 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       scope:           q.scope,
       type:            q.type,
       source:          q.source,
+      dir:             q.dir,
       include_deleted: q.include_deleted,
       sort:            q.sort,
       limit:           q.limit,
       cursor:          q.cursor,
     });
+  });
+
+  // GET /memory/dirs — directories visible to the caller with their L0 and
+  // entry counts. GET /memory/dirs/:dir_key — one directory's computed L1.
+  // dir_key contains "/" so callers URL-encode it.
+  app.get("/memory/dirs", async (req, reply) => {
+    const parsed = DirsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const q = parsed.data;
+    return await deps.repo.listDirs({
+      pool:        deps.pool,
+      username:    q.username,
+      project_dir: q.project_dir ?? null,
+    });
+  });
+
+  app.get<{ Params: { dir_key: string } }>("/memory/dirs/:dir_key", async (req, reply) => {
+    const parsed = DirsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const q = parsed.data;
+    const dir = await deps.repo.getDir({
+      pool:        deps.pool,
+      username:    q.username,
+      project_dir: q.project_dir ?? null,
+      dir_key:     req.params.dir_key,
+      limit:       q.limit,
+    });
+    if (dir === null) {
+      reply.code(404);
+      return { error: "directory not found" };
+    }
+    return dir;
   });
 
   // POST /memory/write — /memorize-style user-authored memory. Returns
@@ -264,6 +329,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       description: b.description,
       body:        b.body,
       facets:      b.facets,
+      dir:         b.dir,
     });
   });
 
@@ -325,6 +391,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       name:        parsed.data.name,
       description: parsed.data.description,
       body:        parsed.data.body,
+      dir:         parsed.data.dir,
     });
     if (!r.ok && r.reason === 'not_found') { reply.code(404); return { error: 'memory not found' }; }
     if (!r.ok && r.reason === 'forbidden')  { reply.code(403); return { error: 'not the owner' }; }

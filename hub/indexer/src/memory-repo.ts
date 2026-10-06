@@ -3,6 +3,7 @@ import { logger } from "./config.js";
 import { contentHash } from "./content-hash.js";
 import { insertMemoryRow } from "./distiller-repo.js";
 import { encodeProjectDir } from "./path-decode.js";
+import { defaultDir, InvalidDirError, isDirFkViolation, scopeOf } from "./memory-dirs.js";
 
 export interface AuditEntry {
   memory_id: string;
@@ -38,12 +39,14 @@ export interface SearchMemoriesArgs {
   limit?:         number;
   types?:         string[];
   since?:         Date;
+  dirs?:          string[];
 }
 
 export interface SearchHit {
   memory_id:   string;
   name:        string;
   description: string;
+  dir_key:     string;
   snippet:     string;
   score:       number;
   scope_tier:  "org" | "user" | "project";
@@ -60,107 +63,82 @@ export interface SearchHit {
   deleted_at:  string | null;
 }
 
-// Hybrid path (embedder available): vector + FTS blended ranking.
-// Params: $1 query vector, $2 query text, $3 username, $4 project_dir,
-//         $5 types[], $6 since, $7 limit.
+// Name of the sentinel row distiller.ts writes on permanent failure; never
+// surfaced to agents.
+const DISTILL_FAILED_NAME = "raw distillation failed";
+
+// Query-independent prior shared by search, context and directory L1:
+// scope tier × popularity × recency (90-day e-folding).
+const PRIOR_SCORE_SQL = `
+  (CASE m.scope WHEN 'org' THEN 1.00 WHEN 'user' THEN 1.10 ELSE 1.20 END
+   * (1.0 + LN(1 + m.hit_count) * 0.05)
+   * EXP(-EXTRACT(EPOCH FROM (now() - m.created_at)) / (86400 * 90)))`;
+
+// Hybrid search. Params: $1 query vector (NULL when the embedder is down),
+// $2 query text, $3 username, $4 project_dir, $5 types[], $6 since,
+// $7 dirs[], $8 limit.
 //
-// TODO(memory-chunking): the candidates CTE caps at LIMIT 200 ordered by
-// vector distance. Once chunked memories ship and the corpus exceeds 200
-// chunks-with-embeddings, FTS-only hits on chunks beyond the top-200 vector
-// neighbourhood will be silently dropped. See
-// docs/superpowers/plans/2026-05-06-agent-memory-sub-phase-b.md for the
-// follow-up (split into two sub-queries and UNION, or raise the cap).
-const HYBRID_SQL = `
-WITH q AS (SELECT $1::vector AS qv, plainto_tsquery('english', $2) AS qt),
-candidates AS (
-  SELECT mc.memory_id,
-         mc.content,
-         (1 - (mc.embedding <=> q.qv)) AS vec_sim,
-         ts_rank(mc.tsv, q.qt) AS fts_score
-  FROM memory_chunks mc, q
-  WHERE mc.embedding IS NOT NULL OR mc.tsv @@ q.qt
-  ORDER BY mc.embedding <=> q.qv
-  LIMIT 200
-)
--- TODO(memory-chunking): once a memory can have >1 chunk, this join will
--- emit one row per matching chunk and produce duplicate memory_ids in the
--- output. Pick the best chunk per memory (e.g. DISTINCT ON (memory_id) with
--- score-ordered subquery) before returning. See sub-phase-b plan.
-SELECT m.memory_id, m.name, m.description,
-       m.type, m.source, m.created_at, m.updated_at,
-       m.hit_count, m.last_hit_at, m.deleted_at,
-       LEFT(c.content, 200) AS snippet,
-       (c.vec_sim * 0.7 + LEAST(c.fts_score, 1.0) * 0.3)
-         * CASE
-             WHEN m.username = '__org__'                              THEN 1.00
-             WHEN m.project_dir IS NULL                               THEN 1.10
-             ELSE 1.20
-           END
-         * (1.0 + LN(1 + m.hit_count) * 0.05)
-         * EXP(-EXTRACT(EPOCH FROM (now() - m.created_at)) / (86400 * 90))  AS score,
-       CASE
-         WHEN m.username = '__org__'                              THEN 'org'
-         WHEN m.project_dir IS NULL                               THEN 'user'
-         ELSE 'project'
-       END AS scope_tier
-FROM memories m JOIN candidates c USING (memory_id)
-WHERE m.deleted_at IS NULL
+// Candidates come from two arms, each capped at 200 chunks AFTER the
+// visibility filter (so other users' chunks can't crowd the caller out):
+// nearest vectors, and best full-text matches. Both arms compute both
+// signals, the union is scored, and each memory keeps only its best chunk.
+// Without a vector (embedder down) the vector arm is dropped and vec_sim is
+// NULL → 0, leaving score = 0.3 · fts · prior.
+const VISIBLE_SQL = `
+      m.deleted_at IS NULL
   AND (m.username = $3 OR m.username = '__org__')
   AND (m.project_dir IS NULL OR m.project_dir = $4)
   AND ($5::text[] IS NULL OR m.type = ANY($5))
   AND ($6::timestamptz IS NULL OR m.created_at >= $6)
-ORDER BY score DESC
-LIMIT $7
-`;
+  AND ($7::text[] IS NULL OR m.dir_key = ANY($7))`;
 
-// FTS-only fallback (embedder unavailable). pgvector's `<=>` against a
-// zero-vector returns NaN, which would poison every score and make the final
-// ORDER BY/LIMIT non-deterministic — so we drop the vector arm entirely
-// rather than feeding it a placeholder vector. vec_sim slot collapses to 0.0,
-// leaving score = 0.3 * LEAST(fts_score, 1.0) * scope * popularity * recency.
-//
-// Params shift down by one (no qVec): $1 query text, $2 username,
-// $3 project_dir, $4 types[], $5 since, $6 limit.
-const FTS_ONLY_SQL = `
-WITH q AS (SELECT plainto_tsquery('english', $1) AS qt),
-candidates AS (
-  SELECT mc.memory_id,
-         mc.content,
-         ts_rank(mc.tsv, q.qt) AS fts_score
-  FROM memory_chunks mc, q
-  WHERE mc.tsv @@ q.qt
-  ORDER BY ts_rank(mc.tsv, q.qt) DESC
+const CHUNK_SIGNALS_SQL = `
+  mc.chunk_id, mc.memory_id,
+  1 - (mc.embedding <=> q.qv) AS vec_sim,
+  CASE WHEN mc.tsv @@ q.qt THEN ts_rank(mc.tsv, q.qt) ELSE 0 END AS fts_score`;
+
+function searchSql(withVector: boolean): string {
+  const vecArm = `
+vec AS (
+  SELECT ${CHUNK_SIGNALS_SQL}
+  FROM memory_chunks mc JOIN memories m USING (memory_id), q
+  WHERE mc.embedding IS NOT NULL AND ${VISIBLE_SQL}
+  ORDER BY mc.embedding <=> $1::vector
   LIMIT 200
+),`;
+  return `
+WITH q AS (SELECT $1::vector AS qv, plainto_tsquery('english', $2) AS qt),
+${withVector ? vecArm : ""}
+fts AS (
+  SELECT ${CHUNK_SIGNALS_SQL}
+  FROM memory_chunks mc JOIN memories m USING (memory_id), q
+  WHERE mc.tsv @@ q.qt AND ${VISIBLE_SQL}
+  ORDER BY fts_score DESC
+  LIMIT 200
+),
+cand AS (
+  ${withVector ? "SELECT * FROM vec UNION" : ""} SELECT * FROM fts
+),
+best AS (
+  SELECT DISTINCT ON (c.memory_id) c.memory_id, c.chunk_id,
+         (COALESCE(c.vec_sim, 0) * 0.7 + LEAST(c.fts_score, 1.0) * 0.3)
+           * ${PRIOR_SCORE_SQL} AS score
+  FROM cand c JOIN memories m USING (memory_id)
+  ORDER BY c.memory_id, score DESC
 )
--- TODO(memory-chunking): once a memory can have >1 chunk, this join will
--- emit one row per matching chunk and produce duplicate memory_ids. See
--- the matching note in HYBRID_SQL above.
-SELECT m.memory_id, m.name, m.description,
+SELECT m.memory_id, m.name, m.description, m.dir_key,
        m.type, m.source, m.created_at, m.updated_at,
        m.hit_count, m.last_hit_at, m.deleted_at,
-       LEFT(c.content, 200) AS snippet,
-       (LEAST(c.fts_score, 1.0) * 0.3)
-         * CASE
-             WHEN m.username = '__org__'                              THEN 1.00
-             WHEN m.project_dir IS NULL                               THEN 1.10
-             ELSE 1.20
-           END
-         * (1.0 + LN(1 + m.hit_count) * 0.05)
-         * EXP(-EXTRACT(EPOCH FROM (now() - m.created_at)) / (86400 * 90))  AS score,
-       CASE
-         WHEN m.username = '__org__'                              THEN 'org'
-         WHEN m.project_dir IS NULL                               THEN 'user'
-         ELSE 'project'
-       END AS scope_tier
-FROM memories m JOIN candidates c USING (memory_id)
-WHERE m.deleted_at IS NULL
-  AND (m.username = $2 OR m.username = '__org__')
-  AND (m.project_dir IS NULL OR m.project_dir = $3)
-  AND ($4::text[] IS NULL OR m.type = ANY($4))
-  AND ($5::timestamptz IS NULL OR m.created_at >= $5)
-ORDER BY score DESC
-LIMIT $6
+       LEFT(mc.content, 200) AS snippet,
+       b.score,
+       m.scope AS scope_tier
+FROM best b
+JOIN memories m USING (memory_id)
+JOIN memory_chunks mc ON mc.chunk_id = b.chunk_id
+ORDER BY b.score DESC, m.memory_id
+LIMIT $8
 `;
+}
 
 export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHit[]> {
   const limit = args.limit ?? 10;
@@ -187,6 +165,7 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     memory_id:   string;
     name:        string;
     description: string;
+    dir_key:     string;
     snippet:     string;
     score:       string;
     scope_tier:  "org" | "user" | "project";
@@ -199,20 +178,35 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     deleted_at:  Date | null;
   };
 
-  const res = qVec === null
-    ? await args.pool.query<Row>(
-        FTS_ONLY_SQL,
-        [args.query, args.username, args.project_dir, types, since, limit],
-      )
-    : await args.pool.query<Row>(
-        HYBRID_SQL,
-        ["[" + qVec.join(",") + "]", args.query, args.username, args.project_dir, types, since, limit],
-      );
+  const dirs = args.dirs && args.dirs.length > 0 ? args.dirs : null;
+  const params = [
+    qVec === null ? null : "[" + qVec.join(",") + "]",
+    args.query, args.username, args.project_dir, types, since, dirs, limit,
+  ];
+
+  // The vector arm filters by visibility after the HNSW scan; iterative scan
+  // keeps the index walking until 200 visible chunks are found instead of
+  // stopping at ef_search raw neighbours (pgvector >= 0.8). SET LOCAL needs
+  // a transaction.
+  const client = await args.pool.connect();
+  let res;
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL hnsw.iterative_scan = relaxed_order");
+    res = await client.query<Row>(searchSql(qVec !== null), params);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 
   const hits: SearchHit[] = res.rows.map((r) => ({
     memory_id:   r.memory_id,
     name:        r.name,
     description: r.description,
+    dir_key:     r.dir_key,
     snippet:     r.snippet,
     score:       parseFloat(r.score),
     scope_tier:  r.scope_tier,
@@ -245,6 +239,7 @@ export interface MemoryDetail {
   type:               string;
   source:             "distilled" | "user";
   scope_tier:         "org" | "user" | "project";
+  dir_key:            string;
   name:               string;
   description:        string;
   body:               string;
@@ -280,6 +275,7 @@ export async function getMemory(
     type:               string;
     source:             "distilled" | "user";
     scope_tier:         "org" | "user" | "project";
+    dir_key:            string;
     name:               string;
     description:        string;
     body:               string;
@@ -293,11 +289,7 @@ export async function getMemory(
   };
   const r = await pool.query<Row>(
     `SELECT m.memory_id, m.username, m.project_dir, m.type, m.source,
-            CASE
-              WHEN m.username = '__org__'    THEN 'org'
-              WHEN m.project_dir IS NULL     THEN 'user'
-              ELSE 'project'
-            END AS scope_tier,
+            m.scope AS scope_tier, m.dir_key,
             m.name, m.description, m.body, m.source_session_id,
             m.hit_count, m.last_hit_at, m.created_at, m.updated_at, m.deleted_at,
             COALESCE(
@@ -322,6 +314,7 @@ export async function getMemory(
     type:              row.type,
     source:            row.source,
     scope_tier:        row.scope_tier,
+    dir_key:           row.dir_key,
     name:              row.name,
     description:       row.description,
     body:              row.body,
@@ -403,6 +396,7 @@ export interface TimelineEntry {
   memory_id:    string;
   name:         string;
   type:         string;
+  dir_key:      string;
   created_at:   Date;
 }
 
@@ -435,10 +429,11 @@ export async function timelineMemories(args: TimelineMemoriesArgs): Promise<Time
     memory_id:  string;
     name:       string;
     type:       string;
+    dir_key:    string;
     created_at: Date;
   };
   const r = await args.pool.query<Row>(
-    `SELECT memory_id, name, type, created_at
+    `SELECT memory_id, name, type, dir_key, created_at
        FROM memories
       WHERE deleted_at IS NULL
         AND (username = $1 OR username = '__org__')
@@ -453,6 +448,7 @@ export async function timelineMemories(args: TimelineMemoriesArgs): Promise<Time
     memory_id:  row.memory_id,
     name:       row.name,
     type:       row.type,
+    dir_key:    row.dir_key,
     created_at: row.created_at,
   }));
 }
@@ -467,6 +463,7 @@ export interface WriteUserMemoryArgs {
   description: string;
   body:        string;
   facets?:     Record<string, string[]>;
+  dir?:        string;            // dir_key; defaults by (scope, type)
 }
 
 // Persist a /memorize-style user-authored memory. Shares the chunk + facet +
@@ -512,6 +509,7 @@ export async function writeUserMemory(
       body:              args.body,
       facets:            args.facets ?? {},
       content_hash:      hash,
+      dir_key:           args.dir,
     });
     if (memory_id !== null) {
       await appendAudit(client, {
@@ -519,7 +517,10 @@ export async function writeUserMemory(
         actor:  args.username,
         action: 'write',
         before: null,
-        after:  { type: args.type, name: args.name, description: args.description, body: args.body },
+        after:  {
+          type: args.type, name: args.name, description: args.description, body: args.body,
+          dir_key: args.dir ?? defaultDir(scopeOf(args.username, project_dir), args.type),
+        },
       });
     }
     await client.query("COMMIT");
@@ -612,6 +613,7 @@ export async function updateMemory(args: {
   name:        string;
   description: string;
   body:        string;
+  dir?:        string;            // move to another dir in the same scope
 }): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> {
   const client = await args.pool.connect();
   try {
@@ -624,8 +626,10 @@ export async function updateMemory(args: {
       name:        string;
       description: string;
       body:        string;
+      scope:       "user" | "project" | "org";
+      dir_key:     string;
     }>(
-      `SELECT username, source, name, description, body
+      `SELECT username, source, name, description, body, scope, dir_key
          FROM memories
         WHERE memory_id = $1
         FOR UPDATE`,
@@ -655,16 +659,23 @@ export async function updateMemory(args: {
       promptVersion: 0,
     });
 
-    await client.query(
-      `UPDATE memories
-          SET name        = $1,
-              description = $2,
-              body        = $3,
-              content_hash = $4,
-              updated_at  = now()
-        WHERE memory_id = $5`,
-      [args.name, args.description, args.body, hash, args.memoryId],
-    );
+    const dirKey = args.dir ?? row.dir_key;
+    try {
+      await client.query(
+        `UPDATE memories
+            SET name        = $1,
+                description = $2,
+                body        = $3,
+                content_hash = $4,
+                dir_key     = $6,
+                updated_at  = now()
+          WHERE memory_id = $5`,
+        [args.name, args.description, args.body, hash, args.memoryId, dirKey],
+      );
+    } catch (e) {
+      if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, row.scope);
+      throw e;
+    }
 
     // Delete old chunks and re-insert one chunk with the new body, embedding=NULL.
     await client.query(
@@ -685,8 +696,8 @@ export async function updateMemory(args: {
       memory_id: args.memoryId,
       actor:     args.actor,
       action:    'update',
-      before:    { name: row.name, description: row.description, body: row.body },
-      after:     { name: args.name, description: args.description, body: args.body },
+      before:    { name: row.name, description: row.description, body: row.body, dir_key: row.dir_key },
+      after:     { name: args.name, description: args.description, body: args.body, dir_key: dirKey },
     });
 
     await client.query("COMMIT");
@@ -766,6 +777,7 @@ export interface ListFilter {
   scope?:           'org' | 'user' | 'project';  // optional narrow
   type?:            string[];                     // any-of
   source?:          'user' | 'distilled';
+  dir?:             string;                       // exact dir_key
   include_deleted?: boolean;                      // default false
   sort?:            'created' | 'hit';            // default 'created'
   limit?:           number;                       // default 50, cap 200
@@ -777,6 +789,7 @@ export interface ListItem {
   type:        string;
   source:      'user' | 'distilled';
   scope_tier:  'org' | 'user' | 'project';
+  dir_key:     string;
   name:        string;
   description: string;
   created_at:  string;
@@ -807,6 +820,7 @@ export interface ListItem {
 //   $6  include_deleted (boolean)
 //   $7  cursor (timestamptz or NULL = no cursor)
 //   $8  limit+1
+//   $9  dir_key (text or NULL = no dir filter)
 export async function listMemories(f: ListFilter): Promise<{
   items: ListItem[];
   next_cursor: string | null;
@@ -887,11 +901,7 @@ export async function listMemories(f: ListFilter): Promise<{
 
   const sql = `
 SELECT m.memory_id, m.type, m.source,
-       CASE
-         WHEN m.username = '__org__'   THEN 'org'
-         WHEN m.project_dir IS NULL    THEN 'user'
-         ELSE 'project'
-       END AS scope_tier,
+       m.scope AS scope_tier, m.dir_key,
        m.name, m.description,
        m.created_at, m.updated_at,
        m.hit_count, m.last_hit_at, m.deleted_at
@@ -910,6 +920,8 @@ SELECT m.memory_id, m.type, m.source,
    AND ($4::text[] IS NULL OR m.type = ANY($4))
    -- source filter
    AND ($5::text IS NULL OR m.source = $5::text)
+   -- directory filter
+   AND ($9::text IS NULL OR m.dir_key = $9::text)
    -- cursor filter
    AND ${cursorCond}
 ${orderBy}
@@ -921,6 +933,7 @@ LIMIT $8
     type:        string;
     source:      'user' | 'distilled';
     scope_tier:  'org' | 'user' | 'project';
+    dir_key:     string;
     name:        string;
     description: string;
     created_at:  Date;
@@ -939,6 +952,7 @@ LIMIT $8
     inclDeleted,     // $6
     cursor,          // $7
     limit + 1,       // $8 — fetch one extra to determine next_cursor
+    f.dir ?? null,   // $9
   ]);
 
   const rows = res.rows;
@@ -957,6 +971,7 @@ LIMIT $8
     type:        r.type,
     source:      r.source,
     scope_tier:  r.scope_tier,
+    dir_key:     r.dir_key,
     name:        r.name,
     description: r.description,
     created_at:  r.created_at.toISOString(),
@@ -999,24 +1014,13 @@ export interface MemoryContext {
 // the documented "skip" signal.
 const CONTEXT_SQL = `
 SELECT m.memory_id, m.type, m.name, m.body,
-       CASE
-         WHEN m.username = '__org__'                              THEN 'org'
-         WHEN m.project_dir IS NULL                               THEN 'user'
-         ELSE 'project'
-       END AS scope_tier,
-       (CASE
-          WHEN m.username = '__org__'                              THEN 1.00
-          WHEN m.project_dir IS NULL                               THEN 1.10
-          ELSE 1.20
-        END
-        * (1.0 + LN(1 + m.hit_count) * 0.05)
-        * EXP(-EXTRACT(EPOCH FROM (now() - m.created_at)) / (86400 * 90))
-       ) AS score
+       m.scope AS scope_tier,
+       ${PRIOR_SCORE_SQL} AS score
 FROM memories m
 WHERE m.deleted_at IS NULL
   AND (m.username = $1 OR m.username = '__org__')
   AND (m.project_dir IS NULL OR m.project_dir = $2)
-  AND m.name <> 'raw distillation failed'
+  AND m.name <> '${DISTILL_FAILED_NAME}'
 ORDER BY score DESC
 LIMIT 50
 `;
@@ -1127,5 +1131,95 @@ export async function getMetrics(pool: Pool): Promise<{
       parseFloat(metricsRow.distill_cursor_lag_seconds_max) * 100,
     ) / 100,
     audit_log_size: parseInt(metricsRow.audit_log_size, 10),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Directories. L0 is the static memory_dirs.l0 line; L1 is computed here from
+// the owner's entries so it is never stale. A caller sees the org and user
+// directories always, and the project directories only with a project_dir.
+
+// Params: $1 username, $2 project_dir (NULL = no project).
+const DIR_VISIBLE_SQL = `(d.scope <> 'project' OR $2::text IS NOT NULL)`;
+const DIR_OWNED_SQL = `
+  (m.scope = 'org' OR (m.username = $1 AND (m.scope = 'user' OR m.project_dir = $2)))`;
+
+export interface DirSummary {
+  dir_key:     string;
+  scope:       "user" | "project" | "org";
+  l0:          string;
+  entry_count: number;
+  updated_at:  string | null;   // newest entry; null when empty
+}
+
+export async function listDirs(args: {
+  pool:        Pool;
+  username:    string;
+  project_dir: string | null;
+}): Promise<DirSummary[]> {
+  type Row = Omit<DirSummary, "updated_at"> & { updated_at: Date | null };
+  const r = await args.pool.query<Row>(
+    `SELECT d.dir_key, d.scope, d.l0,
+            COUNT(m.memory_id)::int AS entry_count,
+            MAX(m.updated_at)       AS updated_at
+       FROM memory_dirs d
+       LEFT JOIN memories m
+         ON m.dir_key = d.dir_key
+        AND m.deleted_at IS NULL
+        AND m.name <> '${DISTILL_FAILED_NAME}'
+        AND ${DIR_OWNED_SQL}
+      WHERE ${DIR_VISIBLE_SQL}
+      GROUP BY d.dir_key, d.scope, d.l0, d.sort
+      ORDER BY d.sort`,
+    [args.username, args.project_dir],
+  );
+  return r.rows.map((row) => ({
+    ...row,
+    updated_at: row.updated_at ? row.updated_at.toISOString() : null,
+  }));
+}
+
+export interface DirDetail extends DirSummary {
+  entries: Array<{
+    memory_id:   string;
+    name:        string;
+    description: string;          // the entry's L0
+    updated_at:  string;
+  }>;
+}
+
+// Directory L1: the directory's L0 plus its top `limit` entries ranked by the
+// same prior as session-start context. Returns null when the directory does
+// not exist or is not visible to the caller.
+export async function getDir(args: {
+  pool:        Pool;
+  username:    string;
+  project_dir: string | null;
+  dir_key:     string;
+  limit?:      number;
+}): Promise<DirDetail | null> {
+  const summary = (await listDirs(args)).find((d) => d.dir_key === args.dir_key);
+  if (!summary) return null;
+
+  type Row = { memory_id: string; name: string; description: string; updated_at: Date };
+  const r = await args.pool.query<Row>(
+    `SELECT m.memory_id, m.name, m.description, m.updated_at
+       FROM memories m
+      WHERE m.dir_key = $3
+        AND m.deleted_at IS NULL
+        AND m.name <> '${DISTILL_FAILED_NAME}'
+        AND ${DIR_OWNED_SQL}
+      ORDER BY ${PRIOR_SCORE_SQL} DESC, m.memory_id
+      LIMIT $4`,
+    [args.username, args.project_dir, args.dir_key, args.limit ?? 20],
+  );
+  return {
+    ...summary,
+    entries: r.rows.map((row) => ({
+      memory_id:   row.memory_id,
+      name:        row.name,
+      description: row.description,
+      updated_at:  row.updated_at.toISOString(),
+    })),
   };
 }

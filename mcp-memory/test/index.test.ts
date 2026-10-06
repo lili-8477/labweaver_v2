@@ -3,6 +3,7 @@ import {
   callMemorySearch,
   callMemoryGet,
   callMemoryTimeline,
+  callMemoryDir,
   callMemoryWrite,
   callMemoryForget,
   callMemoryDistillSession,
@@ -38,9 +39,10 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the six memory tools", () => {
+  it("exposes exactly the seven memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
+      "memory_dir",
       "memory_distill_session",
       "memory_forget",
       "memory_get",
@@ -194,6 +196,32 @@ describe("callMemoryTimeline", () => {
     expect(url.searchParams.has("since")).toBe(false);
     expect(url.searchParams.has("until")).toBe(false);
     expect(url.searchParams.has("limit")).toBe(false);
+  });
+});
+
+describe("callMemoryDir", () => {
+  const okJson = () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+
+  it("lists directories when no dir is given", async () => {
+    const { stub, calls } = makeFetchStub(okJson());
+    await callMemoryDir({ project_dir: "-p" }, baseDeps(stub));
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/memory/dirs");
+    expect(url.searchParams.get("username")).toBe("alice");
+    expect(url.searchParams.get("project_dir")).toBe("-p");
+  });
+
+  it("fetches one directory's overview with the key URL-encoded", async () => {
+    const { stub, calls } = makeFetchStub(okJson());
+    await callMemoryDir({ dir: "project/decisions", limit: 5 }, baseDeps(stub));
+    expect(calls[0]!.url).toContain("/memory/dirs/project%2Fdecisions?");
+    expect(new URL(calls[0]!.url).searchParams.get("limit")).toBe("5");
+  });
+
+  it("surfaces a 404 as an MCP error", async () => {
+    const { stub } = makeFetchStub(new Response('{"error":"directory not found"}', { status: 404 }));
+    const r = await callMemoryDir({ dir: "nope/x" }, baseDeps(stub));
+    expect(r.isError).toBe(true);
   });
 });
 

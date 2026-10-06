@@ -21,6 +21,8 @@ import {
   listMemories,
   getAuditTrail,
   getMetrics,
+  listDirs,
+  getDir,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { shareRoutesPlugin } from "./share-api.js";
@@ -153,6 +155,8 @@ async function main(): Promise<void> {
       listMemories,
       getAuditTrail,
       getMetrics,
+      listDirs,
+      getDir,
       writeDistillation,
     },
   });

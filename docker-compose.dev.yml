@@ -55,7 +55,7 @@ services:
       - labweaver-dev-net
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.2-pg16  # >=0.8 for hnsw.iterative_scan (memory search)
     container_name: labweaver-dev-postgres
     env_file: [ ./hub/.env ]
     environment:

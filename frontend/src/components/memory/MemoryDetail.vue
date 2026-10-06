@@ -113,7 +113,7 @@ async function submitShare() {
         </div>
         <p v-if="store.selected.description" class="memory-desc">{{ store.selected.description }}</p>
         <div class="header-badges">
-          <span class="badge badge-scope">[{{ store.selected.scope_tier }}]</span>
+          <span class="badge badge-scope">[{{ store.selected.dir_key }}]</span>
           <span class="badge badge-source">{{ store.selected.source === 'distilled' ? '[distilled]' : '[manual]' }}</span>
           <span class="badge badge-type">[{{ store.selected.type }}]</span>
           <span v-if="store.selected.deleted_at !== null" class="badge badge-deleted">[deleted]</span>

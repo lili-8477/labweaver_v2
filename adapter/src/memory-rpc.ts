@@ -8,6 +8,7 @@ interface ListParams {
   scope?: "org" | "user" | "project";
   type?: string[];
   source?: "user" | "distilled";
+  dir?: string;
   include_deleted?: boolean;
   sort?: "created" | "hit";
   limit?: number;
@@ -22,6 +23,7 @@ interface WriteParams {
   description: string;
   body: string;
   facets?: Record<string, string[]>;
+  dir?: string;
 }
 
 export class MemoryRpcClient {
@@ -38,6 +40,7 @@ export class MemoryRpcClient {
     limit?: number;
     types?: string[];
     since?: string;
+    dirs?: string[];
   }): Promise<unknown> {
     return this.post("/memory/search", { username: this.username, ...params });
   }
@@ -65,7 +68,7 @@ export class MemoryRpcClient {
 
   async update(
     id: string,
-    p: { name: string; description: string; body: string },
+    p: { name: string; description: string; body: string; dir?: string },
   ): Promise<unknown> {
     return this.put(`/memory/${encodeURIComponent(id)}`, { actor: this.username, ...p });
   }

@@ -893,9 +893,9 @@ describe("updateMemory", () => {
   it("distilled row: returns {ok:false, reason:'distilled'}", async () => {
     // Insert a distilled memory directly (seedMemory always uses source='user')
     const distId = await pool.query<{ memory_id: string }>(
-      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash)
+      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash, dir_key)
        VALUES (gen_random_uuid(), 'alice', NULL, 'observation', 'distilled', 'distilled-name', 'distilled-desc',
-               'distilled body', $1)
+               'distilled body', $1, 'user/experience')
        RETURNING memory_id`,
       [contentHash({ body: "distilled-namedistilled body", promptVersion: 1 })],
     );
@@ -1248,9 +1248,9 @@ describe("listMemories", () => {
     await seedAll();
     // Also insert a distilled row
     const distId = await pool.query<{ memory_id: string }>(
-      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash)
+      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash, dir_key)
        VALUES (gen_random_uuid(), 'alice', NULL, 'observation', 'distilled', 'distilled-list', 'distilled-desc',
-               'distilled body for list test', $1)
+               'distilled body for list test', $1, 'user/experience')
        RETURNING memory_id`,
       [contentHash({ body: "distilled-listdistilled body for list test", promptVersion: 99 })],
     );

@@ -9,6 +9,7 @@ export interface MemoryListItem {
   type: MemoryType
   source: MemorySource
   scope_tier: ScopeTier
+  dir_key: string            // e.g. "project/decisions"; prefix is the scope
   name: string
   description: string
   created_at: string

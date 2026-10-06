@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { DistillationResult, Observation } from "./distiller-prompts.js";
 import { contentHash } from "./content-hash.js";
+import { defaultDir, InvalidDirError, isDirFkViolation, scopeOf } from "./memory-dirs.js";
 
 export interface SettledSession {
   session_id:          string;
@@ -52,6 +53,8 @@ export interface InsertMemoryRowArgs {
   body:               string;
   facets:             Record<string, string[] | undefined>;
   content_hash:       Buffer;
+  // Directory to file the memory under; defaults by (scope, type).
+  dir_key?:           string;
 }
 
 export async function insertMemoryRow(
@@ -59,18 +62,27 @@ export async function insertMemoryRow(
   args:   InsertMemoryRowArgs,
 ): Promise<string | null> {
   const memId = randomUUID();
-  const ins = await client.query<{ memory_id: string }>(
-    `INSERT INTO memories (
-       memory_id, username, project_dir, type, source,
-       name, description, body, source_session_id, content_hash
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
-     RETURNING memory_id`,
-    [
-      memId, args.username, args.project_dir, args.type, args.source,
-      args.name, args.description, args.body, args.source_session_id, args.content_hash,
-    ],
-  );
+  const scope = scopeOf(args.username, args.project_dir);
+  const dirKey = args.dir_key ?? defaultDir(scope, args.type);
+  let ins;
+  try {
+    ins = await client.query<{ memory_id: string }>(
+      `INSERT INTO memories (
+         memory_id, username, project_dir, type, source,
+         name, description, body, source_session_id, content_hash, dir_key
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
+       RETURNING memory_id`,
+      [
+        memId, args.username, args.project_dir, args.type, args.source,
+        args.name, args.description, args.body, args.source_session_id, args.content_hash,
+        dirKey,
+      ],
+    );
+  } catch (e) {
+    if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, scope);
+    throw e;
+  }
   if (ins.rowCount === 0) return null; // dedup; nothing else to write
 
   const writtenId = ins.rows[0]!.memory_id;
