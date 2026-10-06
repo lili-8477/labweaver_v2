@@ -12,15 +12,12 @@
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "dompurify": "^3.3.3",
     "marked": "^18.0.0",
     "monaco-editor": "^0.55.1",
     "nats.ws": "^1.30.3",
     "pinia": "^3.0.4",
-    "vue": "^3.5.32",
-    "vue-router": "^4.6.4"
+    "vue": "^3.5.32"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",

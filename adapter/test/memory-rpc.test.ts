@@ -222,7 +222,7 @@ describe("MemoryRpcClient", () => {
       const client = new MemoryRpcClient(baseUrl, "alice");
       const result = await client.write({
         scope: "user",
-        type: "observation",
+        type: "feedback",
         name: "Test Memory",
         description: "A test",
         body: "This is a test memory",
@@ -233,7 +233,7 @@ describe("MemoryRpcClient", () => {
       expect(state.lastReq!.body).toEqual({
         username: "alice",
         scope: "user",
-        type: "observation",
+        type: "feedback",
         name: "Test Memory",
         description: "A test",
         body: "This is a test memory",
@@ -429,7 +429,7 @@ describe("MemoryRpcClient", () => {
 
       await expect(client.write({
         scope: "user",
-        type: "observation",
+        type: "feedback",
         name: "test",
         description: "test",
         body: "test",

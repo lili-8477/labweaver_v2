@@ -24,9 +24,13 @@ const cannedRequest: ShareRequest = {
   decided_at:       null,
 };
 
+type RepoFn =
+  | 'submitShareRequest' | 'listShareRequests' | 'getShareRequest'
+  | 'decideShareRequest' | 'withdrawShareRequest' | 'getShareCapabilities';
+
 // Test-double factory: each repo function is a vi.fn() with a sensible default.
 // Tests override per-case with mockResolvedValueOnce.
-function makeDeps(): { deps: ShareApiDeps; repo: Record<string, ReturnType<typeof vi.fn>> } {
+function makeDeps(): { deps: ShareApiDeps; repo: Record<RepoFn, ReturnType<typeof vi.fn>> } {
   const repo = {
     submitShareRequest:   vi.fn(async () => ({ ok: true, share_id: 'sid-1' })),
     listShareRequests:    vi.fn(async () => ({ items: [], next_cursor: null })),

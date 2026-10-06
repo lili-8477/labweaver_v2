@@ -1,7 +1,7 @@
 {
   "name": "labweaver-adapter",
   "version": "0.1.0",
-  "description": "NATS <-> Claude Code bridge. Runs inside each user devcontainer.",
+  "description": "NATS <-> DeepSeek Harness bridge. Runs inside each user devcontainer.",
   "license": "MIT",
   "private": true,
   "type": "module",

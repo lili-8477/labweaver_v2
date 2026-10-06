@@ -1,6 +1,6 @@
 // Contract tests — the frontend's event shape is the pinned contract.
 // These fixtures come from pantheon-frontend/src/stores/chat.ts:processStepMessage
-// and src/types/index.ts. If the SDK changes, these stay green.
+// and src/types/index.ts. If the engine changes, these stay green.
 
 import { describe, expect, it } from "vitest";
 import { capToolOutput, EventTranslator, MAX_TOOL_OUTPUT_BYTES } from "../src/events.js";

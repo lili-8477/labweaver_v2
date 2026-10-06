@@ -131,8 +131,8 @@ describe("searchMemories", () => {
     }
     // Ordering must be by score (not insertion order); scope multiplier
     // dominates here, so scores must be strictly descending.
-    expect(hits[0].score).toBeGreaterThan(hits[1].score);
-    expect(hits[1].score).toBeGreaterThan(hits[2].score);
+    expect(hits[0]!.score).toBeGreaterThan(hits[1]!.score);
+    expect(hits[1]!.score).toBeGreaterThan(hits[2]!.score);
 
     const counts = await pool.query<{ memory_id: string; hit_count: number }>(
       `SELECT memory_id, hit_count FROM memories
@@ -339,8 +339,8 @@ describe("timelineMemories", () => {
     const rows = await timelineMemories({ pool, username: "alice" });
     expect(rows.map((r) => r.memory_id)).toEqual([newId, midId, oldId]);
     expect(rows.every((r) => r.created_at instanceof Date)).toBe(true);
-    expect(rows[0].name).toBe("seed-302");
-    expect(rows[0].type).toBe("observation");
+    expect(rows[0]!.name).toBe("seed-302");
+    expect(rows[0]!.type).toBe("observation");
   });
 
   it("respects since/until inclusive bounds", async () => {
@@ -433,9 +433,9 @@ describe("writeUserMemory", () => {
       [memory_id],
     );
     expect(r.rowCount).toBe(1);
-    expect(r.rows[0].username).toBe("alice");
-    expect(r.rows[0].project_dir).toBeNull();
-    expect(r.rows[0].source).toBe("user");
+    expect(r.rows[0]!.username).toBe("alice");
+    expect(r.rows[0]!.project_dir).toBeNull();
+    expect(r.rows[0]!.source).toBe("user");
   });
 
   it("scope='user' coerces project_dir to NULL even when caller passes a non-null value", async () => {
@@ -454,7 +454,7 @@ describe("writeUserMemory", () => {
       `SELECT project_dir FROM memories WHERE memory_id = $1`,
       [memory_id],
     );
-    expect(r.rows[0].project_dir).toBeNull();
+    expect(r.rows[0]!.project_dir).toBeNull();
   });
 
   it("scope='project' writes a row with (username, project_dir)", async () => {
@@ -474,9 +474,9 @@ describe("writeUserMemory", () => {
       [memory_id],
     );
     expect(r.rowCount).toBe(1);
-    expect(r.rows[0].username).toBe("alice");
-    expect(r.rows[0].project_dir).toBe("-w-bio-pipeline");
-    expect(r.rows[0].source).toBe("user");
+    expect(r.rows[0]!.username).toBe("alice");
+    expect(r.rows[0]!.project_dir).toBe("-w-bio-pipeline");
+    expect(r.rows[0]!.source).toBe("user");
   });
 
   it("scope='project' without project_dir throws", async () => {
@@ -524,7 +524,7 @@ describe("writeUserMemory", () => {
       `SELECT COUNT(*)::text AS count FROM memory_chunks WHERE memory_id = $1`,
       [memory_id],
     );
-    expect(r.rows[0].count).toBe("1");
+    expect(r.rows[0]!.count).toBe("1");
   });
 
   it("enqueues exactly one row in embedder_queue for the new chunk", async () => {
@@ -544,7 +544,7 @@ describe("writeUserMemory", () => {
         WHERE chunk_id IN (SELECT chunk_id FROM memory_chunks WHERE memory_id = $1)`,
       [memory_id],
     );
-    expect(r.rows[0].count).toBe("1");
+    expect(r.rows[0]!.count).toBe("1");
   });
 
   it("writes facets when supplied", async () => {
@@ -607,12 +607,12 @@ describe("forgetMemory", () => {
       [id],
     );
     expect(r.rowCount).toBe(1);
-    expect(r.rows[0].deleted_at).not.toBeNull();
+    expect(r.rows[0]!.deleted_at).not.toBeNull();
     const chunkCount = await pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM memory_chunks WHERE memory_id = $1`,
       [id],
     );
-    expect(chunkCount.rows[0].count).toBe("1");
+    expect(chunkCount.rows[0]!.count).toBe("1");
   });
 
   it("returns {ok: false} for a nonexistent id", async () => {
@@ -1410,9 +1410,9 @@ describe("listMemories", () => {
         [memId1, memId2, memId3],
       );
       const chunkMap = new Map(chunks.rows.map((r) => [r.memory_id, r.chunk_id]));
-      const chunk1Id = chunkMap.get(memId1);
-      const chunk2Id = chunkMap.get(memId2);
-      const chunk3Id = chunkMap.get(memId3);
+      const chunk1Id = chunkMap.get(memId1!);
+      const chunk2Id = chunkMap.get(memId2!);
+      const chunk3Id = chunkMap.get(memId3!);
 
       // Update enqueued_at times to simulate different enqueue times (insertMemoryRow already added them to queue)
       if (chunk1Id && chunk2Id && chunk3Id) {

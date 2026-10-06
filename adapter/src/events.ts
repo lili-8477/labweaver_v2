@@ -1,4 +1,5 @@
-// Translate Claude Agent SDK messages into the frontend stream event shape.
+// Translate engine AgentEvents (engine/types.ts, dispatched by turn-runner.ts)
+// into the frontend stream event shape.
 //
 // Contract source of truth: pantheon-frontend/src/stores/chat.ts:processStepMessage
 // (tool_calls[].function.arguments MUST be a JSON string; frontend JSON.parses it).
@@ -95,9 +96,8 @@ export class EventTranslator {
   }
 
   /**
-   * Per-turn usage update from an assistant message_stop. Accumulates so the
-   * final synthetic step reports totals even though the SDK only reports
-   * `total_cost_usd` at the terminal `result` event.
+   * Latest usage reported by the engine's `usage` event. Kept so the final
+   * synthetic step can report it.
    */
   recordUsage(input: number, output: number): void {
     this.lastUsage = { input, output };

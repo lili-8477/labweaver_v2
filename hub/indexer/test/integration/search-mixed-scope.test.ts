@@ -138,7 +138,7 @@ describe("integration: mixed-scope hybrid search against real pgvector", () => {
     // The row whose embedding the stub returned must rank first; its
     // vec_sim of 1.0 beats every other row's near-zero vec_sim by enough to
     // out-weigh the project tier's 1.20 vs user tier's 1.10 multiplier.
-    expect(hits[0].memory_id).toBe(userBId);
+    expect(hits[0]!.memory_id).toBe(userBId);
 
     // Scope tier classification per row.
     const tierByMem = new Map(hits.map((h) => [h.memory_id, h.scope_tier]));

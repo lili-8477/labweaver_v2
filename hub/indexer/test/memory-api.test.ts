@@ -88,7 +88,12 @@ describe("memory-api", () => {
   describe("POST /memory/search", () => {
     it("happy path: forwards to searchMemories and returns hits", async () => {
       const hits: SearchHit[] = [
-        { memory_id: "a", name: "n", description: "d", snippet: "s", score: 0.9, scope_tier: "user" },
+        {
+          memory_id: "a", name: "n", description: "d", dir_key: "user/notes", snippet: "s", score: 0.9,
+          scope_tier: "user", type: "user", source: "user",
+          created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+          hit_count: 0, last_hit_at: null, deleted_at: null,
+        },
       ];
       depsBag.repo.searchMemories.mockResolvedValueOnce(hits);
 
@@ -154,6 +159,8 @@ describe("memory-api", () => {
         project_dir:       null,
         type:              "user",
         source:            "user",
+        scope_tier:        "user",
+        dir_key:           "user/notes",
         name:              "test",
         description:       "desc",
         body:              "body",
@@ -163,6 +170,7 @@ describe("memory-api", () => {
         last_hit_at:       null,
         created_at:        new Date("2026-01-01T00:00:00Z"),
         updated_at:        new Date("2026-01-01T00:00:00Z"),
+        deleted_at:        null,
       };
       depsBag.repo.getMemory.mockResolvedValueOnce(detail);
 
@@ -186,7 +194,7 @@ describe("memory-api", () => {
   describe("GET /memory/timeline", () => {
     it("happy path: forwards query params and converts since/until to Date", async () => {
       const entries: TimelineEntry[] = [
-        { memory_id: "x", name: "n", type: "user", created_at: new Date("2026-01-01T00:00:00Z") },
+        { memory_id: "x", name: "n", type: "user", dir_key: "user/notes", created_at: new Date("2026-01-01T00:00:00Z") },
       ];
       depsBag.repo.timelineMemories.mockResolvedValueOnce(entries);
 
@@ -504,6 +512,7 @@ describe("memory-api", () => {
       type:        "observation",
       source:      "user",
       scope_tier:  "user",
+      dir_key:     "user/notes",
       name:        "test memory",
       description: "desc",
       created_at:  "2026-01-01T00:00:00.000Z",

@@ -2,7 +2,7 @@
 // ChatMessage shape (get_chat_messages RPC).
 //
 // JSONL format is not a stable public API — all JSONL I/O lives in this module
-// so it can be swapped when the SDK exposes a first-class history accessor.
+// so it can be swapped when the engine exposes a first-class history accessor.
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";

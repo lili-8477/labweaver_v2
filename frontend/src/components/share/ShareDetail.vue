@@ -101,12 +101,12 @@ async function withdraw() {
 const skillSnap = computed<SkillSnapshotMeta | null>(() => {
   const kind = store.selected?.artifact_kind
   if (!store.selected || (kind !== 'skill' && kind !== 'skill_update')) return null
-  return store.selected.snapshot_meta as SkillSnapshotMeta
+  return store.selected.snapshot_meta as unknown as SkillSnapshotMeta
 })
 
 const folderSnap = computed<FolderSnapshotMeta | null>(() => {
   if (!store.selected || store.selected.artifact_kind !== 'folder') return null
-  return store.selected.snapshot_meta as FolderSnapshotMeta
+  return store.selected.snapshot_meta as unknown as FolderSnapshotMeta
 })
 
 const filePreview = ref<{ path: string; body: string } | null>(null)

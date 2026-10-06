@@ -13,6 +13,11 @@ if [[ -z "$USERNAME" ]]; then
     echo "Usage: $0 <username>"
     exit 1
 fi
+# Same rule as add-user.sh; also keeps regex metacharacters out of the sed below.
+if ! [[ "$USERNAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "Error: username must be lowercase alphanumeric (hyphens allowed, no leading hyphen)"
+    exit 1
+fi
 
 CONTAINER="labweaver-${USERNAME}"
 

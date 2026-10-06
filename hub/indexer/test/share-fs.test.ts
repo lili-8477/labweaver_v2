@@ -48,8 +48,8 @@ describe("walkSkillFiles", () => {
     await writeFile(path.join(skill, "scripts", "qc.py"), "print(1)\n");
     const r = await walkSkillFiles(skill);
     expect(r.map(f => f.path)).toEqual(["SKILL.md", "scripts/qc.py"]);
-    expect(r[0].size_bytes).toBe(8);
-    expect(r[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(r[0]!.size_bytes).toBe(8);
+    expect(r[0]!.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
   it("ignores .git and node_modules", async () => {
     const skill = path.join(root, "s");

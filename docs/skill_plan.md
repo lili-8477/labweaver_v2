@@ -5,7 +5,7 @@
 `labweaver` already hosts three kinds of reusable assets under `/home/node/.claude/` inside the devcontainer — **skills** (`skills/*.md`), **agents** (`agents/*.md`), and nothing yet for multi-step workflows. Today:
 
 - Skills are **invisible** to the end user. The embedded Claude Code CLI autodiscovers them and lazy-loads their bodies via the `Skill` tool when the agent decides one applies. Fine for context efficiency, terrible for discoverability.
-- Agents have a UI (`AgentPanel.vue` + `get_agents`/`set_active_agent` RPCs) but `set_active_agent` is effectively **a no-op**: `runTurn` in `adapter/src/claude.ts` never reads the stored `active_agent` from the chat row, so picking an agent does nothing to the next turn.
+- Agents have a UI (`AgentPanel.vue` + `get_agents`/`set_active_agent` RPCs) but `set_active_agent` is effectively **a no-op**: `runTurn` in `adapter/src/turn-runner.ts` never reads the stored `active_agent` from the chat row, so picking an agent does nothing to the next turn.
 - There is no concept of a **multi-step task path** at all.
 
 **Goal of this phase.** A single "Guidance" tab in the right drawer that lists skills, agents, and task paths. Unify activation through one mechanism. Picking an entry **prepends a short directive to the next user turn** (no preloading of skill bodies — the CLI still lazy-loads). Context cost stays ≈ today; the model no longer deliberates on which skill to pick; the latent `set_active_agent` no-op is fixed as a side effect.
@@ -72,7 +72,7 @@ Replace `chat.active_agent` with two columns on the chats table: `active_guidanc
   - Add columns `active_guidance_kind`, `active_guidance_name` (one-shot `ALTER TABLE` migration in the same style as existing column additions).
   - Add `setActiveGuidance(chatId, kind, name)` and `getActiveGuidance(chatId)`.
   - Deprecate `setActiveAgent` by routing it through the new setter.
-- **`adapter/src/claude.ts`**
+- **`adapter/src/turn-runner.ts`**
   - In `runTurn`, after resolving the chat row, call `buildDirective(...)` if guidance is set and prepend to the user prompt. Leave the SDK `query` options unchanged.
 
 ### Frontend (Vue)
@@ -130,7 +130,7 @@ Replace `chat.active_agent` with two columns on the chats table: `active_guidanc
 
 ## Suggested sequencing
 
-1. **Adapter backend** — `guidance.ts`, `chats-repo.ts` migration, `rpc.ts` new cases, `claude.ts` directive injection + their vitest suites.
+1. **Adapter backend** — `guidance.ts`, `chats-repo.ts` migration, `rpc.ts` new cases, `turn-runner.ts` directive injection + their vitest suites.
 2. **Infra** — `Dockerfile`, `docker-compose.dev.yml` mount, seed `hub/workspaces/shared/task-paths/`.
 3. **Frontend** — `guidance.ts` store, `GuidancePanel.vue`, `MainLayout.vue` wire-up, retire old `AgentPanel.vue` panel button.
 4. **E2E manual verification** per the checklist above.

@@ -104,7 +104,7 @@ describe("PUT /upload/ path policy", () => {
   it("rejects writes outside the allowed subtree", async () => {
     const r = await put("other/place/x.txt");
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe("path_outside_allowed_subtree");
+    expect(await r.json()).toMatchObject({ error: "path_outside_allowed_subtree" });
   });
 
   it("accepts a skill upload under .claude/skills/", async () => {
@@ -117,7 +117,7 @@ describe("PUT /upload/ path policy", () => {
   it("still denies non-skills paths under .claude/", async () => {
     const r = await put(".claude/settings.json", "{}");
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toBe("denied_name");
+    expect(await r.json()).toMatchObject({ error: "denied_name" });
   });
 
   it("rejects .env nested inside a skill upload", async () => {
@@ -132,7 +132,7 @@ describe("PUT /upload/ path policy", () => {
     expect(r.status).toBe(403);
     // Could fail at deny-name (".." is not denied) or subtree check; the subtree
     // check is what guards us here, so assert on the resolved path being outside.
-    expect((await r.json()).error).toMatch(/outside_allowed_subtree/);
+    expect(await r.json()).toMatchObject({ error: expect.stringMatching(/outside_allowed_subtree/) });
     // And no file should have been written.
     await expect(stat(join(wsRoot, ".claude/pwned.txt"))).rejects.toThrow();
   });

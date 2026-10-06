@@ -7,7 +7,7 @@
 //
 // All trust decisions live in this file. nginx authenticates the user (HTTP
 // Basic) and routes to the right per-user container; once the request lands
-// here we still validate the path because the SDK / agent code shares this
+// here we still validate the path because the agent harness shares this
 // process and we don't want a path-traversal bug to clobber CLAUDE.md, .env,
 // or session state.
 
@@ -225,7 +225,7 @@ async function handleShareSnapshot(
     sendJson(res, 404, { error: "not_found" });
     return;
   }
-  const id = m[1];
+  const id = m[1]!;
   const relPath = url.searchParams.get("path");
   if (!relPath) {
     sendJson(res, 400, { error: "missing_path" });
