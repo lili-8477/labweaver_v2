@@ -329,3 +329,23 @@ What it deliberately doesn't do: it doesn't wake the chat. No notification, no a
 3. **Submit update / Share** — the button calls `share.submit({ kind: 'skill_update' | 'skill', ref: name })` ([`frontend/src/stores/skills.ts`](../frontend/src/stores/skills.ts)). The share-api snapshots the current SKILL.md + files and queues a request for the org reviewer. On approve, `/workspace/shared/skills/<name>/` is atomically replaced.
 
 The split keeps the UI surface tiny — no in-browser editor, no save-vs-submit confusion — and reuses the chat's already-trusted editing path (with hooks, audit, etc.) rather than building a second one in the panel.
+
+## 2026-10-06 — Auto mode vs DeepSeek Harness built-ins, and trajectory quality
+
+**Q:** Critically comment on the auto mode. Is it overlapped with DeepSeek Harness? For some data-analysis tasks I want to keep a nice trajectory for memory and skill distillation.
+
+**A:** Yes, at the engine layer. The `acp` profile already mounts `dsh-goal` + `dsh-goal-round-driver` (a persistent objective with a round cap that survives resume and restarts, plus pause/block), `subagent`, `workflow` (deterministic JS orchestration over subagents), `todo` and `plan-mode`. Our `dsh-plugins/tick.js` is a thin re-implementation of the round driver. The domain layer does not overlap and is the part worth keeping: pipeline templates, numeric gates, an independent reviewer, `progress.md` with git commits, and the retrospective.
+
+The bigger problem for distillation is *where the trajectory lands*:
+- The real work (scripts, errors, retries) happens in subagent child sessions. dsh-acp streams only the parent session (`ownsSession` filter), so the Claude-format transcript the indexer reads holds orchestrator chatter, not the analysis.
+- Every round re-sends the full tick.md, so the parent history is mostly copies of the routing prompt.
+- Routing rules 0–6 are a pure function of `progress.md`, yet an LLM call makes the decision on every round.
+- Token usage skips the subagents, where most of the spend is.
+
+Recommendations:
+1. Capture child sessions as `isSidechain: true` transcript lines through a small dsh plugin, like `usage.js`.
+2. Make each step a structured record: inputs, script, gates, verdict, attempts. Extend the reviewer's `project/trajectories` writes; this, not the chat log, is the distillation source.
+3. Move routing into code (the tick plugin reads `progress.md` and names the next agent and work item), keeping LLMs for bootstrap/plan/execute/review.
+4. Adopt `dsh-goal` for the loop only once the adapter can stream rounds that start outside an ACP prompt. Until then, `tick.js` is the pragmatic choice.
+
+See `adapter/dsh-plugins/tick.js`, `hub/skeleton/harness/commands/tick.md`, `hub/skeleton/harness/agents/tick-reviewer.md` step 7.
