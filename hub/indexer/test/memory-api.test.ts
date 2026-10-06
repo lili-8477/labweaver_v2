@@ -27,6 +27,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   listDirs:         ReturnType<typeof vi.fn>;
   getDir:           ReturnType<typeof vi.fn>;
   recordFeedback:   ReturnType<typeof vi.fn>;
+  proposeExperiences: ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
 } } {
   const repo = {
@@ -53,12 +54,14 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     listDirs:         vi.fn(async () => []),
     getDir:           vi.fn(async () => null),
     recordFeedback:   vi.fn(async () => ({ updated: 0 })),
+    proposeExperiences: vi.fn(async () => ({ proposed: [] as string[] })),
     writeDistillation: vi.fn(async () => ({ similar: [] as never[] })),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
     embedderClient: { embedTexts: vi.fn(async () => []) },
     mergeSimilarity: 0.9,
+    managers:        ["pi"],
     repo,
   };
   return { deps, repo };
@@ -729,11 +732,22 @@ describe("memory-api", () => {
       expect(depsBag.repo.recordFeedback).toHaveBeenCalledWith(
         expect.objectContaining({ username: "alice", memory_ids: [id], outcome: "success" }),
       );
+      expect(depsBag.repo.proposeExperiences).toHaveBeenCalledWith(
+        expect.objectContaining({ managers: ["pi"], memory_ids: [id] }),
+      );
       const bad = await app.inject({
         method: "POST", url: "/memory/feedback",
         payload: { username: "alice", memory_ids: [id], outcome: "meh" },
       });
       expect(bad.statusCode).toBe(400);
+    });
+
+    it("POST /memory/feedback does not propose on failure", async () => {
+      await app.inject({
+        method: "POST", url: "/memory/feedback",
+        payload: { username: "alice", memory_ids: ["00000000-0000-4000-8000-000000000001"], outcome: "failure" },
+      });
+      expect(depsBag.repo.proposeExperiences).not.toHaveBeenCalled();
     });
 
     it("POST /memory/search encodes project_path server-side", async () => {

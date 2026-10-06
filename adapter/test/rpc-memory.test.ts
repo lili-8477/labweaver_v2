@@ -41,6 +41,7 @@ function makeMemoryClient(overrides: Partial<{
   forget: ReturnType<typeof vi.fn>;
   restore: ReturnType<typeof vi.fn>;
   audit: ReturnType<typeof vi.fn>;
+  dirs: ReturnType<typeof vi.fn>;
 }> = {}): MemoryRpcClient {
   return {
     search: overrides.search ?? vi.fn().mockResolvedValue([]),
@@ -52,6 +53,7 @@ function makeMemoryClient(overrides: Partial<{
     forget: overrides.forget ?? vi.fn().mockResolvedValue({ ok: true }),
     restore: overrides.restore ?? vi.fn().mockResolvedValue({ ok: true }),
     audit: overrides.audit ?? vi.fn().mockResolvedValue({ rows: [] }),
+    dirs: overrides.dirs ?? vi.fn().mockResolvedValue([]),
   } as unknown as MemoryRpcClient;
 }
 
@@ -142,6 +144,16 @@ describe("RpcRouter memory_* dispatch", () => {
       expect(res.success).toBe(true);
       expect(res.items).toEqual(items);
       expect(res.next_cursor).toBe("tok");
+    });
+  });
+
+  describe("memory_dirs", () => {
+    it("calls client.dirs and wraps as {success, dirs}", async () => {
+      const dirs = vi.fn().mockResolvedValue([{ dir_key: "user/notes", entry_count: 2 }]);
+      const router = makeRouter(makeMemoryClient({ dirs }));
+      const res = await router.dispatch("memory_dirs", { all_projects: true });
+      expect(dirs).toHaveBeenCalledWith({ all_projects: true });
+      expect(res).toEqual({ success: true, dirs: [{ dir_key: "user/notes", entry_count: 2 }] });
     });
   });
 

@@ -1162,10 +1162,13 @@ export interface DirSummary {
   updated_at:  string | null;   // newest entry; null when empty
 }
 
+// all_projects (UI tree): show project directories even without a
+// project_dir, counting entries across all of the caller's projects.
 export async function listDirs(args: {
-  pool:        Pool;
-  username:    string;
-  project_dir: string | null;
+  pool:          Pool;
+  username:      string;
+  project_dir:   string | null;
+  all_projects?: boolean;
 }): Promise<DirSummary[]> {
   type Row = Omit<DirSummary, "updated_at"> & { updated_at: Date | null };
   const r = await args.pool.query<Row>(
@@ -1177,11 +1180,11 @@ export async function listDirs(args: {
          ON m.dir_key = d.dir_key
         AND m.deleted_at IS NULL
         AND m.name <> '${DISTILL_FAILED_NAME}'
-        AND ${DIR_OWNED_SQL}
-      WHERE ${DIR_VISIBLE_SQL}
+        AND (${DIR_OWNED_SQL} OR ($3 AND m.scope = 'project' AND m.username = $1))
+      WHERE ${DIR_VISIBLE_SQL} OR $3
       GROUP BY d.dir_key, d.scope, d.l0, d.sort
       ORDER BY d.sort`,
-    [args.username, args.project_dir],
+    [args.username, args.project_dir, args.all_projects ?? false],
   );
   return r.rows.map((row) => ({
     ...row,

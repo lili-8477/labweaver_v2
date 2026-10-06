@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { memoryService, type ListQuery, type WriteParams } from '@/services/memory'
-import type { MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier } from '@/types'
+import type { MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier, MemoryDirSummary } from '@/types'
 
 export const useMemoryStore = defineStore('memory', () => {
   const items = ref<MemoryListItem[]>([])
@@ -13,6 +13,7 @@ export const useMemoryStore = defineStore('memory', () => {
     scope?: ScopeTier
     type?: MemoryType[]
     source?: MemorySource
+    dir?: string
     include_deleted: boolean
     sort: 'created' | 'hit'
   }>({
@@ -24,8 +25,20 @@ export const useMemoryStore = defineStore('memory', () => {
   const editDirty = ref(false)
   const editDraft = ref<{ name: string; description: string; body: string } | null>(null)
   const error = ref<string | null>(null)
+  const dirs = ref<MemoryDirSummary[]>([])
+
+  // Directory counts change with every write/forget, so refresh them with
+  // each first-page load. Failure only hides the directory row.
+  async function loadDirs() {
+    try {
+      dirs.value = await memoryService.dirs()
+    } catch {
+      dirs.value = []
+    }
+  }
 
   async function loadFirstPage() {
+    void loadDirs()
     loading.value = true
     cursor.value = null
     error.value = null
@@ -194,5 +207,6 @@ export const useMemoryStore = defineStore('memory', () => {
     startEdit,
     cancelEdit,
     setFilter,
+    dirs,
   }
 })

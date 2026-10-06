@@ -63,6 +63,10 @@ export class MemoryRpcClient {
     return this.fetchJson("/memory/list", { username: this.username, ...qs });
   }
 
+  async dirs(qs: { project_dir?: string; all_projects?: boolean }): Promise<unknown> {
+    return this.fetchJson("/memory/dirs", { username: this.username, ...qs });
+  }
+
   async write(p: WriteParams): Promise<unknown> {
     return this.post("/memory/write", { username: this.username, ...p });
   }

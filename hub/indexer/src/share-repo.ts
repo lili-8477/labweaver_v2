@@ -112,6 +112,18 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
   if (args.kind !== "memory") {
     return { ok: false, reason: "not_implemented" };
   }
+  return await submitMemoryShareRequest(args);
+}
+
+// Memory branch of submitShareRequest. Exported on its own because it needs
+// no filesystem settings, so automatic promotion (experience-promotion.ts)
+// can call it directly.
+export async function submitMemoryShareRequest(
+  args: Pick<SubmitArgs, "pool" | "managers" | "requester" | "ref" | "note">,
+): Promise<SubmitResult> {
+  if (args.managers.length === 0) {
+    return { ok: false, reason: "no_manager" };
+  }
 
   // Single-query ownership check + snapshot fetch. Folding these into one
   // round-trip both shrinks the race window between checking ownership and
@@ -125,10 +137,13 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
     source:      string;
     hit_count:   number;
     last_hit_at: Date | null;
+    dir_key:       string;
+    success_count: number;
+    failure_count: number;
     facets:      Record<string, string[]>;
   }>(
     `SELECT m.name, m.description, m.body, m.type, m.source,
-            m.hit_count, m.last_hit_at,
+            m.hit_count, m.last_hit_at, m.dir_key, m.success_count, m.failure_count,
             COALESCE((SELECT jsonb_object_agg(key, vals)
                         FROM (
                           SELECT key,
@@ -155,6 +170,9 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
     source:      s.source,
     hit_count:   s.hit_count,
     last_hit_at: s.last_hit_at ? s.last_hit_at.toISOString() : null,
+    dir_key:       s.dir_key,
+    success_count: s.success_count,
+    failure_count: s.failure_count,
     facets:      s.facets,
   };
 
@@ -166,7 +184,7 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       share_id,
-      args.kind,
+      "memory",
       args.ref,
       snapshot_meta,
       args.requester,
@@ -444,6 +462,7 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       description: string;
       body:        string;
       type:        string;
+      dir_key?:    string;      // absent in snapshots taken before phase 4
       facets:      Record<string, string[] | undefined>;
     };
 
@@ -460,6 +479,9 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       body:              snap.body,
       facets:            snap.facets,
       content_hash:      hash,
+      // Experience is promoted as experience whatever its type; everything
+      // else is filed by type (memory-dirs.ts defaultDir).
+      dir_key:           snap.dir_key?.endsWith("/experience") ? "org/experience" : undefined,
     });
 
     let promotion_result: Record<string, unknown>;

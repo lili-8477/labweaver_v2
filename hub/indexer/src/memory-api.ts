@@ -19,6 +19,7 @@ import type {
 } from "./memory-repo.js";
 import { InvalidDirError } from "./memory-dirs.js";
 import { encodeProjectDir } from "./path-decode.js";
+import type { proposeExperiences } from "./experience-promotion.js";
 import type { writeDistillation } from "./distiller-repo.js";
 import { PROMPT_VERSION } from "./distiller-prompts.js";
 
@@ -30,6 +31,8 @@ export interface MemoryApiDeps {
   embedderClient: { embedTexts: (texts: string[]) => Promise<number[][]> };
   // Cosine similarity at which a write is held back as a near-duplicate.
   mergeSimilarity: number;
+  // Org managers (MEMORY_ORG_MANAGER); auto-promotion requests go to them.
+  managers:        string[];
   repo: {
     searchMemories:   typeof searchMemories;
     getMemory:        typeof getMemory;
@@ -45,6 +48,7 @@ export interface MemoryApiDeps {
     listDirs:         typeof listDirs;
     getDir:           typeof getDir;
     recordFeedback:   typeof recordFeedback;
+    proposeExperiences: typeof proposeExperiences;
     writeDistillation: typeof writeDistillation;
   };
 }
@@ -136,6 +140,8 @@ const ListQuery = z.object({
 const DirsQuery = z.object({
   username:    z.string().min(1),
   project_dir: z.string().optional(),
+  all_projects: z.union([z.literal('true'), z.literal('false')]).optional()
+                 .transform(v => v === 'true'),
   limit:       z.coerce.number().int().positive().max(200).optional(),
 });
 
@@ -299,9 +305,10 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     }
     const q = parsed.data;
     return await deps.repo.listDirs({
-      pool:        deps.pool,
-      username:    q.username,
-      project_dir: q.project_dir ?? null,
+      pool:         deps.pool,
+      username:     q.username,
+      project_dir:  q.project_dir ?? null,
+      all_projects: q.all_projects,
     });
   });
 
@@ -333,7 +340,14 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       reply.code(400);
       return { error: "validation failed", issues: parsed.error.issues };
     }
-    return await deps.repo.recordFeedback({ pool: deps.pool, ...parsed.data });
+    const { updated } = await deps.repo.recordFeedback({ pool: deps.pool, ...parsed.data });
+    // A success may carry personal experience over the promotion threshold.
+    const { proposed } = parsed.data.outcome === "success"
+      ? await deps.repo.proposeExperiences({
+          pool: deps.pool, managers: deps.managers, memory_ids: parsed.data.memory_ids,
+        })
+      : { proposed: [] as string[] };
+    return { updated, proposed_for_org: proposed };
   });
 
   // POST /memory/write — /memorize-style user-authored memory. Returns

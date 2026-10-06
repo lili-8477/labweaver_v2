@@ -26,6 +26,7 @@ import {
   recordFeedback,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
+import { proposeExperiences } from "./experience-promotion.js";
 import { shareRoutesPlugin } from "./share-api.js";
 import { cleanupOldSnapshots, autoCloseIdleRequests } from "./share-cleanup.js";
 import {
@@ -145,6 +146,7 @@ async function main(): Promise<void> {
       embedTexts: (texts) => embedTexts({ baseUrl: cfg.embedderUrl, texts }),
     },
     mergeSimilarity: cfg.memoryMergeSimilarity,
+    managers:        cfg.memoryOrgManagers,
     repo: {
       searchMemories,
       getMemory,
@@ -160,6 +162,7 @@ async function main(): Promise<void> {
       listDirs,
       getDir,
       recordFeedback,
+      proposeExperiences,
       writeDistillation,
     },
   });

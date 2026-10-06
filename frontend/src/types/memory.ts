@@ -39,3 +39,12 @@ export interface MemorySearchHit extends MemoryListItem {
   snippet: string
   score: number
 }
+
+// A memory directory with its one-line summary (L0) and live entry count
+export interface MemoryDirSummary {
+  dir_key: string            // e.g. "project/decisions"
+  scope: ScopeTier
+  l0: string
+  entry_count: number
+  updated_at: string | null
+}

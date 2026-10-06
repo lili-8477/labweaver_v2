@@ -86,7 +86,17 @@ const scopeTabs: { label: string; value: ScopeTab }[] = [
 const activeScope = computed(() => store.filters.scope)
 
 function setScope(value: ScopeTab) {
-  store.setFilter({ scope: value })
+  store.setFilter({ scope: value, dir: undefined })
+}
+
+// ── Directories (second level of the scope → directory tree) ──────────────────
+
+const scopeDirs = computed(() =>
+  activeScope.value ? store.dirs.filter((d) => d.scope === activeScope.value) : [],
+)
+
+function toggleDir(dirKey: string) {
+  store.setFilter({ dir: store.filters.dir === dirKey ? undefined : dirKey })
 }
 
 // ── Source chip ───────────────────────────────────────────────────────────────
@@ -249,6 +259,20 @@ onUnmounted(() => {
           Deleted
         </label>
       </div>
+
+      <!-- Directories of the selected scope -->
+      <div v-if="scopeDirs.length" class="filter-row dir-row" role="tablist" aria-label="Directory">
+        <button
+          v-for="d in scopeDirs"
+          :key="d.dir_key"
+          class="scope-tab"
+          :class="{ active: store.filters.dir === d.dir_key }"
+          role="tab"
+          :aria-selected="store.filters.dir === d.dir_key"
+          :title="d.l0"
+          @click="toggleDir(d.dir_key)"
+        >{{ d.dir_key.split('/')[1] }} <span class="dir-count">{{ d.entry_count }}</span></button>
+      </div>
     </div>
 
     <!-- ── Narrow viewport: single-pane ──────────────────────────── -->
@@ -388,6 +412,9 @@ onUnmounted(() => {
 }
 
 .filter-spacer { flex: 1; }
+
+.dir-row { padding-top: 0; }
+.dir-count { color: var(--text-tertiary, var(--text-secondary)); font-variant-numeric: tabular-nums; margin-left: 2px; }
 
 .source-chip {
   padding: 2px 8px;

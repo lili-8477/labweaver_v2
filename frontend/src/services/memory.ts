@@ -3,7 +3,7 @@
 
 import { natsService } from './nats'
 import type {
-  MemoryListItem, MemoryDetail, MemoryAuditEntry, MemorySearchHit,
+  MemoryListItem, MemoryDetail, MemoryAuditEntry, MemorySearchHit, MemoryDirSummary,
   MemoryType, MemorySource, ScopeTier,
 } from '@/types'
 
@@ -16,6 +16,7 @@ export interface ListQuery {
   scope?: ScopeTier
   type?: MemoryType[]
   source?: MemorySource
+  dir?: string
   include_deleted?: boolean
   sort?: 'created' | 'hit'
   limit?: number
@@ -83,6 +84,14 @@ export const memoryService = {
   list: async (q: ListQuery): Promise<ListResponse> => {
     const result = await natsService.invoke('memory_list', q as Record<string, unknown>) as { items: MemoryListItem[]; next_cursor: string | null }
     return result
+  },
+
+  /**
+   * Directories with entry counts; project directories count across all projects.
+   */
+  dirs: async (): Promise<MemoryDirSummary[]> => {
+    const result = await natsService.invoke('memory_dirs', { all_projects: true }) as { success: true; dirs: MemoryDirSummary[] }
+    return result.dirs
   },
 
   /**
