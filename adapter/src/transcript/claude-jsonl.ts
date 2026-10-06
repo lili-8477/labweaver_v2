@@ -25,6 +25,8 @@ export class ClaudeTranscriptWriter {
   private readonly file: string;
   private parentUuid: string | null = null;
   private chain: Promise<void> = Promise.resolve();
+  /** The latest assistant entry, held back so the turn's token usage can join it. */
+  private pending: Record<string, unknown> | null = null;
 
   constructor(private readonly opts: TranscriptWriterOptions) {
     this.file = transcriptPath(opts.home, opts.cwd, opts.sessionId);
@@ -36,6 +38,7 @@ export class ClaudeTranscriptWriter {
    * chat's full history still renders; the indexer ignores unknown types.
    */
   continues(previousSessionId: string): void {
+    this.release();
     this.enqueue(JSON.stringify({
       type: CONTINUATION_TYPE,
       sessionId: this.opts.sessionId,
@@ -67,18 +70,32 @@ export class ClaudeTranscriptWriter {
         });
         break;
       case "usage":
-        break; // context occupancy is not per-call token usage; leave usage absent
+        break; // context occupancy, not token usage
+      case "tokens":
+        // The turn's totals ride on its last assistant entry; the indexer
+        // reads Claude-format message.usage from assistant lines.
+        if (this.pending) {
+          (this.pending.message as Record<string, unknown>).usage = {
+            input_tokens: ev.input,
+            output_tokens: ev.output,
+            cache_read_input_tokens: ev.cacheRead,
+            cache_creation_input_tokens: ev.cacheWrite,
+          };
+        }
+        break;
     }
   }
 
   /** Resolves once every queued line is on disk. Never rejects. */
   flush(): Promise<void> {
+    this.release();
     return this.chain;
   }
 
   private append(type: "user" | "assistant", message: Record<string, unknown>): void {
+    this.release();
     const uuid = crypto.randomUUID();
-    const line = JSON.stringify({
+    const entry = {
       type,
       uuid,
       parentUuid: this.parentUuid,
@@ -88,9 +105,16 @@ export class ClaudeTranscriptWriter {
       isSidechain: false,
       userType: "external",
       message,
-    }) + "\n";
+    };
     this.parentUuid = uuid;
-    this.enqueue(line);
+    if (type === "assistant") this.pending = entry;
+    else this.enqueue(JSON.stringify(entry) + "\n");
+  }
+
+  private release(): void {
+    if (!this.pending) return;
+    this.enqueue(JSON.stringify(this.pending) + "\n");
+    this.pending = null;
   }
 
   private enqueue(line: string): void {

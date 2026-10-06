@@ -14,10 +14,15 @@ export interface HintInputs {
   pendingProject: Ref<CreatedProject | null>
 }
 
+// Must match TOOL in adapter/dsh-plugins/next-step.js.
+const NEXT_STEP_TOOL = 'suggest_next_steps'
+const MAX_NEXT_STEPS = 4  // MAX_OPTIONS there
+
 // Rule-based "what to do next" chips. First matching rule wins.
 //   - empty chat (no messages, no pending project) -> two starter hints
 //   - pending project queued                       -> send-to-analyze hint
 //   - uploads in flight                            -> none (chips already show)
+//   - last turn called suggest_next_steps          -> the agent's options
 //   - otherwise                                    -> none
 export function useChatHints(inputs: HintInputs): ComputedRef<Hint[]> {
   return computed<Hint[]>(() => {
@@ -38,6 +43,25 @@ export function useChatHints(inputs: HintInputs): ComputedRef<Hint[]> {
       ]
     }
 
-    return []
+    return nextSteps(inputs.messages.value).map((text, i) => ({ id: `next-step-${i}`, text }))
   })
+}
+
+/** Options from the last suggest_next_steps call since the latest user message. */
+function nextSteps(messages: ChatMessage[]): string[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i] as unknown as Record<string, unknown>
+    if (msg.role === 'user') return []
+    const calls = (msg.tool_calls ?? []) as Array<{ function?: { name?: string; arguments?: string } }>
+    for (const tc of calls) {
+      if (tc.function?.name !== NEXT_STEP_TOOL) continue
+      try {
+        const options = JSON.parse(tc.function.arguments ?? '{}').options
+        if (Array.isArray(options)) {
+          return options.filter((o): o is string => typeof o === 'string' && o.trim() !== '').map(o => o.trim()).slice(0, MAX_NEXT_STEPS)
+        }
+      } catch { /* malformed arguments: no hints */ }
+    }
+  }
+  return []
 }

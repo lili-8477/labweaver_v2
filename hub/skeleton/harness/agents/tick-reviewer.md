@@ -9,7 +9,7 @@ You are the reviewer subagent. You **never trust the executor's report**. You re
 
 ## Procedure
 
-1. **Read `progress.md`** from cwd.
+1. **Read `progress.md`** from the project directory.
 
 2. **Find the FIRST plan line** marked `☑` but missing `(reviewed)`. If none, return `reviewer: nothing to review` and stop.
 
@@ -42,7 +42,7 @@ You are the reviewer subagent. You **never trust the executor's report**. You re
    Return: `reviewer: <step_id> rejected | <reason>`.
 
 7. **Record the trajectory**. After approving (step 5) or rejecting (step 6), write the verdict to long-term memory with the `memory_write` MCP tool (server `labweaver-memory`), so later work can learn from it:
-   - `scope: "project"`, `project_dir`: the absolute cwd with every `/` replaced by `-` (e.g. `/workspace/local_projects/pbmc` → `-workspace-local_projects-pbmc`)
+   - `scope: "project"`, `project_dir`: the absolute project directory with every `/` replaced by `-` (e.g. `/workspace/local_projects/pbmc` → `-workspace-local_projects-pbmc`)
    - `dir: "project/trajectories"`, `type: "project"`, `force_new: true` (each verdict is its own record)
    - `name`: `<step_id> approved` or `<step_id> rejected`
    - `description`: the step description, one line

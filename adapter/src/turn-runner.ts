@@ -41,8 +41,11 @@ export async function runTurn(engine: AgentEngine, args: RunTurnArgs): Promise<v
         args.onEvent(t.toolResult(chatId, ev.id, capToolOutput(ev.output)));
         break;
       case "usage":
-        // DSH reports context occupancy, not an input/output split.
+        // Context occupancy until the turn's real totals arrive below.
         t.recordUsage(ev.contextTokens, 0);
+        break;
+      case "tokens":
+        t.recordUsage(ev.input, ev.output);
         break;
     }
   };

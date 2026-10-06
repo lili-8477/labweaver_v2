@@ -14,7 +14,9 @@
 # stays on so a broken json parse still surfaces.
 set -uo pipefail
 
-HARNESS="${HARNESS_DIR:-$PWD}"
+# Log into the active auto-mode project (see adapter/src/harness.ts).
+HARNESS="$(cat "$HOME/.claude/.harness_dir" 2>/dev/null || true)"
+HARNESS="${HARNESS:-$PWD}"
 LOG="$HARNESS/.jobs.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 

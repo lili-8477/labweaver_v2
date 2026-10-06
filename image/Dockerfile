@@ -76,6 +76,8 @@ WORKDIR /opt/adapter
 COPY adapter/package.json adapter/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY adapter/dist/ ./dist/
+# dsh plugins load from ../dsh-plugins relative to dist/index.js.
+COPY adapter/dsh-plugins/ ./dsh-plugins/
 COPY image/kernel-bridge.py ./kernel-bridge.py
 
 # 3b. labweaver-memory MCP server. Pre-built dist/ is copied in (same convention

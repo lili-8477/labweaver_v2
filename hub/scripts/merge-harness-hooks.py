@@ -31,12 +31,24 @@ HARNESS_HOOKS = {
         {"matcher": "Write|Edit|write|edit", **command("posttool_commit.sh")},
         {"matcher": "Bash|bash", **command("posttool_jobid.sh")},
     ],
-    "Stop": [command("stop_tick.sh")],
 }
+
+# Hook scripts the harness no longer ships; their entries are removed on merge.
+# stop_tick.sh: auto mode's loop moved to the adapter's dsh plugin (tick.js).
+RETIRED = ("stop_tick.sh",)
+
+
+def retired(group):
+    return any(s in h.get("command", "") for h in group.get("hooks", []) for s in RETIRED)
+
 
 p = pathlib.Path(sys.argv[1])
 cur = json.loads(p.read_text())
 hooks = cur.setdefault("hooks", {})
+for event, groups in list(hooks.items()):
+    hooks[event] = [g for g in groups if not retired(g)]
+    if not hooks[event]:
+        del hooks[event]
 hooks.update(HARNESS_HOOKS)
 order = list(HARNESS_HOOKS)
 cur["hooks"] = {k: hooks[k] for k in order} | {k: v for k, v in hooks.items() if k not in order}

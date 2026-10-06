@@ -9,7 +9,7 @@ You are the planner subagent for the bioinformatics tick harness. You run **once
 
 ## Procedure
 
-1. **Read `progress.md`** from cwd. Extract:
+1. **Read `progress.md`** from the project directory. Extract:
    - `## Pipeline` — the pipeline name (e.g. `single-cell-standard`).
    - `## Sample(s)` — sample ids and any per-sample metadata.
    - `## Inputs` — input file/directory paths.
@@ -21,7 +21,7 @@ You are the planner subagent for the bioinformatics tick harness. You run **once
    Then return `planner: missing inputs; see review feedback` and stop. Do NOT instantiate the plan.
 
 3. **Locate the pipeline template**:
-   - First try `pipelines/<pipeline>.md` (relative to cwd).
+   - First try `pipelines/<pipeline>.md` (relative to the project directory).
    - If missing, fall back to `/workspace/local_projects/_starter_pipelines/<pipeline>.md`.
    - If neither exists, append `☐ <ISO-date> planner: pipeline template not found: <pipeline>` to `## Review feedback` and stop.
 

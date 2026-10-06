@@ -9,7 +9,16 @@ export type AgentEvent =
   | { kind: "tool_call"; id: string; name: string; input: unknown }
   | { kind: "tool_result"; id: string; output: string; isError: boolean }
   /** Context-window occupancy after a step (DSH reports no per-call split). */
-  | { kind: "usage"; contextTokens: number; contextWindow: number };
+  | { kind: "usage"; contextTokens: number; contextWindow: number }
+  /** Token totals for the whole turn, emitted once after it ends. */
+  | ({ kind: "tokens" } & TurnTokens);
+
+export interface TurnTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
 
 export interface EngineTurnArgs {
   prompt: string;

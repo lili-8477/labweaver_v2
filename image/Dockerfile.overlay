@@ -3,13 +3,14 @@
 # adapter without rebuilding the ~20 GB bio stack. Use it when the
 # `pantheon-agents-sc` base needed by image/Dockerfile is not available.
 #
-#   cd adapter && npm ci && npm run build && cd ..
+#   (cd adapter && npm ci && npm run build)
+#   (cd mcp-memory && npm ci && npm run build)
 #   docker build -f image/Dockerfile.overlay \
 #     --build-arg BASE=<existing-image:tag> -t labweaver:dsh-dev .
 #
 # Only the layers this branch changed are replaced: Node 22 (dsh needs
-# >= 22.19), the adapter bundle + dependencies, and the entrypoint. The
-# memory MCP server comes from BASE and is re-linked under its current name.
+# >= 22.19), the adapter bundle + dependencies, the labweaver-memory MCP
+# server, and the entrypoint.
 
 ARG BASE
 FROM ${BASE}
@@ -26,12 +27,23 @@ COPY adapter/package.json adapter/package-lock.json ./
 # Node 22 changes the ABI, so node-pty is rebuilt here (build tools are in BASE).
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY adapter/dist/ ./dist/
+# dsh plugins load from ../dsh-plugins relative to dist/index.js.
+COPY adapter/dsh-plugins/ ./dsh-plugins/
 COPY image/kernel-bridge.py ./kernel-bridge.py
+
+# labweaver-memory MCP server (same layout as image/Dockerfile step 3b).
+WORKDIR /opt/mcp-memory
+RUN rm -rf node_modules dist
+COPY mcp-memory/package.json mcp-memory/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+COPY mcp-memory/dist/ ./dist/
+
 COPY image/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /opt/adapter/kernel-bridge.py \
+        /opt/mcp-memory/dist/index.js \
     && ln -sf /opt/mcp-memory/dist/index.js /usr/local/bin/labweaver-memory-mcp \
     && mkdir -p /home/node/.dsh \
-    && chown -R node:node /opt/adapter /home/node/.dsh
+    && chown -R node:node /opt/adapter /opt/mcp-memory /home/node/.dsh
 
 USER node
 WORKDIR /workspace

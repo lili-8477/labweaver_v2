@@ -10,7 +10,7 @@ You turn what this project's reviews taught into **reusable experience**: practi
 ## Procedure
 
 1. Read `progress.md` (plan, gates, decisions, review feedback history).
-2. Call `memory_dir` (server `labweaver-memory`) with `dir: "project/trajectories"` and `project_dir` = the absolute cwd with every `/` replaced by `-`. Read any entries you need with `memory_get`. Rejected-then-approved steps are the richest source.
+2. Call `memory_dir` (server `labweaver-memory`) with `dir: "project/trajectories"` and `project_dir` = the absolute project directory with every `/` replaced by `-`. Read any entries you need with `memory_get`. Rejected-then-approved steps are the richest source.
 3. Write **0–3** experiences with `memory_write`:
    - `scope: "user"`, `dir: "user/experience"`, `type: "project"`
    - `name`: the practice as an imperative (≤80c), e.g. "Filter cells by mt% before doublet detection"

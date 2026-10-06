@@ -13,9 +13,14 @@ export interface PatchOptions {
   skillDirs: string[];
   /** Claude Code settings.json whose `hooks` DSH should run; omit to skip hooks. */
   hooksConfigPath?: string;
+  /** file: URL of the adapter's dsh-plugins/ directory (ending in "/"); omit to skip its plugins. */
+  pluginsDirUrl?: string;
 }
 
 type Row = Record<string, unknown>;
+
+/** Adapter-owned dsh plugins, each at dsh-plugins/<id>.js. */
+const LOCAL_PLUGINS = ["next-step", "tick", "usage"];
 
 export function buildDshPatch(opts: PatchOptions): Row[] {
   const def = parseModelRef(opts.defaultModel);
@@ -45,17 +50,18 @@ export function buildDshPatch(opts: PatchOptions): Row[] {
     { id: "acp", config: { provider: def.provider, model: def.model } },
     { id: "skill-filesystem", config: { customSkillDirs: opts.skillDirs } },
   ];
+  const inserts: Row[] = [];
   if (opts.hooksConfigPath) {
-    rows.push({
-      insert: [
-        {
-          id: "hooks-claude-code",
-          name: "@deepseek-ai/dsh-hooks-claude-code",
-          config: { configPath: opts.hooksConfigPath },
-        },
-      ],
+    inserts.push({
+      id: "hooks-claude-code",
+      name: "@deepseek-ai/dsh-hooks-claude-code",
+      config: { configPath: opts.hooksConfigPath },
     });
   }
+  if (opts.pluginsDirUrl) {
+    for (const id of LOCAL_PLUGINS) inserts.push({ id, name: new URL(`${id}.js`, opts.pluginsDirUrl).href });
+  }
+  if (inserts.length > 0) rows.push({ insert: inserts });
   return rows;
 }
 

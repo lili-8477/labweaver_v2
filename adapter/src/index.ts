@@ -70,6 +70,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const pool = new Pool({ connectionString: dbCfg.pgUrl, max: 10 });
+  // An idle client losing its connection (e.g. postgres restart) emits here;
+  // unhandled, it would crash the adapter. The pool reconnects on next use.
+  pool.on("error", (err) => console.warn(`[adapter] idle PG client error: ${err.message}`));
   await waitForPg(pool, 60);
   console.log(`[adapter] connected to PG as user=${dbCfg.username}`);
 
@@ -175,6 +178,8 @@ function createEngine(opts: { home: string; workspaceRoot: string; providers: Pr
     // Per-user skills first so they win name collisions with org skills.
     skillDirs: [path.join(opts.workspaceRoot, ".claude", "skills"), path.join(opts.home, ".claude", "skills")],
     hooksConfigPath: existsSync(settingsPath) ? settingsPath : undefined,
+    // Same relative path from src/ (tsx dev) and dist/ (build).
+    pluginsDirUrl: new URL("../dsh-plugins/", import.meta.url).href,
   })));
 
   const dshBin = process.env.DSH_BIN
@@ -192,6 +197,7 @@ function createEngine(opts: { home: string; workspaceRoot: string; providers: Pr
   console.log(`[adapter] engine: dsh acp (DSH_HOME=${dshHome}, patch=${patchFile})`);
   return new DshAcpEngine(conn, {
     mcpConfigPath: process.env.MCP_CONFIG ?? path.join(opts.workspaceRoot, ".mcp.json"),
+    usageDir: path.join(dshHome, "usage"),
   });
 }
 

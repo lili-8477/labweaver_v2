@@ -7,10 +7,13 @@ import { parseModelRef } from "../providers/registry.js";
 import type { ImageRef } from "../rpc.js";
 import type { DshAcpConnection } from "./acp-connection.js";
 import { mapSessionUpdate } from "./acp-mapper.js";
+import { takeTurnUsage } from "./usage.js";
 
 export interface DshAcpEngineOptions {
   /** Claude Code–style .mcp.json forwarded to every session; optional. */
   mcpConfigPath?: string;
+  /** Where dsh-plugins/usage.js records per-call token usage; omit to skip token totals. */
+  usageDir?: string;
 }
 
 /**
@@ -60,6 +63,9 @@ export class DshAcpEngine implements AgentEngine {
       console.log(`[engine] turn ${id.slice(0, 8)} stop=${stop}`);
     } finally {
       args.signal.removeEventListener("abort", onAbort);
+      // Cancelled turns spent tokens too, so this runs either way.
+      const tokens = this.opts.usageDir ? await takeTurnUsage(this.opts.usageDir, id) : null;
+      if (tokens) args.onEvent({ kind: "tokens", ...tokens });
     }
   }
 

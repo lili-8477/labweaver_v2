@@ -9,7 +9,7 @@ You are the executor subagent. You do exactly **one step per invocation**. No re
 
 ## Procedure
 
-1. **Read `progress.md`** from cwd.
+1. **Read `progress.md`** from the project directory.
 
 2. **Work item selection**:
    - If `## Review feedback` has any `☐` line, take the FIRST one and process that.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook. Three independent responsibilities:
+# UserPromptSubmit hook. Two independent responsibilities:
 #
 #   1. Drain ~/.claude/.chpc_pending if non-empty — emit any CHPC job
 #      terminal-state notifications as additional context so the agent
@@ -10,9 +10,8 @@
 #   2. Memory recall: for task-like prompts (not slash commands, not short
 #      chat), search memory and inject the top hits' one-line summaries.
 #
-#   3. When self-driving (tick) mode is on AND the user typed a normal
-#      message (not a slash command), inject a directive that routes the
-#      turn into the /tick orchestrator.
+# Auto mode routing lives in the adapter (src/harness.ts) and the tick dsh
+# plugin, not here.
 set -uo pipefail
 #
 # Context is emitted as JSON additionalContext (see the end of this file):
@@ -77,8 +76,10 @@ fi
 # ── 2. Memory recall ─────────────────────────────────────────────────
 # Slash commands and short chat ("ok", "thanks", "继续") don't need memory.
 # Anything else gets the top hits' L0 lines; the agent reads more with
-# memory_get. Never blocks or fails the prompt.
-if [[ "${MEMORY_ENABLED:-1}" = "1" && -n "${MEMORY_API_URL:-}" && "$PROMPT" != /* ]]; then
+# memory_get. Never blocks or fails the prompt. Skipped in auto mode, where
+# the prompt is the expanded tick orchestrator, not the user's words.
+if [[ "${MEMORY_ENABLED:-1}" = "1" && -n "${MEMORY_API_URL:-}" && "$PROMPT" != /* \
+      && ! -f "$HOME/.claude/.harness_active" ]]; then
   python3 - "$PROMPT" <<'PY' || true
 import json, os, sys, urllib.request
 prompt = sys.argv[1].strip()
@@ -106,30 +107,6 @@ for h in hits:
 print()
 PY
 fi
-
-# ── 3. Optional: tick-harness routing ────────────────────────────────
-# Harness toggle: stay quiet unless self-driving mode is enabled. The marker
-# file is written/removed by the Mode panel in the frontend.
-[[ -f "$HOME/.claude/.harness_active" ]] || { log "noop: marker absent"; exit 0; }
-
-# User-initiated slash commands pass through untouched (drain above still ran).
-case "$PROMPT" in
-  /*) log "passthrough: slash command (${PROMPT:0:60})"; exit 0 ;;
-esac
-
-log "inject: routing to /tick (prompt=${PROMPT:0:80})"
-
-# Inject orchestration context; route() output becomes additionalContext,
-# so the agent sees the directive alongside the original message.
-cat <<'EOF'
-[Self-driving mode is ON. The harness gate marker ~/.claude/.harness_active is present.]
-
-Your ONLY action for this turn: run the /tick command. The orchestrator will read the user's latest message and:
-  - if no progress.md exists in cwd, dispatch tick-bootstrap (scaffolds a new project from the instruction),
-  - otherwise dispatch the next subagent in the priority chain (planner / executor / reviewer).
-
-Do not answer the user's request directly. Do not run other tools first. The Stop hook will keep re-prompting /tick after each turn until ## Status: complete is written or the user pauses (touch ~/.claude/.tick_paused) or toggles self-driving Off.
-EOF
 }
 
 CONTEXT="$(route)"

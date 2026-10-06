@@ -6,8 +6,9 @@ set -euo pipefail
 # Enabled when ~/.claude/.harness_active exists (toggled from the frontend).
 [[ -f "$HOME/.claude/.harness_active" ]] || exit 0
 
-HARNESS="${HARNESS_DIR:-$PWD}"
-LOG="$HARNESS/.audit.log"
+# Log into the active auto-mode project (see adapter/src/harness.ts).
+HARNESS="$(cat "$HOME/.claude/.harness_dir" 2>/dev/null || true)"
+LOG="${HARNESS:-$PWD}/.audit.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
 parsed="$(python3 -c '

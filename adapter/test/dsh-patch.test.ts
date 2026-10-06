@@ -34,6 +34,21 @@ describe("buildDshPatch", () => {
     });
   });
 
+  it("inserts the adapter's dsh plugins by URL alongside hooks", () => {
+    const rows = buildDshPatch({
+      providers, defaultModel: "deepseek-official/deepseek-v4-pro", skillDirs: [],
+      hooksConfigPath: "/h/settings.json", pluginsDirUrl: "file:///opt/adapter/dsh-plugins/",
+    });
+    expect(rows.filter((r) => "insert" in r)).toEqual([{
+      insert: [
+        { id: "hooks-claude-code", name: "@deepseek-ai/dsh-hooks-claude-code", config: { configPath: "/h/settings.json" } },
+        { id: "next-step", name: "file:///opt/adapter/dsh-plugins/next-step.js" },
+        { id: "tick", name: "file:///opt/adapter/dsh-plugins/tick.js" },
+        { id: "usage", name: "file:///opt/adapter/dsh-plugins/usage.js" },
+      ],
+    }]);
+  });
+
   it("rejects malformed default refs and serializes as JSON", () => {
     expect(() => buildDshPatch({ providers, defaultModel: "bad", skillDirs: [] })).toThrow(/invalid default/);
     const rows = buildDshPatch({ providers, defaultModel: "deepseek-official/deepseek-v4-pro", skillDirs: [] });

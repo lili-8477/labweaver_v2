@@ -81,7 +81,7 @@ async function applyTemplate(template: TemplateFile) {
             <span class="mode-name">Self-driving</span>
             <span class="mode-desc">
               <template v-if="!chat.harnessInstalled">Tick harness not installed for this workspace.</template>
-              <template v-else-if="chat.harnessActive">Hooks active — Stop re-prompts /tick, progress.md auto-commits, every tool call audited.</template>
+              <template v-else-if="chat.harnessActive">On — each message runs /tick rounds until progress.md is complete (up to 40 per message); progress.md auto-commits, every tool call audited.</template>
               <template v-else>Hooks idle — chat behaves as a normal agent session.</template>
             </span>
           </div>

@@ -24,6 +24,7 @@ import {
   resolveModelRef,
   type ProviderSpec,
 } from "./providers/registry.js";
+import { autoModeMarker, autoModePrompt, isAutoMode, recordedProject, selectProject } from "./harness.js";
 import { runTurn } from "./turn-runner.js";
 import type { StreamEvent } from "./types.js";
 
@@ -232,7 +233,7 @@ export class RpcRouter {
       case "get_chat_messages": {
         const chatId = params.chat_id as string;
         const chat = await this.chats.read(chatId);
-        // Use the real SDK session UUID if we have one, else fall back to chat_id.
+        // Use the real engine session UUID if we have one, else fall back to chat_id.
         const sessionUuid = chat?.session_id ?? chatId;
         const messages = await readSessionMessages(
           this.deps.home,
@@ -267,8 +268,7 @@ export class RpcRouter {
       }
 
       case "get_harness_mode": {
-        const flag = path.join(this.deps.home, ".claude", ".harness_active");
-        const active = await fs.stat(flag).then(() => true).catch(() => false);
+        const active = await isAutoMode(this.deps.home);
         // installed = the orchestrator command + tick-* agents are present.
         const cmdFile = path.join(this.deps.home, ".claude", "commands", "tick.md");
         const installed = await fs.stat(cmdFile).then(() => true).catch(() => false);
@@ -277,7 +277,7 @@ export class RpcRouter {
 
       case "set_harness_mode": {
         const enabled = Boolean(params.enabled);
-        const flag = path.join(this.deps.home, ".claude", ".harness_active");
+        const flag = autoModeMarker(this.deps.home);
         if (enabled) {
           await fs.mkdir(path.dirname(flag), { recursive: true });
           await fs.writeFile(flag, "");
@@ -522,7 +522,7 @@ export class RpcRouter {
 
       case "memory_write": {
         if (!this.deps.memory) throw new Error("memory api not configured");
-        const res = await this.deps.memory.write(params as Parameters<MemoryRpcClient["write"]>[0]);
+        const res = await this.deps.memory.write(params as unknown as Parameters<MemoryRpcClient["write"]>[0]);
         return { success: true, ...(res as object) };
       }
 
@@ -672,8 +672,13 @@ export class RpcRouter {
     // cwd stays at defaultProjectCwd even when the chat is bound to a
     // project. Transcripts live under ~/.claude/projects/<encoded-cwd>/ and
     // DSH resume requires the session's original cwd — switching cwd
-    // mid-chat would fragment history and break resume. The agent learns the
-    // project from the kickoff prompt and tick-bootstrap output, not cwd.
+    // mid-chat would fragment history and break resume. Auto mode hands the
+    // agent its project through ~/.claude/.harness_dir instead (harness.ts).
+    const autoMode = await isAutoMode(this.deps.home);
+    if (autoMode) {
+      await selectProject(this.deps.home, this.deps.workspaceRoot, chat.project_dir ?? null);
+      prompt = autoModePrompt(prompt);
+    }
     const model = await this.currentModel();
     const mutex = this.mutexes.get(chatId);
     const run = mutex.tryRun(async () => {
@@ -701,6 +706,14 @@ export class RpcRouter {
         await this.chats.touch(chatId);
       } finally {
         this.aborts.clear(chatId);
+        // Bind the chat to the project tick-bootstrap created, so the next
+        // message continues it rather than bootstrapping another.
+        if (autoMode && !chat.project_dir) {
+          const rel = await recordedProject(this.deps.home, this.deps.workspaceRoot);
+          if (rel) await this.chats.setProjectDir(chatId, rel).catch((e) => {
+            console.warn(`[rpc] failed to bind ${chatId} to ${rel}:`, e);
+          });
+        }
       }
       return { success: true };
     });

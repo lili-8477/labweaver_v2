@@ -39,6 +39,19 @@ describe("ClaudeTranscriptWriter", () => {
     ]);
   });
 
+  it("puts the turn's token totals on its last assistant entry, Claude-style", async () => {
+    const w = new ClaudeTranscriptWriter({ home, cwd: "/workspace", sessionId: SID, model: "m" });
+    w.userPrompt("hi");
+    w.event({ kind: "text", text: "Hello." });
+    w.event({ kind: "tokens", input: 120, output: 30, cacheRead: 64, cacheWrite: 0 });
+    await w.flush();
+    const lines = (await fs.readFile(transcriptPath(home, "/workspace", SID), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines).toHaveLength(2);
+    expect(lines[1].message.usage).toEqual({
+      input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 64, cache_creation_input_tokens: 0,
+    });
+  });
+
   it("writes the fields the hub indexer requires, chained by parentUuid", async () => {
     await writeTurn();
     const lines = (await fs.readFile(transcriptPath(home, "/workspace", SID), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
