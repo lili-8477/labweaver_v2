@@ -28,7 +28,9 @@ try:
 except Exception:
     print("\t__OUT__\t"); sys.exit(0)
 cmd = (d.get("tool_input") or {}).get("command","") or ""
-out = (d.get("tool_response") or {}).get("stdout","") or ""
+# Claude Code sends {"stdout": ...}; DeepSeek Harness flattens it to text.
+resp = d.get("tool_response") or ""
+out = (resp.get("stdout","") if isinstance(resp, dict) else str(resp)) or ""
 print(f"{cmd}\t__OUT__\t{out}")
 ' 2>/dev/null || echo $'\t__OUT__\t')"
 

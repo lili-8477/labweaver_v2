@@ -26,7 +26,6 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ID_HASH: "devuser000"
       NATS_SERVERS: "nats://nats:4222"
       NATS_USER: "agent"
       WORKSPACE_ROOT: "/workspace"
@@ -39,15 +38,19 @@ services:
       # Next execute re-spawns lazily. 0 disables culling.
       KERNEL_IDLE_CULL_MS: "14400000"
       KERNEL_CULL_CHECK_INTERVAL_MS: "60000"
+    # .env carries SERVICE_ID (from hub/users.md) and provider API keys.
     env_file:
       - path: ./hub/workspaces/devuser/.env
-        required: false
+        required: true
     volumes:
       - ./hub/workspaces/devuser/projects:/workspace/projects
       - ./hub/workspaces/devuser/.claude/chats:/workspace/.claude/chats
       - ./hub/workspaces/devuser/.claude/skills:/home/node/.claude/skills
       - ./hub/workspaces/devuser/.claude/agents:/home/node/.claude/agents
       - ./hub/workspaces/devuser/.claude/settings.json:/home/node/.claude/settings.json
+      # Hook scripts straight from the skeleton, so dev runs the live copies.
+      # settings.json gets its hook entries from hub/scripts/merge-harness-hooks.py.
+      - ./hub/skeleton/harness/hooks:/home/node/.claude/hooks:ro
       # DeepSeek Harness state: session logs (resume) + generated patch.
       - ./hub/workspaces/devuser/.dsh:/home/node/.dsh
     working_dir: /workspace

@@ -16,7 +16,7 @@
     "--network=host"
   ],
   "containerEnv": {
-    "ID_HASH": "devcontainer0",
+    "SERVICE_ID": "${localEnv:LABWEAVER_SERVICE_ID}",
     "NATS_SERVERS": "nats://localhost:4223",
     "WORKSPACE_ROOT": "/workspace",
     "DEFAULT_PROJECT": "/workspace",

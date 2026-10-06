@@ -227,40 +227,7 @@ if [[ -d "${SKELETON_DIR}" ]]; then
 
     # Merge harness hook entries into settings.json, preserving inode (the
     # file is bind-mounted into the container; atomic-rename would break it).
-    python3 - "${WORKSPACE}/.claude/settings.json" <<'PY'
-import json, sys, pathlib
-HARNESS_HOOKS = {
-    "SessionStart": [
-        {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/memory_session_start.sh"}]}
-    ],
-    "UserPromptSubmit": [
-        {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/userprompt_route.sh"}]}
-    ],
-    "PreToolUse": [
-        {"matcher": "Bash|Write|Edit",
-         "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/pretool_audit.sh"}]}
-    ],
-    "PostToolUse": [
-        {"matcher": "Write|Edit",
-         "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/posttool_commit.sh"}]},
-        {"matcher": "Bash",
-         "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/posttool_jobid.sh"}]}
-    ],
-    "Stop": [
-        {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/stop_tick.sh"}]}
-    ],
-}
-p = pathlib.Path(sys.argv[1])
-cur = json.loads(p.read_text())
-hooks = cur.setdefault("hooks", {})
-for k, v in HARNESS_HOOKS.items(): hooks[k] = v
-ordered = {}
-for k in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]:
-    if k in hooks: ordered[k] = hooks[k]
-cur["hooks"] = ordered
-with p.open("w") as f:
-    json.dump(cur, f, indent=2); f.write("\n")
-PY
+    python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.claude/settings.json"
 fi
 
 # Shared dirs — created on demand by the first user provisioning.
@@ -339,12 +306,11 @@ else
 fi
 docker exec labweaver-nginx nginx -s reload >/dev/null 2>&1 || true
 
-# --- 3. IDs ------------------------------------------------------------------
-echo "[3/4] Generating IDs"
-ID_HASH=$(printf 'labweaver-%s' "${USERNAME}" | sha256sum | cut -c1-12)
-SERVICE_ID=$(printf '%s' "${ID_HASH}" | sha256sum | cut -c1-64)
-echo "  ID_HASH:    ${ID_HASH}"
-echo "  service_id: ${SERVICE_ID}"
+# --- 3. Service ID -----------------------------------------------------------
+# Random secret recorded in hub/users.md (reused if the user existed before).
+echo "[3/4] Service ID"
+SERVICE_ID=$("${HUB_DIR}/scripts/service-id.sh" ensure "${USERNAME}")
+echo "  service_id: ${SERVICE_ID}  (recorded in ${HUB_DIR}/users.md)"
 
 # --- 4. Spin the container ---------------------------------------------------
 echo "[4/4] Starting container"
@@ -416,7 +382,7 @@ docker run -d \
     --network "${NETWORK}" \
     --restart unless-stopped \
     "${GPU_FLAGS[@]}" \
-    -e "ID_HASH=${ID_HASH}" \
+    -e "SERVICE_ID=${SERVICE_ID}" \
     -e "NATS_SERVERS=nats://${NATS_HOST}:4222" \
     -e "NATS_USER=agent" \
     -e "WORKSPACE_ROOT=/workspace" \

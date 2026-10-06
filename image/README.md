@@ -38,7 +38,7 @@ takes ~20 min, so reusing the existing artifact is the pragmatic choice.
 
 | var | default | purpose |
 |---|---|---|
-| `ID_HASH` | required | 12-hex short hash; `service_id = sha256(ID_HASH)` |
+| `SERVICE_ID` | required | random secret ID (`hub/scripts/service-id.sh`); RPC subject `pantheon.service.<SERVICE_ID>` |
 | `NATS_SERVERS` | `nats://localhost:4222` | NATS server URL |
 | `NATS_USER` | `agent` | NATS auth user |
 | `NATS_PASS` | — | NATS auth token (optional) |

@@ -124,7 +124,7 @@ log "inject: routing to /tick (prompt=${PROMPT:0:80})"
 cat <<'EOF'
 [Self-driving mode is ON. The harness gate marker ~/.claude/.harness_active is present.]
 
-Your ONLY action for this turn: invoke the /tick slash command via the SlashCommand tool. The orchestrator will read the user's latest message and:
+Your ONLY action for this turn: run the /tick command. The orchestrator will read the user's latest message and:
   - if no progress.md exists in cwd, dispatch tick-bootstrap (scaffolds a new project from the instruction),
   - otherwise dispatch the next subagent in the priority chain (planner / executor / reviewer).
 

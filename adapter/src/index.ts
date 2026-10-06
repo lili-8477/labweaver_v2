@@ -3,7 +3,8 @@
 //
 // Env:
 //   NATS_SERVERS      e.g. "nats://pantheon-nats:4222"
-//   ID_HASH           short hash (12 hex); service_id = sha256(ID_HASH) full hex
+//   SERVICE_ID        REQUIRED — random secret (hub/scripts/service-id.sh); the
+//                     RPC subject is pantheon.service.<SERVICE_ID>
 //   NATS_USER         optional auth user (defaults to "agent")
 //   NATS_PASS         optional auth token
 //   WORKSPACE_ROOT    default "/workspace"
@@ -24,7 +25,6 @@
 //   DSH_PERMISSION_MODE default "danger-full-access" (headless, like bypassPermissions)
 //   MCP_CONFIG        Claude-style .mcp.json forwarded to sessions; default "$WORKSPACE_ROOT/.mcp.json"
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
@@ -42,13 +42,15 @@ import { RpcRouter, type RpcDeps } from "./rpc.js";
 import { importSidecar } from "./sidecar-import.js";
 import { startUploadServer } from "./upload-http.js";
 
-function computeServiceId(idHash: string): string {
-  return createHash("sha256").update(idHash).digest("hex");
-}
+/** A NATS subject token, long enough to be unguessable. */
+const SERVICE_ID_RE = /^[A-Za-z0-9_-]{32,}$/;
 
 async function main(): Promise<void> {
-  const idHash = requireEnv("ID_HASH");
-  const serviceId = computeServiceId(idHash);
+  const serviceId = requireEnv("SERVICE_ID");
+  if (!SERVICE_ID_RE.test(serviceId)) {
+    console.error("[adapter] SERVICE_ID must be >= 32 chars of [A-Za-z0-9_-]; generate one with hub/scripts/service-id.sh");
+    process.exit(2);
+  }
   const servers = process.env.NATS_SERVERS ?? "nats://localhost:4222";
   const workspaceRoot = process.env.WORKSPACE_ROOT ?? "/workspace";
   const defaultProjectCwd = process.env.DEFAULT_PROJECT ?? workspaceRoot;

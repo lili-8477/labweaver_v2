@@ -128,7 +128,11 @@ docker compose ps
 OLLAMA_API_KEY=xxxx ./scripts/add-user.sh alice sk-xxxxxxxx
 ```
 
-The final command prints a `service_id` (64-char hex). Open
+The final command prints the user's `service_id`: a random 64-hex secret,
+recorded in `hub/users.md` (gitignored, mode 600). It is the user's access
+key — share it only with that user. `recreate-user.sh` reuses it and
+`remove-user.sh` retires it; `hub/scripts/service-id.sh get <user>` looks it
+up. Open
 `http://localhost:8088/` (or whatever nginx binds), enter
 `ws://localhost:8088/ws/` as the WebSocket URL, the printed service ID, and
 the username/password you chose.
@@ -143,6 +147,8 @@ mkdir -p hub/workspaces/devuser/.claude/{skills,agents,chats,claude-projects}
 mkdir -p hub/workspaces/devuser/{projects,.dsh}
 echo '{"model":"deepseek-official/deepseek-v4-pro"}' > hub/workspaces/devuser/.claude/settings.json
 printf 'DEEPSEEK_API_KEY=sk-...\nOLLAMA_API_KEY=...\n' > hub/workspaces/devuser/.env
+# Random service ID, recorded in hub/users.md and handed to the adapter.
+echo "SERVICE_ID=$(hub/scripts/service-id.sh ensure devuser)" >> hub/workspaces/devuser/.env
 
 docker compose --env-file hub/.env -f docker-compose.dev.yml up -d
 ```
@@ -151,16 +157,12 @@ Running beside another hub on the same host? Put port/image overrides in an
 untracked `docker-compose.dev.local.yml` and add `-f docker-compose.dev.local.yml`.
 
 Point the frontend at `ws://localhost:8081/` (direct NATS WebSocket, no nginx
-prefix). Service ID is `sha256(devuser000)` — compute once:
-
-```bash
-printf 'devuser000' | sha256sum | cut -c1-64
-```
+prefix) with the service ID from `hub/scripts/service-id.sh get devuser`.
 
 ## How to drop in a skill
 
-Skills are plain markdown. Claude Code auto-discovers anything under
-`~/.claude/skills/` at turn-start.
+Skills are plain markdown. The adapter registers `~/.claude/skills/` with
+DeepSeek Harness, which watches it, so new skills appear without a restart.
 
 ```bash
 mkdir -p hub/workspaces/alice/.claude/skills/scrna-qc
