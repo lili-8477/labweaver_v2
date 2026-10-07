@@ -349,3 +349,17 @@ Recommendations:
 4. Adopt `dsh-goal` for the loop only once the adapter can stream rounds that start outside an ACP prompt. Until then, `tick.js` is the pragmatic choice.
 
 See `adapter/dsh-plugins/tick.js`, `hub/skeleton/harness/commands/tick.md`, `hub/skeleton/harness/agents/tick-reviewer.md` step 7.
+
+## 2026-10-07 — Do we need auto mode and the tick subagents?
+
+**Q:** Do we need self-driving mode and the subagents?
+
+**A:** The loop, yes, if users run multi-step pipelines unattended; the five subagents, no. Since routing moved into `tick.js` (`nextStep`), the parent turn only relays: each round it reads an agent file and calls `subagent`. That's a model call that adds nothing. It also forces the real work into child sessions, which is the only reason `sidechain.js` exists.
+
+What each subagent buys:
+- **reviewer**: a fresh context that never sees the executor's reasoning. This is the one real reason for a subagent. Keep it.
+- **executor**: a fresh context per step, which keeps long projects from filling the parent context. dsh compaction covers that. Without the subagent, the analysis lands in the main transcript, which is better for distillation.
+- **bootstrap + planner**: two sequential one-shot steps. Merge them, or let the main agent do them.
+- **retrospective**: a single memory pass at the end. The main agent can do it.
+
+Leaner shape: `tick.js` steers the main agent with the work item ("do step X; follow `tick-executor.md`"), and the main agent dispatches only `tick-reviewer` as a subagent. Implemented the same day; verified in the UI on a 2-step project (one main transcript, one reviewer sidechain per step). See `adapter/dsh-plugins/tick.js`, `hub/skeleton/harness/commands/tick.md`.

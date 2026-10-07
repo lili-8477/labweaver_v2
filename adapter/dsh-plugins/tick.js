@@ -6,7 +6,8 @@
 // turn is about to stop, this plugin reads the project's progress.md, decides
 // the next step in code (nextStep below — routing is a pure function of
 // progress.md, so no model call is spent on it), and steers the agent with one
-// short dispatch instruction. It stops when the project is complete, the user
+// short instruction: do the step itself, or, for the reviewer, dispatch it as a
+// subagent so the review runs in a clean context. It stops when the project is complete, the user
 // pauses or turns auto mode off, MAX_ROUNDS is hit, or the same step comes up
 // MAX_REPEATS rounds in a row (the subagent is not advancing progress.md).
 
@@ -23,6 +24,8 @@ const PAUSE = join(CLAUDE_DIR, ".tick_paused");
 const PROJECT = join(CLAUDE_DIR, ".harness_dir");
 const MAX_ROUNDS = 40;
 const MAX_REPEATS = 3;
+// Steps that run as a subagent; the main agent does every other step itself.
+const SUBAGENTS = new Set(["tick-reviewer"]);
 
 function read(path) {
   try { return readFileSync(path, "utf8"); } catch { return null; }
@@ -55,12 +58,13 @@ export function nextStep(md) {
 }
 
 function instruction(round, dir, step) {
+  const sub = SUBAGENTS.has(step.agent);
   return [
-    `[auto mode · round ${round}] Dispatch \`${step.agent}\` now.`,
+    `[auto mode · round ${round}] ${sub ? "Dispatch" : "Do"} \`${step.agent}\` now${sub ? "" : ", yourself"}.`,
     `Agent file: ${join(CLAUDE_DIR, "agents", `${step.agent}.md`)}`,
     `Project directory: ${dir ?? "none yet"}`,
     `Work item: ${step.work}`,
-    `Follow the Dispatch procedure in ${join(CLAUDE_DIR, "commands", "tick.md")}, then reply in one line.`,
+    `Follow the ${sub ? "Dispatch" : "Do"} procedure in ${join(CLAUDE_DIR, "commands", "tick.md")}.`,
   ].join("\n");
 }
 

@@ -2,8 +2,7 @@
 // plain ESM, not TypeScript. Mounted by the adapter's cordis patch: see
 // src/dsh/patch.ts.
 //
-// Subagent runs (auto mode's bootstrap/planner/executor/reviewer, or any other
-// delegation) happen in child sessions that dsh never streams over ACP, so the
+// Subagent runs (auto mode's reviewer, or any other delegation) happen in child sessions that dsh never streams over ACP, so the
 // adapter's transcript only holds the parent's view. This writes each child
 // session as its own Claude-format sidechain transcript beside the parent's:
 // ~/.claude/projects/<encoded cwd>/<child session id>.jsonl, with

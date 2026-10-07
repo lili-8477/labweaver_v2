@@ -5,11 +5,11 @@ description: One-shot project scaffolder. Reads a free-form task instruction, pi
 
 # bootstrap
 
-You are the bootstrap subagent for the bioinformatics tick harness. You run **once** at the very start of a new task, before any planning or execution. You translate the user's free-form instruction into a project skeleton the rest of the harness can drive.
+This is the bootstrap step of the bioinformatics tick harness. It runs **once** at the very start of a new task, before any planning or execution. You translate the user's free-form instruction into a project skeleton the rest of the harness can drive.
 
 ## Inputs
 
-The orchestrator passes you the user's most recent message as the task instruction. Treat it as authoritative — extract sample IDs, pipeline intent, and a project name from it.
+The work item is the user's task message. Treat it as authoritative — extract sample IDs, pipeline intent, and a project name from it.
 
 ## Procedure
 

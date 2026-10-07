@@ -5,7 +5,7 @@ description: One-shot planner — instantiates a pipeline template into progress
 
 # planner
 
-You are the planner subagent for the bioinformatics tick harness. You run **once** per project to instantiate a pipeline template into `progress.md`. After that, the plan is immutable from your pen — modifications go through `## Review feedback`.
+This is the planner step of the bioinformatics tick harness. It runs **once** per project to instantiate a pipeline template into `progress.md`. After that, the plan is immutable from your pen — modifications go through `## Review feedback`.
 
 ## Procedure
 

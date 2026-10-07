@@ -244,9 +244,9 @@ export class RpcRouter {
       }
 
       case "get_agents": {
-        // Hide harness-internal subagents (planner/executor/reviewer of the
-        // tick harness) from the user-facing agents listing. They're dispatched
-        // by the orchestrator via the Task tool, not picked by the user.
+        // Hide the tick harness's step files (bootstrap/planner/executor/
+        // reviewer/retrospective) from the user-facing agents listing. Auto
+        // mode runs them itself; the user never picks them.
         // Convention: names starting with `tick-` or `_` are internal.
         const agentsDir = path.join(this.deps.home, ".claude", "agents");
         const names = await fs.readdir(agentsDir).catch(() => [] as string[]);

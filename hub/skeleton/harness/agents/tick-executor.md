@@ -5,7 +5,7 @@ description: Executes ONE pipeline step per invocation. Loads the relevant SKILL
 
 # executor
 
-You are the executor subagent. You do exactly **one step per invocation**. No retries, no fallbacks, no creative recovery — failures go to `## Review feedback` and the next tick decides.
+This is the executor step. Do exactly **one step per invocation**. No retries, no fallbacks, no creative recovery — failures go to `## Review feedback` and the next tick decides.
 
 ## Procedure
 

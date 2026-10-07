@@ -71,15 +71,23 @@ describe("nextStep (tick priority)", () => {
 });
 
 describe("tick plugin loop", () => {
-  it("steers a top-level turn with a short dispatch for the next step", () => {
+  it("steers a top-level turn to do the next step itself", () => {
     writeFileSync(progress, md({ Plan: ["☐ qc — filter cells"], "Review feedback": [] }));
     const a = agent();
     stopping({ agent: a });
     expect(a.steered).toEqual([
-      `[auto mode · round 1] Dispatch \`tick-executor\` now.\nAgent file: ${claude}/agents/tick-executor.md\n` +
+      `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${claude}/agents/tick-executor.md\n` +
       `Project directory: ${project}\nWork item: ☐ qc — filter cells\n` +
-      `Follow the Dispatch procedure in ${claude}/commands/tick.md, then reply in one line.`,
+      `Follow the Do procedure in ${claude}/commands/tick.md.`,
     ]);
+  });
+
+  it("dispatches the reviewer as a subagent", () => {
+    writeFileSync(progress, md({ Plan: ["☑ qc — filter cells"], "Review feedback": [] }));
+    const a = agent();
+    stopping({ agent: a });
+    expect(a.steered[0]).toMatch(/^\[auto mode · round 1\] Dispatch `tick-reviewer` now\.\n/);
+    expect(a.steered[0]).toMatch(/Follow the Dispatch procedure in /);
   });
 
   it("marks a finished project complete and lets the turn stop", () => {
