@@ -33,6 +33,7 @@ import { ChatsRepo } from "./chats-repo.js";
 import { DshAcpConnection } from "./dsh/acp-connection.js";
 import { DshAcpEngine } from "./dsh/engine.js";
 import { buildDshPatch, serializePatch } from "./dsh/patch.js";
+import { loadMcpServers } from "./mcp-config.js";
 import { buildProviders, DEFAULT_MODEL_REF, type ProviderSpec } from "./providers/registry.js";
 import { loadDbConfig } from "./db-config.js";
 import { MemoryRpcClient } from "./memory-rpc.js";
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
   }
 
   const providers = buildProviders();
-  const engine = createEngine({ home, workspaceRoot, providers });
+  const engine = await createEngine({ home, workspaceRoot, providers });
 
   await bus.connect();
   console.log(`[adapter] connected to NATS ${servers}, service_id=${serviceId.slice(0, 12)}...`);
@@ -167,7 +168,7 @@ async function main(): Promise<void> {
  * skill roots, Claude-compatible hooks) into DSH_HOME and prepares the ACP
  * child, which spawns lazily on the first turn.
  */
-function createEngine(opts: { home: string; workspaceRoot: string; providers: ProviderSpec[] }): DshAcpEngine {
+async function createEngine(opts: { home: string; workspaceRoot: string; providers: ProviderSpec[] }): Promise<DshAcpEngine> {
   const dshHome = process.env.DSH_HOME ?? path.join(opts.home, ".dsh");
   mkdirSync(dshHome, { recursive: true });
   const settingsPath = path.join(opts.home, ".claude", "settings.json");
@@ -180,6 +181,8 @@ function createEngine(opts: { home: string; workspaceRoot: string; providers: Pr
     hooksConfigPath: existsSync(settingsPath) ? settingsPath : undefined,
     // Same relative path from src/ (tsx dev) and dist/ (build).
     pluginsDirUrl: new URL("../dsh-plugins/", import.meta.url).href,
+    // Read once at startup: editing .mcp.json takes an adapter restart.
+    mcpServers: await loadMcpServers(process.env.MCP_CONFIG ?? path.join(opts.workspaceRoot, ".mcp.json")),
   })));
 
   const dshBin = process.env.DSH_BIN
@@ -196,7 +199,6 @@ function createEngine(opts: { home: string; workspaceRoot: string; providers: Pr
   });
   console.log(`[adapter] engine: dsh acp (DSH_HOME=${dshHome}, patch=${patchFile})`);
   return new DshAcpEngine(conn, {
-    mcpConfigPath: process.env.MCP_CONFIG ?? path.join(opts.workspaceRoot, ".mcp.json"),
     usageDir: path.join(dshHome, "usage"),
   });
 }

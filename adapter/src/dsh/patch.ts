@@ -2,6 +2,7 @@
 // Rows address dsh-base row ids; a patch row replaces that row's whole config.
 // Output is JSON, which is valid YAML, so no YAML dependency is needed.
 
+import type { McpServer } from "@agentclientprotocol/sdk";
 import type { ProviderSpec } from "../providers/registry.js";
 import { parseModelRef } from "../providers/registry.js";
 
@@ -15,12 +16,17 @@ export interface PatchOptions {
   hooksConfigPath?: string;
   /** file: URL of the adapter's dsh-plugins/ directory (ending in "/"); omit to skip its plugins. */
   pluginsDirUrl?: string;
+  /**
+   * MCP servers mounted process-wide, so subagents get their tools too
+   * (servers passed per session over ACP reach only that session's agent).
+   */
+  mcpServers?: McpServer[];
 }
 
 type Row = Record<string, unknown>;
 
 /** Adapter-owned dsh plugins, each at dsh-plugins/<id>.js. */
-const LOCAL_PLUGINS = ["next-step", "tick", "usage"];
+const LOCAL_PLUGINS = ["next-step", "tick", "usage", "sidechain"];
 
 export function buildDshPatch(opts: PatchOptions): Row[] {
   const def = parseModelRef(opts.defaultModel);
@@ -61,8 +67,20 @@ export function buildDshPatch(opts: PatchOptions): Row[] {
   if (opts.pluginsDirUrl) {
     for (const id of LOCAL_PLUGINS) inserts.push({ id, name: new URL(`${id}.js`, opts.pluginsDirUrl).href });
   }
+  for (const s of opts.mcpServers ?? []) {
+    const config = mcpClientConfig(s);
+    if (config) inserts.push({ id: `mcp-${s.name}`, name: "@deepseek-ai/dsh-mcp-client", config });
+  }
   if (inserts.length > 0) rows.push({ insert: inserts });
   return rows;
+}
+
+/** dsh-mcp-client config for the stdio and HTTP servers .mcp.json can declare; null otherwise. */
+function mcpClientConfig(s: McpServer): Row | null {
+  const pairs = (xs: { name: string; value: string }[]) => Object.fromEntries(xs.map((x) => [x.name, x.value]));
+  if ("command" in s) return { serverName: s.name, transport: "stdio", command: s.command, args: s.args, env: pairs(s.env) };
+  if ("type" in s && s.type === "http") return { serverName: s.name, transport: "streamable-http", url: s.url, headers: pairs(s.headers) };
+  return null;
 }
 
 export function serializePatch(rows: Row[]): string {

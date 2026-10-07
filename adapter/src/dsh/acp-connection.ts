@@ -95,19 +95,20 @@ export class DshAcpConnection {
     return Promise.race([fn(live), live.exited]);
   }
 
-  async newSession(cwd: string, mcpServers: acp.McpServer[]): Promise<string> {
+  /** MCP servers are mounted process-wide through the patch, not per session. */
+  async newSession(cwd: string): Promise<string> {
     return this.call(async (live) => {
-      const res = await live.conn.newSession({ cwd, mcpServers });
+      const res = await live.conn.newSession({ cwd, mcpServers: [] });
       live.loaded.add(res.sessionId);
       return res.sessionId;
     });
   }
 
   /** Loads a persisted session into this process; no-op if already loaded. */
-  async resumeSession(sessionId: string, cwd: string, mcpServers: acp.McpServer[]): Promise<void> {
+  async resumeSession(sessionId: string, cwd: string): Promise<void> {
     return this.call(async (live) => {
       if (live.loaded.has(sessionId)) return;
-      await live.conn.resumeSession({ sessionId, cwd, mcpServers });
+      await live.conn.resumeSession({ sessionId, cwd, mcpServers: [] });
       live.loaded.add(sessionId);
     });
   }

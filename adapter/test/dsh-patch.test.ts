@@ -45,6 +45,29 @@ describe("buildDshPatch", () => {
         { id: "next-step", name: "file:///opt/adapter/dsh-plugins/next-step.js" },
         { id: "tick", name: "file:///opt/adapter/dsh-plugins/tick.js" },
         { id: "usage", name: "file:///opt/adapter/dsh-plugins/usage.js" },
+        { id: "sidechain", name: "file:///opt/adapter/dsh-plugins/sidechain.js" },
+      ],
+    }]);
+  });
+
+  it("mounts .mcp.json servers process-wide through dsh-mcp-client", () => {
+    const rows = buildDshPatch({
+      providers, defaultModel: "deepseek-official/deepseek-v4-pro", skillDirs: [],
+      mcpServers: [
+        { name: "labweaver-memory", command: "/usr/local/bin/labweaver-memory-mcp", args: [], env: [{ name: "USERNAME", value: "devuser" }] },
+        { type: "http", name: "web", url: "http://x/mcp", headers: [{ name: "Authorization", value: "Bearer t" }] },
+      ],
+    });
+    expect(rows.filter((r) => "insert" in r)).toEqual([{
+      insert: [
+        {
+          id: "mcp-labweaver-memory", name: "@deepseek-ai/dsh-mcp-client",
+          config: { serverName: "labweaver-memory", transport: "stdio", command: "/usr/local/bin/labweaver-memory-mcp", args: [], env: { USERNAME: "devuser" } },
+        },
+        {
+          id: "mcp-web", name: "@deepseek-ai/dsh-mcp-client",
+          config: { serverName: "web", transport: "streamable-http", url: "http://x/mcp", headers: { Authorization: "Bearer t" } },
+        },
       ],
     }]);
   });

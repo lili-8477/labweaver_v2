@@ -46,7 +46,11 @@ You are the reviewer subagent. You **never trust the executor's report**. You re
    - `dir: "project/trajectories"`, `type: "project"`, `force_new: true` (each verdict is its own record)
    - `name`: `<step_id> approved` or `<step_id> rejected`
    - `description`: the step description, one line
-   - `body`: the gate(s), the numeric evidence or the expected/got mismatch, and the corrective instruction if rejected.
+   - `body`, so the record stands on its own for later distillation:
+     - `attempt: <n>` — 1 + the number of earlier `rejected` lines for this step_id in `## Review feedback`
+     - `script: <path>` — the script under `scripts/` that produced the artifact (check `## Decisions` and `scripts/`)
+     - the gate(s) with the numeric evidence, or the expected/got mismatch
+     - the corrective instruction if rejected; on an approval after rejections, what changed between attempts
    If the tool is unavailable or errors, continue: memory is best-effort and never blocks review.
 
 8. **Structural correction**. The reviewer MAY directly edit `## Plan`, `## Gates`, or `## Decisions` if the existing plan/gate is structurally wrong (e.g. references a wrong column name). When this happens, document the change as a separate audit entry in `## Review feedback`:

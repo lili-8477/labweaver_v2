@@ -1,6 +1,6 @@
-// Reads a Claude Code `.mcp.json` and converts it into ACP `McpServer`
-// entries for session/new and session/resume. DSH's ACP server requires an
-// absolute stdio command, so bare names are resolved against PATH.
+// Reads a Claude Code `.mcp.json` into ACP-shaped `McpServer` entries, which
+// dsh/patch.ts mounts process-wide through dsh-mcp-client. Bare stdio commands
+// are resolved against PATH to absolute paths.
 
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
