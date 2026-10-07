@@ -263,7 +263,9 @@ watch(
   right: 14px;
   width: min(420px, calc(100% - 28px));
   max-height: calc(100% - 74px);
-  background: var(--bg-secondary);
+  background: var(--bg-elevated);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow:

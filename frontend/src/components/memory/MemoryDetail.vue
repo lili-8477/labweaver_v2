@@ -356,6 +356,8 @@ async function submitShare() {
 .btn-restore:hover { background: color-mix(in oklch, var(--success) 22%, transparent); }
 
 .share-modal-overlay {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   position: fixed;
   inset: 0;
   background: rgb(0 0 0 / 0.45);
@@ -363,7 +365,7 @@ async function submitShare() {
   z-index: 100;
 }
 .share-modal {
-  background: var(--bg-primary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-4);

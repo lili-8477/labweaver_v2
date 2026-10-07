@@ -7,6 +7,8 @@ import ChatSidebar from '@/components/chat/ChatSidebar.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import ChpcBridgePill from '@/components/layout/ChpcBridgePill.vue'
 import ModelSelect from '@/components/layout/ModelSelect.vue'
+import BrandLogo from '@/components/layout/BrandLogo.vue'
+import FocusDock from '@/components/focus/FocusDock.vue'
 import { loadDshClientModules } from '@/services/dsh-client-host'
 import FileTree from '@/components/files/FileTree.vue'
 import FileViewer from '@/components/files/FileViewer.vue'
@@ -145,7 +147,7 @@ const connStatus = computed(() => {
 <template>
   <div class="main-layout">
     <!-- Top bar -->
-    <header class="topbar">
+    <header class="topbar glass">
       <div class="topbar-left">
         <button
           class="sidebar-toggle"
@@ -155,7 +157,7 @@ const connStatus = computed(() => {
         >
           <span class="hamburger">☰</span>
         </button>
-        <span class="logo">LabWeaver</span>
+        <span class="logo"><BrandLogo class="logo-mark" /><span><b>LAB</b>WEAVER</span></span>
         <span class="conn-badge" :class="connStatus.cls">
           <span class="status-dot"></span>
           {{ connStatus.label }}
@@ -216,7 +218,7 @@ const connStatus = computed(() => {
       <!-- Left sidebar (collapsible) -->
       <aside
         v-if="!layout.sidebarCollapsed"
-        class="sidebar"
+        class="sidebar glass"
         :style="{ width: layout.sidebarWidth + 'px' }"
       >
         <ChatSidebar />
@@ -228,7 +230,7 @@ const connStatus = computed(() => {
         title="Drag to resize"
       />
 
-      <main class="chat-main">
+      <main class="chat-main glass">
         <ChatPanel />
       </main>
 
@@ -243,7 +245,7 @@ const connStatus = computed(() => {
             :aria-label="`Hide ${rightPanel} panel`"
           >›</button>
         </div>
-        <aside class="right-panel" :style="{ width: layout.rightPanelWidth + 'px' }">
+        <aside class="right-panel glass" :style="{ width: layout.rightPanelWidth + 'px' }">
           <FileTree v-if="rightPanel === 'files'" @open-file="handleFileOpen" />
           <NotebookEditor v-else-if="rightPanel === 'notebook'" />
           <AgentPanel v-else-if="rightPanel === 'agents'" />
@@ -254,6 +256,9 @@ const connStatus = computed(() => {
       </template>
     </div>
 
+    <!-- Floating pomodoro + music -->
+    <FocusDock />
+
     <!-- File viewer overlay -->
     <FileViewer v-if="files.openFile" />
 
@@ -263,16 +268,21 @@ const connStatus = computed(() => {
 </template>
 
 <style scoped>
-.main-layout { display: flex; flex-direction: column; height: 100%; }
+.main-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  padding: var(--space-2);
+}
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  padding: 0 14px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  height: 48px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
   flex-shrink: 0;
 }
 .topbar-left { display: flex; align-items: center; gap: 10px; }
@@ -298,22 +308,24 @@ const connStatus = computed(() => {
 .hamburger { font-size: 14px; }
 
 .logo {
-  font-family: var(--font-display);
-  font-weight: var(--fw-semi);
-  font-size: var(--text-lg);
-  letter-spacing: -0.015em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Poppins', var(--font-sans);
+  font-weight: 300;
+  font-size: var(--text-md);
+  letter-spacing: 0.08em;
   color: var(--text-primary);
 }
-.logo::first-letter {
-  color: var(--accent);
-}
+.logo b { font-weight: 700; margin-right: 0.08em; }
+.logo-mark { width: 22px; height: 24px; }
 
 .conn-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-pill);
   font-size: 0.72em;
   background: var(--bg-tertiary);
   color: var(--text-muted);
@@ -339,7 +351,7 @@ const connStatus = computed(() => {
   padding: 4px 12px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-pill);
   color: var(--text-secondary);
   font-size: 0.82em;
   transition: all 0.12s;
@@ -363,29 +375,42 @@ const connStatus = computed(() => {
 
 .sidebar {
   flex-shrink: 0;
-  background: var(--bg-secondary);
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-.right-panel {
-  flex-shrink: 0;
-  background: var(--bg-secondary);
+.chat-main {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
+.right-panel {
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The gap between panes is the drag handle; a hairline lights up on hover. */
 .resizer {
   position: relative;
-  width: 4px;
-  background: var(--border);
+  width: var(--space-2);
   cursor: col-resize;
   flex-shrink: 0;
-  transition: background 0.1s;
 }
-.resizer:hover,
-.resizer:active {
+.resizer::after {
+  content: '';
+  position: absolute;
+  inset: 20% 3px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  transition: background 0.12s;
+}
+.resizer:hover::after,
+.resizer:active::after {
   background: var(--accent);
 }
 
@@ -393,13 +418,13 @@ const connStatus = computed(() => {
 .resizer-right .fold-handle {
   position: absolute;
   top: 44px;
-  left: -11px;
+  left: -7px;
   width: 18px;
   height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-tertiary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-right: none;
   border-radius: 10px 0 0 10px;

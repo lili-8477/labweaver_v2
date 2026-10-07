@@ -137,12 +137,14 @@ const selectedLabel = computed(() => selected.value === '' ? '/ (workspace root)
 
 <style scoped>
 .modal-backdrop {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   position: fixed; inset: 0; background: rgba(0,0,0,0.5);
   display: flex; align-items: center; justify-content: center;
   z-index: 2000;
 }
 .modal {
-  background: var(--bg-secondary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 8px;
   width: 480px;

@@ -161,11 +161,13 @@ async function onSubmit(name: string) {
 }
 
 .modal-overlay {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   position: fixed; inset: 0; background: rgba(0,0,0,0.4);
   display: flex; align-items: center; justify-content: center; z-index: 1000;
 }
 .modal {
-  background: var(--bg-primary); border: 1px solid var(--border);
+  background: var(--bg-elevated); border: 1px solid var(--border);
   border-radius: var(--radius); padding: var(--space-4); width: min(420px, 90vw);
   display: flex; flex-direction: column; gap: var(--space-2);
 }

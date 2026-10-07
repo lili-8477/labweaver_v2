@@ -250,12 +250,14 @@ onUnmounted(() => {
 
 <style scoped>
 .file-viewer-overlay {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   position: fixed; inset: 0; z-index: 100;
   background: rgba(0, 0, 0, 0.6); display: flex;
   align-items: center; justify-content: center;
 }
 .file-viewer {
-  width: 85vw; height: 80vh; background: var(--bg-primary);
+  width: 85vw; height: 80vh; background: var(--bg-elevated);
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   display: flex; flex-direction: column; overflow: hidden;
 }
