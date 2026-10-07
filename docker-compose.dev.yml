@@ -61,6 +61,10 @@ services:
       - ./hub/skeleton/harness/hooks:/home/node/.claude/hooks:ro
       # DeepSeek Harness state: session logs (resume) + generated patch.
       - ./hub/workspaces/devuser/.dsh:/home/node/.dsh
+    # The adapter's HTTP server (uploads, share snapshots). nginx proxies it
+    # in prod; in dev the Vite server does (frontend/vite.config.ts).
+    ports:
+      - "127.0.0.1:5000:5000"
     working_dir: /workspace
     networks:
       - labweaver-dev-net

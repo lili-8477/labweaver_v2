@@ -161,6 +161,9 @@ untracked `docker-compose.dev.local.yml` and add `-f docker-compose.dev.local.ym
 
 Point the frontend at `ws://localhost:8081/` (direct NATS WebSocket, no nginx
 prefix) with the service ID from `hub/scripts/service-id.sh get devuser`.
+Vite (`npm run dev` in `frontend/`) proxies `/upload` and `/share-snapshot` to
+the adapter's HTTP server at `localhost:5000`, the way nginx does in prod. Set
+`LABWEAVER_ADAPTER_HTTP` in `frontend/.env.local` if you publish it elsewhere.
 
 ## How to drop in a skill
 
