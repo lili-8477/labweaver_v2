@@ -19,7 +19,9 @@ USER root
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && (npm uninstall -g @anthropic-ai/claude-code || true)
+    && (npm uninstall -g @anthropic-ai/claude-code || true) \
+    # pnpm: `dsh plugin --profile acp add <pkg>` installs plugins with it.
+    && npm install -g pnpm@10
 
 WORKDIR /opt/adapter
 RUN rm -rf node_modules dist

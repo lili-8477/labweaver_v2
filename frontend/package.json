@@ -17,11 +17,15 @@
     "monaco-editor": "^0.55.1",
     "nats.ws": "^1.30.3",
     "pinia": "^3.0.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "vue": "^3.5.32"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",
     "@types/node": "^24.12.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-vue": "^6.0.5",
     "@vue/tsconfig": "^0.9.1",
     "playwright": "^1.59.1",

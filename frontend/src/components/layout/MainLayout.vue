@@ -7,6 +7,7 @@ import ChatSidebar from '@/components/chat/ChatSidebar.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import ChpcBridgePill from '@/components/layout/ChpcBridgePill.vue'
 import ModelSelect from '@/components/layout/ModelSelect.vue'
+import { loadDshClientModules } from '@/services/dsh-client-host'
 import FileTree from '@/components/files/FileTree.vue'
 import FileViewer from '@/components/files/FileViewer.vue'
 import H5adViewer from '@/components/files/H5adViewer.vue'
@@ -63,6 +64,7 @@ onMounted(async () => {
   await chat.loadChats()
   files.loadTree()
   shareStore.loadCapabilities()
+  loadDshClientModules()
 })
 
 function togglePanel(panel: RightPanel) {

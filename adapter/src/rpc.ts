@@ -17,6 +17,7 @@ import { ShareRpcClient } from "./share-rpc.js";
 import { listOrgSkills } from "./org-skills-rpc.js";
 import { listUserSkills, readUserSkillManifest } from "./skills-rpc.js";
 import { listUserCommands } from "./commands-rpc.js";
+import { acpProfileDir, listClientModules } from "./dsh-client-modules.js";
 import type { AgentEngine } from "./engine/types.js";
 import {
   findModel,
@@ -614,6 +615,11 @@ export class RpcRouter {
       case "commands_list": {
         const commands = await listUserCommands(this.deps.home);
         return { success: true, commands };
+      }
+
+      case "dsh_client_modules": {
+        const modules = await listClientModules(acpProfileDir(this.deps.home));
+        return { success: true, modules };
       }
 
       case "h5ad_introspect": {

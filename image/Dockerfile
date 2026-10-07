@@ -31,7 +31,9 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         build-essential \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # pnpm: `dsh plugin --profile acp add <pkg>` installs plugins with it.
+    && npm install -g pnpm@10
 
 # 2. The agent runtime (DeepSeek Harness, `@deepseek-ai/dsh`) is a pinned
 #    adapter dependency installed with the adapter bundle in step 3; the

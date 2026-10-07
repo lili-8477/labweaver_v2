@@ -14,6 +14,7 @@ import { useUploadsStore } from '@/stores/uploads'
 import { formatFileSize } from '@/utils/format'
 import { isSupported as voiceSupported, startVoice, type VoiceSession } from '@/services/voice'
 import SlashMenu from '@/components/chat/SlashMenu.vue'
+import DshSlot from '@/components/layout/DshSlot.vue'
 import { useChatHints, inputPlaceholder } from '@/composables/useChatHints'
 
 const chat = useChatStore()
@@ -727,6 +728,8 @@ watch(
             title="Send"
           >&#10148;</button>
         </div>
+        <!-- dsh client plugins that draw under the composer (e.g. a focus timer). -->
+        <DshSlot name="conversation.composer.dock" class="composer-dock" />
       </div>
     </template>
   </div>
@@ -784,6 +787,7 @@ watch(
   background: var(--bg-secondary);
 }
 .input-area.drag-active { background: var(--bg-tertiary); }
+.composer-dock { margin-top: 8px; }
 .drop-overlay {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
