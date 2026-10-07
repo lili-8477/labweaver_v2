@@ -9,6 +9,7 @@ import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import { FileManager } from "./fs-rpc.js";
 import { readSessionMessages, type LegacyMessage } from "./history.js";
+import { readChatStats } from "./chat-stats.js";
 import { H5adService } from "./h5ad-rpc.js";
 import { KernelBridge, type IOPubEvent } from "./kernel.js";
 import { MemoryRpcClient } from "./memory-rpc.js";
@@ -244,28 +245,16 @@ export class RpcRouter {
         return { success: true, messages };
       }
 
-      case "get_agents": {
-        // Hide the tick harness's step files (bootstrap/planner/executor/
-        // reviewer/retrospective) from the user-facing agents listing. Auto
-        // mode runs them itself; the user never picks them.
-        // Convention: names starting with `tick-` or `_` are internal.
-        const agentsDir = path.join(this.deps.home, ".claude", "agents");
-        const names = await fs.readdir(agentsDir).catch(() => [] as string[]);
-        const agents = names
-          .filter((n) => n.endsWith(".md"))
-          .map((n) => n.replace(/\.md$/, ""))
-          .filter((n) => !n.startsWith("tick-") && !n.startsWith("_"))
-          .map((name) => ({
-            name,
-            instructions: "",
-            tools: [],
-            toolsets: [],
-            icon: "",
-            not_loaded_toolsets: [],
-            model: null,
-            models: [],
-          }));
-        return { success: true, agents, can_switch_agents: false };
+      case "get_chat_stats": {
+        const chatId = params.chat_id as string;
+        const chat = await this.chats.read(chatId);
+        const stats = await readChatStats(
+          this.deps.home,
+          this.deps.defaultProjectCwd,
+          chat?.session_id ?? chatId,
+          this.aborts.has(chatId),
+        );
+        return { success: true, ...stats };
       }
 
       case "get_harness_mode": {
@@ -456,13 +445,6 @@ export class RpcRouter {
         }
         await this.chats.setProjectDir(chatId, projectDir);
         return { success: true, project_dir: projectDir };
-      }
-
-      case "set_active_agent": {
-        const chatId = (params.chat_name as string) || (params.chat_id as string);
-        const agentName = params.agent_name as string;
-        await this.chats.setActiveAgent(chatId, agentName);
-        return { success: true };
       }
 
       case "stop_chat": {

@@ -4,7 +4,7 @@ import { natsService } from '@/services/nats'
 import { extractTextContent } from '@/utils/content'
 import type {
   ChatInfo, ChatMessage, StreamMessage, StreamChunk,
-  StepMessage, ChatFinished, AgentInfo,
+  StepMessage, ChatFinished,
   StepMessageData, TimelineStep, HarnessProgress,
 } from '@/types'
 
@@ -15,8 +15,6 @@ export const useChatStore = defineStore('chat', () => {
   const streamingText = ref('')
   const isStreaming = ref(false)
   const sending = ref(false)
-  const agents = ref<AgentInfo[]>([])
-  const activeAgent = ref<string | null>(null)
 
   // Self-driving (tick harness) state. Active = marker file present in the
   // workspace; installed = the orchestrator command is on disk. Progress is
@@ -185,8 +183,6 @@ export const useChatStore = defineStore('chat', () => {
     await loadMessages(chatId)
 
     chatSubId = natsService.subscribe(`chat_${chatId}`, handleStreamMessage)
-
-    loadAgents(chatId)
   }
 
   // ---- Stream message handling ----
@@ -387,26 +383,6 @@ export const useChatStore = defineStore('chat', () => {
     pendingToolCalls.clear()
   }
 
-  // ---- Agents ----
-
-  async function loadAgents(chatId: string) {
-    try {
-      const result = await natsService.invoke('get_agents', { chat_id: chatId }) as {
-        success: boolean; agents: AgentInfo[]; can_switch_agents: boolean
-      }
-      if (result?.success) agents.value = result.agents || []
-    } catch { /* ignore */ }
-  }
-
-  async function setActiveAgent(agentName: string) {
-    if (!activeChatId.value) return
-    await natsService.invoke('set_active_agent', {
-      chat_name: activeChatId.value,
-      agent_name: agentName,
-    })
-    activeAgent.value = agentName
-  }
-
   async function updateChatName(chatId: string, name: string) {
     await natsService.invoke('update_chat_name', { chat_id: chatId, chat_name: name })
     await loadChats()
@@ -473,11 +449,11 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     chats, activeChatId, activeChat, messages, streamingText, isStreaming,
-    sending, agents, activeAgent,
+    sending,
     liveTimeline, completedTimelines,
     harnessActive, harnessInstalled, harnessProgress, harnessProject,
     loadChats, createChat, deleteChat, selectChat, sendMessage,
-    stopChat, loadAgents, setActiveAgent, updateChatName,
+    stopChat, updateChatName,
     refreshHarnessMode, refreshHarnessProgress, setChatProjectDir,
   }
 })

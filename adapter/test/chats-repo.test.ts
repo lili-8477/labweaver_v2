@@ -72,15 +72,6 @@ describe("ChatsRepo", () => {
     expect(new Date(after!.last_used_at).getTime()).toBeGreaterThan(new Date(before).getTime());
   });
 
-  it("setActiveAgent persists", async () => {
-    const repo = new ChatsRepo(pool, "alice");
-    const chatId = "11111111-1111-1111-1111-111111111111";
-    await repo.create(chatId, "x");
-    await repo.setActiveAgent(chatId, "scientist");
-    const c = await repo.read(chatId);
-    expect(c!.active_agent).toBe("scientist");
-  });
-
   it("setSessionUuid updates mapping", async () => {
     const repo = new ChatsRepo(pool, "alice");
     const chatId = "11111111-1111-1111-1111-111111111111";

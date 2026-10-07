@@ -114,14 +114,6 @@ export class ChatsRepo {
     );
   }
 
-  async setActiveAgent(chatId: string, agent: string | null): Promise<void> {
-    await this.pool.query(
-      `UPDATE chats SET active_agent = $3
-       WHERE chat_id = $1 AND username = $2 AND deleted_at IS NULL`,
-      [chatId, this.username, agent],
-    );
-  }
-
   async setSessionUuid(chatId: string, sessionId: string): Promise<void> {
     await this.pool.query(
       `UPDATE chats SET session_id = $3, last_used_at = now()

@@ -177,24 +177,33 @@ export interface StreamMessage {
 }
 
 // ============================================================
-// Agents / Teams
+// Agents panel: token usage and subagent runs (get_chat_stats)
 // ============================================================
 
-export interface AgentInfo {
-  name: string
-  instructions: string
-  tools: string[]
-  toolsets: string[]
-  icon: string
-  not_loaded_toolsets: string[]
-  model: string | null
-  models: string[]
+export interface TokenTotals {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
 }
 
-export interface TemplateFile {
-  path: string
-  name: string
-  type: string
+export interface SubagentRun {
+  sessionId: string
+  description: string | null
+  status: 'running' | 'done' | 'failed' | 'stopped'
+  model: string | null
+  startedAt: string
+  endedAt: string
+  tokens: TokenTotals
+  toolCalls: number
+  result: string | null
+}
+
+export interface ChatStats {
+  main: TokenTotals
+  turns: number
+  lastTurn: TokenTotals | null
+  subagents: SubagentRun[]
 }
 
 // ============================================================

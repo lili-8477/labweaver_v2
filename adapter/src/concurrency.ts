@@ -45,6 +45,10 @@ export class AbortRegistry {
     return ac;
   }
 
+  has(chatId: string): boolean {
+    return this.controllers.has(chatId);
+  }
+
   abort(chatId: string): boolean {
     const ac = this.controllers.get(chatId);
     if (!ac) return false;
