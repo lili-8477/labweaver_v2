@@ -1,5 +1,5 @@
 import { computed, type ComputedRef, type Ref } from 'vue'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, HarnessProgress } from '@/types'
 import type { ChatAttachment } from '@/services/chat-attachments'
 import type { CreatedProject } from '@/services/project-from-drop'
 
@@ -64,4 +64,37 @@ function nextSteps(messages: ChatMessage[]): string[] {
     }
   }
   return []
+}
+
+export interface PlaceholderState {
+  sending:        boolean
+  messageCount:   number
+  attachments:    number
+  pendingProject: string | null
+  hintCount:      number
+  harnessActive:  boolean
+  progress:       HarnessProgress | null
+}
+
+// The input's placeholder, following what the user can usefully do next.
+// First matching rule wins; kept short so it fits on one line.
+export function inputPlaceholder(s: PlaceholderState): string {
+  if (s.sending) {
+    return s.harnessActive
+      ? 'Auto mode is working. Draft your next message, or ■ to stop'
+      : 'Working… draft your next message, or ■ to stop'
+  }
+  if (s.pendingProject) return `Add context for ${s.pendingProject}, or just send`
+  if (s.attachments > 0) return 'Say what to do with the attached files'
+  if (s.harnessActive) {
+    const p = s.progress
+    if (!p || p.steps.length === 0) return 'Describe the analysis. Auto mode will plan, run and review it'
+    if (p.complete) return 'Project complete. Ask about the results, or start a new analysis'
+    if (p.pendingFeedback > 0) return `${p.pendingFeedback} review item(s) open. Send to let auto mode fix them`
+    const next = p.nextStepIndex != null ? p.steps[p.nextStepIndex] : null
+    if (next) return `Next step: ${next.name}. Send to continue, or add instructions`
+  }
+  if (s.messageCount === 0) return 'Ask anything, drop a file to start a project, or type / for commands'
+  if (s.hintCount > 0) return 'Pick a suggestion above, or type your own'
+  return 'Ask a follow-up · Shift+Enter for a new line'
 }

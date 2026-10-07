@@ -14,7 +14,7 @@ import { useUploadsStore } from '@/stores/uploads'
 import { formatFileSize } from '@/utils/format'
 import { isSupported as voiceSupported, startVoice, type VoiceSession } from '@/services/voice'
 import SlashMenu from '@/components/chat/SlashMenu.vue'
-import { useChatHints } from '@/composables/useChatHints'
+import { useChatHints, inputPlaceholder } from '@/composables/useChatHints'
 
 const chat = useChatStore()
 const uploads = useUploadsStore()
@@ -68,6 +68,16 @@ const hints = useChatHints({
   attachments,
   pendingProject,
 })
+
+const placeholder = computed(() => inputPlaceholder({
+  sending:        chat.sending,
+  messageCount:   chatMessages.value.length,
+  attachments:    attachments.value.length,
+  pendingProject: pendingProject.value?.projectName ?? null,
+  hintCount:      hints.value.length,
+  harnessActive:  chat.harnessActive,
+  progress:       chat.harnessProgress,
+}))
 
 const anyUploading = computed(() => attachments.value.some(a => a.state === 'uploading'))
 const hasContent = computed(
@@ -146,6 +156,16 @@ function syncHighlightScroll() {
   const hl = highlightRef.value
   if (ta && hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft }
 }
+
+// Grow the textarea with its content; CSS max-height caps it, after which it
+// scrolls. The highlight mirror is inset: 0, so it follows the editor's size.
+watch(input, () => nextTick(() => {
+  const ta = inputRef.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${ta.scrollHeight}px`
+  syncHighlightScroll()
+}))
 
 function handleKeydown(e: KeyboardEvent) {
   if (slashMenuRef.value?.handleKey(e)) {
@@ -669,7 +689,7 @@ watch(
               ref="inputRef"
               v-model="input"
               class="message-input"
-              placeholder="Type a message. Drop an image to attach, or any other file to start a new project."
+              :placeholder="placeholder"
               @keydown="handleKeydown"
               @paste="handlePaste"
               @scroll="syncHighlightScroll"
