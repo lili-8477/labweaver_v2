@@ -216,8 +216,8 @@ fi
 # customizations survive a re-run; hooks use cp -f because they're
 # harness-managed code that must track the skeleton (e.g. the CHPC job
 # watcher needs the matching posttool_jobid.sh — drift breaks the chain).
-# The harness itself is dormant unless the user toggles Self-driving on
-# in the Agents panel (which writes ~/.claude/.harness_active).
+# The harness itself is dormant unless a chat is switched to Auto in the
+# composer's mode menu (the adapter then marks that session in ~/.claude/auto/).
 SKELETON_DIR="${HUB_DIR}/skeleton/harness"
 if [[ -d "${SKELETON_DIR}" ]]; then
     cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.claude/commands/" 2>/dev/null || true

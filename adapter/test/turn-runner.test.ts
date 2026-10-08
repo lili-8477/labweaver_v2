@@ -38,7 +38,7 @@ describe("runTurn", () => {
     await runTurn(engine, {
       chatId: "chat-1", prompt: "/recall fusion", images: [], cwd: "/workspace", home,
       model: "ollama-cloud/gpt-oss:120b", resumeSessionId: undefined, signal: new AbortController().signal,
-      onEvent: (e) => events.push(e), onSessionId: (s) => sessions.push(s),
+      onEvent: (e) => events.push(e), onSessionId: (s) => { sessions.push(s); },
     });
 
     expect(engine.calls[0]!.prompt).toBe("Search memory for fusion.");

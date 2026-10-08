@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { ChatsRepo } from "./chats-repo.js";
+import { CHAT_MODES, ChatsRepo, type ChatMode } from "./chats-repo.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import { FileManager } from "./fs-rpc.js";
@@ -26,7 +26,7 @@ import {
   resolveModelRef,
   type ProviderSpec,
 } from "./providers/registry.js";
-import { autoModeMarker, autoModePrompt, isAutoMode, recordedProject, selectProject } from "./harness.js";
+import { autoModePrompt, enterAutoMode, leaveAutoMode, recordedProject } from "./harness.js";
 import { runTurn } from "./turn-runner.js";
 import type { StreamEvent } from "./types.js";
 
@@ -257,24 +257,20 @@ export class RpcRouter {
         return { success: true, ...stats };
       }
 
-      case "get_harness_mode": {
-        const active = await isAutoMode(this.deps.home);
-        // installed = the orchestrator command + tick-* agents are present.
+      case "get_auto_mode_available": {
+        // Auto mode needs the orchestrator command on disk.
         const cmdFile = path.join(this.deps.home, ".claude", "commands", "tick.md");
-        const installed = await fs.stat(cmdFile).then(() => true).catch(() => false);
-        return { success: true, active, installed };
+        const available = await fs.stat(cmdFile).then(() => true).catch(() => false);
+        return { success: true, available };
       }
 
-      case "set_harness_mode": {
-        const enabled = Boolean(params.enabled);
-        const flag = autoModeMarker(this.deps.home);
-        if (enabled) {
-          await fs.mkdir(path.dirname(flag), { recursive: true });
-          await fs.writeFile(flag, "");
-        } else {
-          await fs.unlink(flag).catch(() => { /* not present is fine */ });
-        }
-        return { success: true, active: enabled };
+      case "set_chat_mode": {
+        const chatId = (params.chat_id as string)?.trim();
+        const mode = params.mode as ChatMode;
+        if (!chatId) throw new Error("chat_id required");
+        if (!CHAT_MODES.includes(mode)) throw new Error(`mode must be one of ${CHAT_MODES.join(", ")}`);
+        await this.chats.setMode(chatId, mode);
+        return { success: true, mode };
       }
 
       case "get_harness_progress": {
@@ -661,12 +657,10 @@ export class RpcRouter {
     // project. Transcripts live under ~/.claude/projects/<encoded-cwd>/ and
     // DSH resume requires the session's original cwd — switching cwd
     // mid-chat would fragment history and break resume. Auto mode hands the
-    // agent its project through ~/.claude/.harness_dir instead (harness.ts).
-    const autoMode = await isAutoMode(this.deps.home);
-    if (autoMode) {
-      await selectProject(this.deps.home, this.deps.workspaceRoot, chat.project_dir ?? null);
-      prompt = autoModePrompt(prompt);
-    }
+    // agent its project through the session's file instead (harness.ts).
+    const autoMode = chat.mode === "auto";
+    if (autoMode) prompt = autoModePrompt(prompt);
+    let sessionId: string | undefined;
     const model = await this.currentModel();
     const mutex = this.mutexes.get(chatId);
     const run = mutex.tryRun(async () => {
@@ -683,10 +677,14 @@ export class RpcRouter {
           resumeSessionId: chat.session_id ?? undefined,
           signal: ac.signal,
           onEvent: (ev) => this.deps.publishStream(`chat_${chatId}`, ev),
-          onSessionId: (sessionId) => {
-            if (sessionId === chat.session_id) return;
+          onSessionId: async (sid) => {
+            sessionId = sid;
+            await (autoMode
+              ? enterAutoMode(this.deps.home, this.deps.workspaceRoot, sid, chat.project_dir ?? null)
+              : leaveAutoMode(this.deps.home, sid));
+            if (sid === chat.session_id) return;
             // Fire-and-forget — stash the real session UUID so next resume works.
-            this.chats.setSessionUuid(chatId, sessionId).catch((e) => {
+            this.chats.setSessionUuid(chatId, sid).catch((e) => {
               console.warn(`[rpc] failed to stash session_uuid for ${chatId}:`, e);
             });
           },
@@ -696,8 +694,8 @@ export class RpcRouter {
         this.aborts.clear(chatId);
         // Bind the chat to the project tick-bootstrap created, so the next
         // message continues it rather than bootstrapping another.
-        if (autoMode && !chat.project_dir) {
-          const rel = await recordedProject(this.deps.home, this.deps.workspaceRoot);
+        if (autoMode && !chat.project_dir && sessionId) {
+          const rel = await recordedProject(this.deps.home, this.deps.workspaceRoot, sessionId);
           if (rel) await this.chats.setProjectDir(chatId, rel).catch((e) => {
             console.warn(`[rpc] failed to bind ${chatId} to ${rel}:`, e);
           });

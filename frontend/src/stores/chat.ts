@@ -5,7 +5,7 @@ import { extractTextContent } from '@/utils/content'
 import type {
   ChatInfo, ChatMessage, StreamMessage, StreamChunk,
   StepMessage, ChatFinished,
-  StepMessageData, TimelineStep, HarnessProgress,
+  StepMessageData, TimelineStep, HarnessProgress, ChatMode,
 } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
@@ -16,10 +16,9 @@ export const useChatStore = defineStore('chat', () => {
   const isStreaming = ref(false)
   const sending = ref(false)
 
-  // Self-driving (tick harness) state. Active = marker file present in the
-  // workspace; installed = the orchestrator command is on disk. Progress is
-  // parsed from local_projects/<chat-name>/progress.md by the adapter.
-  const harnessActive = ref(false)
+  // Self-driving (tick harness) state. Installed = the orchestrator command is
+  // on disk. Whether it runs is the active chat's own mode (see harnessActive
+  // below). Progress is parsed from the chat's project progress.md by the adapter.
   const harnessInstalled = ref(false)
   const harnessProgress = ref<HarnessProgress | null>(null)
   // The project dir the adapter actually matched (chat-name path or fallback).
@@ -39,6 +38,7 @@ export const useChatStore = defineStore('chat', () => {
   let stepCounter = 0
 
   const activeChat = computed(() => chats.value.find(c => c.id === activeChatId.value))
+  const harnessActive = computed(() => activeChat.value?.mode === 'auto')
 
   // ---- Chat CRUD ----
 
@@ -390,14 +390,18 @@ export const useChatStore = defineStore('chat', () => {
 
   // ---- Self-driving (tick harness) ----
 
-  async function refreshHarnessMode() {
+  async function refreshHarnessInstalled() {
     try {
-      const res = await natsService.invoke('get_harness_mode', {}) as {
-        success?: boolean; active?: boolean; installed?: boolean
-      }
-      harnessActive.value = !!res?.active
-      harnessInstalled.value = !!res?.installed
-    } catch { /* ignore — keep last known values */ }
+      const res = await natsService.invoke('get_auto_mode_available', {}) as { available?: boolean }
+      harnessInstalled.value = !!res?.available
+    } catch { /* ignore — keep last known value */ }
+  }
+
+  /** Switch one chat between modes; other chats keep theirs. */
+  async function setChatMode(chatId: string, mode: ChatMode): Promise<void> {
+    await natsService.invoke('set_chat_mode', { chat_id: chatId, mode })
+    const c = chats.value.find(x => x.id === chatId)
+    if (c) c.mode = mode
   }
 
   async function refreshHarnessProgress() {
@@ -454,6 +458,6 @@ export const useChatStore = defineStore('chat', () => {
     harnessActive, harnessInstalled, harnessProgress, harnessProject,
     loadChats, createChat, deleteChat, selectChat, sendMessage,
     stopChat, updateChatName,
-    refreshHarnessMode, refreshHarnessProgress, setChatProjectDir,
+    refreshHarnessInstalled, refreshHarnessProgress, setChatProjectDir, setChatMode,
   }
 })

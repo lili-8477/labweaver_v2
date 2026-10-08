@@ -10,23 +10,9 @@ const POLL_MS = 3000
 const chat = useChatStore()
 const stats = ref<ChatStats | null>(null)
 const loading = ref(false)
-const harnessBusy = ref(false)
 const now = ref(Date.now())
 
 const live = computed(() => chat.sending || chat.isStreaming)
-
-async function toggleHarness() {
-  if (harnessBusy.value) return
-  harnessBusy.value = true
-  try {
-    await natsService.invoke('set_harness_mode', { enabled: !chat.harnessActive })
-    await chat.refreshHarnessMode()
-  } catch (e) {
-    console.error('Failed to toggle harness mode:', e)
-  } finally {
-    harnessBusy.value = false
-  }
-}
 
 async function loadStats() {
   const chatId = chat.activeChatId
@@ -54,10 +40,7 @@ watch(live, (on) => {
 }, { immediate: true })
 watch(() => chat.activeChatId, () => { stats.value = null; loadStats() })
 
-onMounted(() => {
-  chat.refreshHarnessMode()
-  loadStats()
-})
+onMounted(loadStats)
 onUnmounted(() => { if (timer) clearInterval(timer) })
 
 const sum = (t: TokenTotals) => t.input + t.cacheRead + t.cacheWrite + t.output
@@ -125,29 +108,6 @@ const STATUS_LABEL: Record<SubagentRun['status'], string> = {
     </header>
 
     <div class="body">
-      <!-- Mode -->
-      <section class="section">
-        <div class="mode-card" :class="{ disabled: !chat.harnessInstalled }">
-          <div class="mode-info">
-            <span class="mode-name">Self-driving</span>
-            <span class="mode-desc">
-              <template v-if="!chat.harnessInstalled">Tick harness not installed for this workspace.</template>
-              <template v-else-if="chat.harnessActive">Each message runs /tick rounds until progress.md is complete; a reviewer subagent checks each step.</template>
-              <template v-else>Off — chat behaves as a normal agent session.</template>
-            </span>
-          </div>
-          <button
-            class="btn-toggle"
-            :class="{ on: chat.harnessActive }"
-            :disabled="!chat.harnessInstalled || harnessBusy"
-            :title="chat.harnessActive ? 'Disable self-driving' : 'Enable self-driving'"
-            @click="toggleHarness()"
-          >
-            {{ chat.harnessActive ? 'On' : 'Off' }}
-          </button>
-        </div>
-      </section>
-
       <div v-if="!chat.activeChatId" class="empty">Select a chat to see its token usage and subagents.</div>
 
       <template v-else>
@@ -242,25 +202,6 @@ const STATUS_LABEL: Record<SubagentRun['status'], string> = {
 .scope { text-transform: none; letter-spacing: 0; font-weight: var(--fw-regular); }
 .empty { padding: var(--space-2) var(--space-4); color: var(--text-muted); font-size: var(--text-sm); }
 .section .empty { padding: var(--space-1) 0; }
-
-/* Mode */
-.mode-card {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3); border-radius: var(--radius-lg);
-  background: var(--bg-primary); border: 1px solid var(--border-soft);
-}
-.mode-card.disabled { opacity: 0.6; }
-.mode-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.mode-name { font-weight: var(--fw-semi); font-size: var(--text-sm); }
-.mode-desc { font-size: var(--text-xs); color: var(--text-secondary); line-height: 1.35; }
-.btn-toggle {
-  min-width: 48px; padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-  background: transparent; color: var(--text-secondary); font-size: var(--text-xs);
-}
-.btn-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.btn-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* Tokens */
 .headline { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-2); }

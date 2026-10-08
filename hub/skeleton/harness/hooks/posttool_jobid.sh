@@ -14,8 +14,14 @@
 # stays on so a broken json parse still surfaces.
 set -uo pipefail
 
-# Log into the active auto-mode project (see adapter/src/harness.ts).
-HARNESS="$(cat "$HOME/.claude/.harness_dir" 2>/dev/null || true)"
+INPUT="$(cat)"
+
+# Log into the session's auto-mode project when it has one: the adapter marks
+# auto sessions with ~/.claude/auto/<session id> (see adapter/src/harness.ts).
+SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("session_id",""), end="")
+except Exception: pass' 2>/dev/null || true)"
+HARNESS="$([[ -n "$SID" ]] && cat "$HOME/.claude/auto/$SID" 2>/dev/null || true)"
 HARNESS="${HARNESS:-$PWD}"
 LOG="$HARNESS/.jobs.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
@@ -23,7 +29,7 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 # Pull the command and its stdout out of the hook envelope. Tolerate any
 # malformed JSON by collapsing to empty strings — we'd rather no-op than
 # crash a tool call.
-parsed="$(python3 -c '
+parsed="$(printf '%s' "$INPUT" | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)

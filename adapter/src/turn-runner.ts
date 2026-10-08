@@ -20,7 +20,7 @@ export interface RunTurnArgs {
   resumeSessionId: string | undefined;
   signal: AbortSignal;
   onEvent: (ev: StreamEvent) => void;
-  onSessionId: (sessionId: string) => void;
+  onSessionId: (sessionId: string) => void | Promise<void>;
 }
 
 export async function runTurn(engine: AgentEngine, args: RunTurnArgs): Promise<void> {
@@ -59,11 +59,11 @@ export async function runTurn(engine: AgentEngine, args: RunTurnArgs): Promise<v
       model,
       resumeSessionId: args.resumeSessionId,
       signal,
-      onSessionId: (sessionId) => {
+      onSessionId: async (sessionId) => {
         writer = new ClaudeTranscriptWriter({ home, cwd, sessionId, model });
         if (args.resumeSessionId && args.resumeSessionId !== sessionId) writer.continues(args.resumeSessionId);
         writer.userPrompt(args.prompt);
-        args.onSessionId(sessionId);
+        await args.onSessionId(sessionId);
       },
       onEvent: handle,
     });

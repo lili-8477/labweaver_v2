@@ -10,11 +10,14 @@ const project = path.join(home, "proj");
 const progress = path.join(project, "progress.md");
 
 type Listener = (payload: { agent: FakeAgent }) => void;
-interface FakeAgent { session: { header: { delegationDepth?: number } }; steered: string[]; steer(m: { content: { text: string }[] }): void }
+interface FakeAgent { id: string; session: { header: { delegationDepth?: number } }; steered: string[]; steer(m: { content: { text: string }[] }): void }
 
 let stopping: Listener;
 let nextStep: (md: string | null) => { agent?: string; work?: string; complete?: boolean };
+const SID = "sess-1";
+const sessionFile = path.join(claude, "auto", SID);
 const agent = (depth?: number): FakeAgent => ({
+  id: SID,
   session: { header: { delegationDepth: depth } },
   steered: [],
   steer(m) { this.steered.push(m.content[0]!.text); },
@@ -37,10 +40,9 @@ beforeAll(async () => {
 beforeEach(() => {
   rmSync(claude, { recursive: true, force: true });
   rmSync(project, { recursive: true, force: true });
-  mkdirSync(claude, { recursive: true });
+  mkdirSync(path.join(claude, "auto"), { recursive: true });
   mkdirSync(project);
-  writeFileSync(path.join(claude, ".harness_active"), "");
-  writeFileSync(path.join(claude, ".harness_dir"), `${project}\n`);
+  writeFileSync(sessionFile, `${project}\n`);
 });
 
 describe("nextStep (tick priority)", () => {
@@ -77,7 +79,7 @@ describe("tick plugin loop", () => {
     stopping({ agent: a });
     expect(a.steered).toEqual([
       `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${claude}/agents/tick-executor.md\n` +
-      `Project directory: ${project}\nWork item: ☐ qc — filter cells\n` +
+      `Project directory: ${project}\nProject file: ${sessionFile}\nWork item: ☐ qc — filter cells\n` +
       `Follow the Do procedure in ${claude}/commands/tick.md.`,
     ]);
   });
@@ -109,14 +111,14 @@ describe("tick plugin loop", () => {
     expect(paused.steered).toHaveLength(0);
 
     rmSync(path.join(claude, ".tick_paused"));
-    rmSync(path.join(claude, ".harness_active"));
+    rmSync(sessionFile);
     const off = agent();
     stopping({ agent: off });
     expect(off.steered).toHaveLength(0);
   });
 
   it("stops when the same step repeats without progress", () => {
-    rmSync(path.join(claude, ".harness_dir")); // bootstrap never records a project
+    writeFileSync(sessionFile, ""); // bootstrap never records a project
     const a = agent();
     for (let i = 0; i < 4; i++) stopping({ agent: a });
     expect(a.steered).toHaveLength(3); // the 4th identical dispatch is refused

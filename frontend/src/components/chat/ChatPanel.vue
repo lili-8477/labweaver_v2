@@ -3,10 +3,11 @@ import { ref, nextTick, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import { isDisplayableMessage, extractTextContent } from '@/utils/content'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, ChatMode } from '@/types'
 import ChatMessageComp from '@/components/chat/ChatMessage.vue'
 import ExecutionTimeline from '@/components/chat/ExecutionTimeline.vue'
 import HarnessChecklist from '@/components/chat/HarnessChecklist.vue'
+import ModeMenu from '@/components/chat/ModeMenu.vue'
 import { isImage, makeAttachment, uploadAttachment, discardAttachmentFile, type ChatAttachment } from '@/services/chat-attachments'
 import { createProjectWithFiles, composeKickoffMessage, type CreatedProject } from '@/services/project-from-drop'
 import { queueUpload, cancelUpload } from '@/services/upload'
@@ -386,6 +387,11 @@ function discardPendingProject() {
 
 // ---- Voice ----
 
+function setMode(mode: ChatMode) {
+  if (!chat.activeChatId) return
+  chat.setChatMode(chat.activeChatId, mode).catch(e => console.error('Failed to set chat mode:', e))
+}
+
 function toggleVoice() {
   if (voiceOn.value) stopVoice()
   else startVoiceSession()
@@ -422,15 +428,9 @@ function swallow(e: DragEvent) {
   if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
 }
 
-// Harness polling. Two timers run independently because the cadences and
-// life-cycles differ:
-//
-//   - mode (active/installed) — every 5s for the whole life of ChatPanel.
-//     Cheap, and it's how we detect a restart that wipes the marker file or
-//     an external toggle (AgentPanel) flipping the mode on while we sit on
-//     a chat with no progress yet.
-//
-//   - progress.md — variable cadence depending on activity:
+// Harness progress polling. Auto mode is the active chat's own mode (picked
+// in the composer's ModeMenu), so there is nothing global to poll for it.
+// progress.md is polled at a variable cadence depending on activity:
 //       running + sending → 3s   (a tick is in flight, items change fast)
 //       running + idle    → 8s   (between ticks)
 //       stopped + has progress → 30s (sticky final state; mostly to catch
@@ -440,7 +440,6 @@ function swallow(e: DragEvent) {
 //     NATS when the run has stopped. The stopped-state poll exists so that
 //     if the user manually edits progress.md, or kicks /tick off again,
 //     the view eventually catches up without a chat re-select.
-let harnessModeTimer: number | null = null
 let harnessProgressTimer: number | null = null
 
 function progressCadence(): number | null {
@@ -462,7 +461,6 @@ function scheduleProgressTick() {
 }
 
 function stopHarnessPolling() {
-  if (harnessModeTimer != null) { clearInterval(harnessModeTimer); harnessModeTimer = null }
   if (harnessProgressTimer != null) { clearTimeout(harnessProgressTimer); harnessProgressTimer = null }
 }
 
@@ -486,8 +484,7 @@ watch(() => chat.sending, () => {
 onMounted(() => {
   window.addEventListener('dragover', swallow)
   window.addEventListener('drop', swallow)
-  harnessModeTimer = window.setInterval(() => { void chat.refreshHarnessMode() }, 5000)
-  void chat.refreshHarnessMode()
+  void chat.refreshHarnessInstalled()
   void chat.refreshHarnessProgress()
   scheduleProgressTick()
 })
@@ -680,6 +677,12 @@ watch(
         />
 
         <div class="input-row">
+          <ModeMenu
+            :model-value="chat.activeChat?.mode ?? 'chat'"
+            :auto-available="chat.harnessInstalled"
+            :disabled="!chat.activeChatId || chat.sending"
+            @update:model-value="setMode"
+          />
           <div class="input-editor">
             <!-- Mirror layer: re-prints the text with the leading /command
                  token colored. Sits behind the transparent textarea. The

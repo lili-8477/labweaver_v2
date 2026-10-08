@@ -7,7 +7,7 @@
 // call, where useChatHints turns its `options` into chips above the chat box.
 // Smaller models skip optional end-of-turn tools, so a top-level turn that used
 // tools without suggesting gets one steer before it stops (one extra step).
-// Auto mode (tick.js) owns turn endings while it is on, so the nudge stands down.
+// Auto mode (tick.js) owns turn endings in its sessions, so the nudge stands down there.
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -20,7 +20,7 @@ export const inject = ["tools", "systemPrompt"];
 
 const TOOL = "suggest_next_steps";
 const MAX_OPTIONS = 4;
-const AUTO_MODE_MARKER = join(homedir(), ".claude", ".harness_active");
+const AUTO_DIR = join(homedir(), ".claude", "auto"); // a session's file = auto mode (src/harness.ts)
 
 const NUDGE = `Before you stop: call ${TOOL} with the user's likely next steps. Do not restate your answer.`;
 const GUIDANCE = `When you finish a task for the user, call ${TOOL} once with 2-${MAX_OPTIONS} short, concrete follow-ups the user is likely to want next: imperative, under 10 words each, specific to this work. Skip it for small talk, or when you are asking the user a question. Do not repeat the suggestions in your reply.`;
@@ -42,7 +42,7 @@ export function apply(ctx) {
   ctx.on("agent/turn-stopping", ({ agent }) => {
     const t = turns.get(agent);
     const topLevel = !agent.session.header.delegationDepth;
-    if (topLevel && t?.usedTools && !t.suggested && !t.nudged && !existsSync(AUTO_MODE_MARKER)) {
+    if (topLevel && t?.usedTools && !t.suggested && !t.nudged && !existsSync(join(AUTO_DIR, agent.id))) {
       t.nudged = true;
       agent.steer(createUserMessage({ content: [{ type: "text", text: NUDGE }], source: { kind: name } }));
       return;

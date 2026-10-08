@@ -2,9 +2,8 @@
 # PostToolUse hook (Write/Edit on progress.md) — auto-commit progress.md after every state change.
 set -euo pipefail
 
-# Harness toggle: stay no-op unless self-driving mode is enabled.
-# Enabled when ~/.claude/.harness_active exists (toggled from the frontend).
-[[ -f "$HOME/.claude/.harness_active" ]] || exit 0
+# Not gated on auto mode: progress.md is the tick harness's own file, and the
+# reviewer edits it from a subagent session the adapter never marks.
 
 parsed="$(python3 -c '
 import sys, json

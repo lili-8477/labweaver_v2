@@ -44,7 +44,7 @@ export class DshAcpEngine implements AgentEngine {
       }
     }
     if (!sessionId) sessionId = await this.conn.newSession(args.cwd);
-    args.onSessionId(sessionId);
+    await args.onSessionId(sessionId);
     if (args.signal.aborted) return;
 
     await this.conn.setModel(sessionId, route.provider, route.model);

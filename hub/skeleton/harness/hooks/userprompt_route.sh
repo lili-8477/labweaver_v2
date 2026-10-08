@@ -32,6 +32,10 @@ try:
     print(d.get("prompt",""), end="")
 except Exception:
     pass' 2>/dev/null || true)"
+# Auto-mode sessions are marked by ~/.claude/auto/<session id> (adapter/src/harness.ts).
+SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("session_id",""), end="")
+except Exception: pass' 2>/dev/null || true)"
 
 route() {
 # ── 1. Drain CHPC notifications ──────────────────────────────────────
@@ -79,7 +83,7 @@ fi
 # memory_get. Never blocks or fails the prompt. Skipped in auto mode, where
 # the prompt is the expanded tick orchestrator, not the user's words.
 if [[ "${MEMORY_ENABLED:-1}" = "1" && -n "${MEMORY_API_URL:-}" && "$PROMPT" != /* \
-      && ! -f "$HOME/.claude/.harness_active" ]]; then
+      && ! ( -n "$SID" && -f "$HOME/.claude/auto/$SID" ) ]]; then
   python3 - "$PROMPT" <<'PY' || true
 import json, os, sys, urllib.request
 prompt = sys.argv[1].strip()

@@ -35,6 +35,19 @@ describe("ChatsRepo", () => {
     expect(chat!.username).toBe("alice");
   });
 
+  it("mode defaults to chat and is set per chat", async () => {
+    const repo = new ChatsRepo(pool, "alice");
+    const c1 = "11111111-1111-1111-1111-111111111111";
+    const c2 = "22222222-2222-2222-2222-222222222222";
+    await repo.create(c1, "one");
+    await repo.create(c2, "two");
+    expect((await repo.read(c1))!.mode).toBe("chat");
+    await repo.setMode(c1, "auto");
+    expect((await repo.read(c1))!.mode).toBe("auto");
+    expect((await repo.read(c2))!.mode).toBe("chat");
+    expect((await repo.list()).find((c) => c.id === c1)!.mode).toBe("auto");
+  });
+
   it("create is idempotent (ON CONFLICT DO NOTHING)", async () => {
     const repo = new ChatsRepo(pool, "alice");
     const chatId = "11111111-1111-1111-1111-111111111111";

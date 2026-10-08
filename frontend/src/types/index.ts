@@ -48,6 +48,9 @@ export interface HarnessProgress {
 // Chat
 // ============================================================
 
+/** How a chat runs its turns: plain agent, or the self-driving tick harness. */
+export type ChatMode = 'chat' | 'auto'
+
 export interface ChatInfo {
   id: string
   name: string
@@ -58,6 +61,7 @@ export interface ChatInfo {
    *  "local_projects/foo-1a2b"). When set, the agent cd's here and harness
    *  progress is read from <project_dir>/progress.md. Null = unbound. */
   project_dir?: string | null
+  mode?: ChatMode
 }
 
 export interface ChatMessage {

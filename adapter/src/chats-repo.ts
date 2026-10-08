@@ -10,10 +10,15 @@ export interface ChatRow {
    *  for chats that aren't bound to a project. When set, the agent cd's here
    *  and harness lookups read this dir's progress.md. */
   project_dir: string | null;
+  mode: ChatMode;
   created_at: string;
   last_used_at: string;
   deleted_at: string | null;
 }
+
+/** How a chat runs its turns: plain agent, or the self-driving tick harness. */
+export type ChatMode = "chat" | "auto";
+export const CHAT_MODES: readonly ChatMode[] = ["chat", "auto"];
 
 export interface ChatInfo {
   id: string;
@@ -23,6 +28,7 @@ export interface ChatInfo {
   /** Same as ChatRow.project_dir — included so the UI can show the binding
    *  without a second round-trip. */
   project_dir: string | null;
+  mode: ChatMode;
   active_agent: string | null;
 }
 
@@ -46,7 +52,7 @@ export class ChatsRepo {
 
   async read(chatId: string): Promise<ChatRow | null> {
     const r = await this.pool.query(
-      `SELECT chat_id, username, session_id, name, active_agent, project_dir,
+      `SELECT chat_id, username, session_id, name, active_agent, project_dir, mode,
               created_at, last_used_at, deleted_at
        FROM chats
        WHERE chat_id = $1 AND username = $2 AND deleted_at IS NULL`,
@@ -61,6 +67,7 @@ export class ChatsRepo {
       name: row.name,
       active_agent: row.active_agent,
       project_dir: row.project_dir,
+      mode: row.mode,
       created_at: row.created_at.toISOString(),
       last_used_at: row.last_used_at.toISOString(),
       deleted_at: row.deleted_at ? row.deleted_at.toISOString() : null,
@@ -75,6 +82,7 @@ export class ChatsRepo {
          c.last_used_at   AS last_used_at,
          c.active_agent   AS active_agent,
          c.project_dir    AS project_dir,
+         c.mode           AS mode,
          COALESCE(s.project_display, '') AS project_name
        FROM chats c
        LEFT JOIN sessions s ON s.session_id = c.session_id
@@ -91,6 +99,7 @@ export class ChatsRepo {
       last_activity_date: row.last_used_at.toISOString(),
       project_name: row.project_name,
       project_dir: row.project_dir,
+      mode: row.mode,
       active_agent: row.active_agent,
     }));
   }
@@ -111,6 +120,14 @@ export class ChatsRepo {
       `UPDATE chats SET project_dir = $3
        WHERE chat_id = $1 AND username = $2 AND deleted_at IS NULL`,
       [chatId, this.username, projectDir],
+    );
+  }
+
+  async setMode(chatId: string, mode: ChatMode): Promise<void> {
+    await this.pool.query(
+      `UPDATE chats SET mode = $3
+       WHERE chat_id = $1 AND username = $2 AND deleted_at IS NULL`,
+      [chatId, this.username, mode],
     );
   }
 

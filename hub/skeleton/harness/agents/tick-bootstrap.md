@@ -42,7 +42,7 @@ The work item is the user's task message. Treat it as authoritative — extract 
    ```
    Use `mkdir -p` and `cp`. Do **not** create any other files.
 
-   Then record the project for the harness: write the absolute project path as the only line of `~/.claude/.harness_dir`, e.g. `printf '%s\n' /workspace/local_projects/<slug> > ~/.claude/.harness_dir`. Every later tick reads it.
+   Then record the project for the harness: write the absolute project path as the only line of the **Project file** named in your instructions, e.g. `printf '%s\n' /workspace/local_projects/<slug> > <project file>`. Every later tick reads it.
 
 5. **Write `progress.md`** with this exact structure (Plan stays empty — the planner fills it next tick):
    ```
@@ -72,7 +72,7 @@ The work item is the user's task message. Treat it as authoritative — extract 
 
 ## Hard rules
 
-- **Write only inside `/workspace/local_projects/<slug>/`**, plus `~/.claude/.harness_dir` (step 4). Do not modify anything else (not the orchestrator, not other projects, not the starter templates).
+- **Write only inside `/workspace/local_projects/<slug>/`**, plus the Project file (step 4). Do not modify anything else (not the orchestrator, not other projects, not the starter templates).
 - **Read-only on `_starter_pipelines/`.**
 - Do not invoke the planner or executor. Do not fill in `## Plan`. That's the planner's job on the next tick.
 - Do not run any analysis, install packages, or download data. You only scaffold.

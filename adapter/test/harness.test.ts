@@ -1,23 +1,16 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { autoModePrompt, isAutoMode, recordedProject, selectProject } from "../src/harness.js";
+import { autoModePrompt, enterAutoMode, leaveAutoMode, recordedProject, sessionFile } from "../src/harness.js";
 
 describe("auto mode helpers", () => {
   let home: string;
   const ws = "/workspace";
-  const dirFile = () => path.join(home, ".claude", ".harness_dir");
+  const sid = "s1";
 
   beforeEach(() => {
     home = mkdtempSync(path.join(tmpdir(), "harness-"));
-    mkdirSync(path.join(home, ".claude"));
-  });
-
-  it("detects the marker file", async () => {
-    expect(await isAutoMode(home)).toBe(false);
-    writeFileSync(path.join(home, ".claude", ".harness_active"), "");
-    expect(await isAutoMode(home)).toBe(true);
   });
 
   it("routes typed messages to /tick and leaves slash commands alone", () => {
@@ -25,18 +18,22 @@ describe("auto mode helpers", () => {
     expect(autoModePrompt("/memory")).toBe("/memory");
   });
 
-  it("selects the bound project, or clears it for a new one", async () => {
-    await selectProject(home, ws, "local_projects/pbmc");
-    expect(readFileSync(dirFile(), "utf8")).toBe("/workspace/local_projects/pbmc\n");
-    await selectProject(home, ws, null);
-    expect(existsSync(dirFile())).toBe(false);
+  it("marks only the given session, with its bound project or none", async () => {
+    await enterAutoMode(home, ws, sid, "local_projects/pbmc");
+    expect(readFileSync(sessionFile(home, sid), "utf8")).toBe("/workspace/local_projects/pbmc\n");
+    expect(existsSync(sessionFile(home, "s2"))).toBe(false);
+    await enterAutoMode(home, ws, sid, null);
+    expect(readFileSync(sessionFile(home, sid), "utf8")).toBe("");
+    await leaveAutoMode(home, sid);
+    expect(existsSync(sessionFile(home, sid))).toBe(false);
   });
 
   it("reads back the recorded project only when inside the workspace", async () => {
-    expect(await recordedProject(home, ws)).toBeNull();
-    writeFileSync(dirFile(), "/workspace/local_projects/pbmc\n");
-    expect(await recordedProject(home, ws)).toBe("local_projects/pbmc");
-    writeFileSync(dirFile(), "/etc\n");
-    expect(await recordedProject(home, ws)).toBeNull();
+    expect(await recordedProject(home, ws, sid)).toBeNull();
+    await enterAutoMode(home, ws, sid, null);
+    writeFileSync(sessionFile(home, sid), "/workspace/local_projects/pbmc\n");
+    expect(await recordedProject(home, ws, sid)).toBe("local_projects/pbmc");
+    writeFileSync(sessionFile(home, sid), "/etc\n");
+    expect(await recordedProject(home, ws, sid)).toBeNull();
   });
 });

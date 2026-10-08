@@ -29,8 +29,8 @@ export interface EngineTurnArgs {
   /** "provider/model" reference (see providers/registry.ts). */
   model: string;
   signal: AbortSignal;
-  /** Called once with the session id the turn actually runs in. */
-  onSessionId: (sessionId: string) => void;
+  /** Called once with the session id the turn actually runs in; awaited before the prompt is sent. */
+  onSessionId: (sessionId: string) => void | Promise<void>;
   onEvent: (ev: AgentEvent) => void;
 }
 

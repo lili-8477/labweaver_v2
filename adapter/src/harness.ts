@@ -1,18 +1,15 @@
-// Auto mode (the self-driving tick harness), adapter side. The active project
-// is one absolute path in ~/.claude/.harness_dir: tick.md and the hooks read
-// it, tick-bootstrap writes it for a new project. The adapter keeps it in step
-// with the chat's project_dir binding, and starts each auto-mode turn as
-// `/tick <message>`; dsh-plugins/tick.js drives the rounds after that.
+// Auto mode (the self-driving tick harness), adapter side. A chat's mode lives
+// on its chats row. While a chat is in auto mode, ~/.claude/auto/<session id>
+// marks its dsh session for the tick plugin and the harness hooks, and holds
+// the session's project as one absolute path (empty until tick-bootstrap
+// writes one). The adapter starts each auto-mode turn as `/tick <message>`;
+// dsh-plugins/tick.js drives the rounds after that.
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
-export const autoModeMarker = (home: string): string => path.join(home, ".claude", ".harness_active");
-const projectFile = (home: string): string => path.join(home, ".claude", ".harness_dir");
-
-export async function isAutoMode(home: string): Promise<boolean> {
-  return fs.stat(autoModeMarker(home)).then(() => true, () => false);
-}
+export const sessionFile = (home: string, sessionId: string): string =>
+  path.join(home, ".claude", "auto", sessionId);
 
 /** Route a typed message into the orchestrator; slash commands pass through. */
 export function autoModePrompt(prompt: string): string {
@@ -20,20 +17,22 @@ export function autoModePrompt(prompt: string): string {
 }
 
 /**
- * Point .harness_dir at the chat's bound project (workspace-relative), or
- * clear it so the next tick bootstraps a new one.
+ * Mark a session as auto mode, pointed at the chat's bound project
+ * (workspace-relative), or at none so the next tick bootstraps one.
  */
-export async function selectProject(home: string, workspaceRoot: string, projectDir: string | null): Promise<void> {
-  if (projectDir) {
-    await fs.writeFile(projectFile(home), `${path.resolve(workspaceRoot, projectDir)}\n`);
-  } else {
-    await fs.rm(projectFile(home), { force: true });
-  }
+export async function enterAutoMode(home: string, workspaceRoot: string, sessionId: string, projectDir: string | null): Promise<void> {
+  const file = sessionFile(home, sessionId);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, projectDir ? `${path.resolve(workspaceRoot, projectDir)}\n` : "");
 }
 
-/** The project tick-bootstrap recorded, workspace-relative; null if none or outside the workspace. */
-export async function recordedProject(home: string, workspaceRoot: string): Promise<string | null> {
-  const abs = (await fs.readFile(projectFile(home), "utf8").catch(() => "")).trim();
+export async function leaveAutoMode(home: string, sessionId: string): Promise<void> {
+  await fs.rm(sessionFile(home, sessionId), { force: true });
+}
+
+/** The session's project, workspace-relative; null if none or outside the workspace. */
+export async function recordedProject(home: string, workspaceRoot: string, sessionId: string): Promise<string | null> {
+  const abs = (await fs.readFile(sessionFile(home, sessionId), "utf8").catch(() => "")).trim();
   const rel = abs ? path.relative(workspaceRoot, abs) : "";
   return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : null;
 }

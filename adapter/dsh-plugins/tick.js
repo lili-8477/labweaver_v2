@@ -2,13 +2,15 @@
 // harness). dsh loads this file itself, so it is plain ESM, not TypeScript.
 // Mounted by the adapter's cordis patch: see src/dsh/patch.ts.
 //
-// The adapter starts an auto-mode turn as `/tick <message>`. Each time that
+// The adapter starts an auto-mode turn as `/tick <message>` and marks the
+// session with ~/.claude/auto/<session id>, which holds the project directory
+// (empty until tick-bootstrap writes it; see src/harness.ts). Each time that
 // turn is about to stop, this plugin reads the project's progress.md, decides
 // the next step in code (nextStep below — routing is a pure function of
 // progress.md, so no model call is spent on it), and steers the agent with one
 // short instruction: do the step itself, or, for the reviewer, dispatch it as a
 // subagent so the review runs in a clean context. It stops when the project is complete, the user
-// pauses or turns auto mode off, MAX_ROUNDS is hit, or the same step comes up
+// pauses or switches the chat out of auto mode, MAX_ROUNDS is hit, or the same step comes up
 // MAX_REPEATS rounds in a row (the subagent is not advancing progress.md).
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -19,9 +21,8 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 export const name = "tick";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
-const MARKER = join(CLAUDE_DIR, ".harness_active");
+const AUTO_DIR = join(CLAUDE_DIR, "auto");
 const PAUSE = join(CLAUDE_DIR, ".tick_paused");
-const PROJECT = join(CLAUDE_DIR, ".harness_dir");
 const MAX_ROUNDS = 40;
 const MAX_REPEATS = 3;
 // Steps that run as a subagent; the main agent does every other step itself.
@@ -57,12 +58,13 @@ export function nextStep(md) {
   return { complete: true };
 }
 
-function instruction(round, dir, step) {
+function instruction(round, file, dir, step) {
   const sub = SUBAGENTS.has(step.agent);
   return [
     `[auto mode · round ${round}] ${sub ? "Dispatch" : "Do"} \`${step.agent}\` now${sub ? "" : ", yourself"}.`,
     `Agent file: ${join(CLAUDE_DIR, "agents", `${step.agent}.md`)}`,
     `Project directory: ${dir ?? "none yet"}`,
+    `Project file: ${file}`,
     `Work item: ${step.work}`,
     `Follow the ${sub ? "Dispatch" : "Do"} procedure in ${join(CLAUDE_DIR, "commands", "tick.md")}.`,
   ].join("\n");
@@ -73,9 +75,10 @@ export function apply(ctx) {
 
   ctx.on("agent/turn-stopping", ({ agent }) => {
     const t = turns.get(agent) ?? { rounds: 0, last: "", repeats: 0 };
+    const file = join(AUTO_DIR, agent.id);
     const active = !agent.session.header.delegationDepth  // subagents never tick
-      && existsSync(MARKER) && !existsSync(PAUSE);
-    const dir = active ? read(PROJECT)?.trim() || null : null;
+      && existsSync(file) && !existsSync(PAUSE);
+    const dir = active ? read(file)?.trim() || null : null;
     const progress = dir ? join(dir, "progress.md") : null;
     const step = active ? nextStep(progress ? read(progress) : null) : null;
     const key = step && !step.complete ? `${step.agent}\n${step.work}` : "";
@@ -90,6 +93,6 @@ export function apply(ctx) {
       return;
     }
     turns.set(agent, { rounds: t.rounds + 1, last: key, repeats });
-    agent.steer(createUserMessage({ content: [{ type: "text", text: instruction(t.rounds + 1, dir, step) }], source: { kind: name } }));
+    agent.steer(createUserMessage({ content: [{ type: "text", text: instruction(t.rounds + 1, file, dir, step) }], source: { kind: name } }));
   });
 }

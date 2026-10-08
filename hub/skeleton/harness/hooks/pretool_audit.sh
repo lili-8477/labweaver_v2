@@ -2,16 +2,22 @@
 # PreToolUse hook — append every tool call to .audit.log
 set -euo pipefail
 
-# Harness toggle: stay no-op unless self-driving mode is enabled.
-# Enabled when ~/.claude/.harness_active exists (toggled from the frontend).
-[[ -f "$HOME/.claude/.harness_active" ]] || exit 0
+INPUT="$(cat)"
 
-# Log into the active auto-mode project (see adapter/src/harness.ts).
-HARNESS="$(cat "$HOME/.claude/.harness_dir" 2>/dev/null || true)"
+# Stay no-op unless this session is in auto mode: the adapter marks it with
+# ~/.claude/auto/<session id>, which holds the project path (adapter/src/harness.ts).
+SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("session_id",""), end="")
+except Exception: pass' 2>/dev/null || true)"
+SESSION_FILE="$HOME/.claude/auto/$SID"
+[[ -n "$SID" && -f "$SESSION_FILE" ]] || exit 0
+
+# Log into the session's project.
+HARNESS="$(cat "$SESSION_FILE" 2>/dev/null || true)"
 LOG="${HARNESS:-$PWD}/.audit.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
-parsed="$(python3 -c '
+parsed="$(printf '%s' "$INPUT" | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)

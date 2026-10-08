@@ -81,7 +81,7 @@ describe.skipIf(!nodeOk)("DshAcpEngine (real dsh, fake model)", () => {
     await engine.runTurn({
       prompt, images: [], cwd: path.join(root, "ws"), model: MODEL, resumeSessionId: opts.resume,
       signal: opts.signal ?? new AbortController().signal,
-      onSessionId: (s) => (sessionId = s), onEvent: (e) => events.push(e),
+      onSessionId: (s) => { sessionId = s; }, onEvent: (e) => events.push(e),
     });
     return { events, sessionId };
   }
