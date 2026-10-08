@@ -682,9 +682,10 @@ watch(
         <div class="input-row">
           <div class="input-editor">
             <!-- Mirror layer: re-prints the text with the leading /command
-                 token colored. Sits behind the transparent textarea. -->
+                 token colored. Sits behind the transparent textarea. The
+                 trailing space makes a final newline render as a line. -->
             <div ref="highlightRef" class="input-highlight" aria-hidden="true">
-              <span class="cmd-token">{{ inputSegments.cmd }}</span>{{ inputSegments.rest }}
+              <span class="cmd-token">{{ inputSegments.cmd }}</span>{{ inputSegments.rest }}{{ ' ' }}
             </div>
             <textarea
               ref="inputRef"
@@ -927,6 +928,9 @@ watch(
   font: inherit; font-size: 0.95em; line-height: 1.4;
   white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word;
   box-sizing: border-box;
+  /* Reserve the scrollbar lane in both, so wrapping matches once the
+     textarea starts scrolling. */
+  scrollbar-gutter: stable;
 }
 
 .message-input {
@@ -944,7 +948,7 @@ watch(
   color: var(--text-primary);
   overflow: hidden; pointer-events: none; z-index: 0;
 }
-.input-highlight .cmd-token { color: var(--accent); font-weight: 600; }
+.input-highlight .cmd-token { color: var(--accent); }
 
 .btn-send, .btn-stop {
   width: 40px; height: 40px; border-radius: var(--radius);
