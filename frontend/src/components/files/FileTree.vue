@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useFileStore } from '@/stores/files'
 import { useUploadsStore } from '@/stores/uploads'
 import { queueUpload, cancelUpload, retryUpload } from '@/services/upload'
@@ -40,9 +41,10 @@ function isProtectedMountPoint(path: string): boolean {
   return PROTECTED_MOUNT_POINTS.has(path)
 }
 
-// State: which dirs are expanded, their loaded children, loading status
-const expandedDirs = ref<Set<string>>(new Set())
-const dirChildren = ref<Map<string, FileEntry[]>>(new Map())
+// State: which dirs are expanded and their loaded children live in the store,
+// so the tree reopens where it was left; loading status is local.
+const { expandedDirs, dirChildren, treeScrollTop } = storeToRefs(files)
+const treeContent = ref<HTMLDivElement | null>(null)
 const loadingDirs = ref<Set<string>>(new Set())
 
 // Retry support: keep the original File handle off the Pinia store (Vue's
@@ -189,10 +191,15 @@ function showTreeError(msg: string) {
 
 onMounted(() => {
   if (files.tree.length === 0) files.loadTree()
+  else nextTick(() => { if (treeContent.value) treeContent.value.scrollTop = treeScrollTop.value })
   if (dirInput.value) {
     dirInput.value.setAttribute('webkitdirectory', '')
     dirInput.value.setAttribute('directory', '')
   }
+})
+
+onBeforeUnmount(() => {
+  treeScrollTop.value = treeContent.value?.scrollTop ?? 0
 })
 
 const visibleEntries = computed<FlatEntry[]>(() => {
@@ -615,6 +622,7 @@ function onClearUploads() {
     <div v-if="files.loading" class="loading">Loading...</div>
 
     <div
+      ref="treeContent"
       class="tree-content"
       :class="{ 'drag-over-pane': dragOverPath === null && isDraggingFiles }"
       @dragover="onDragOver($event, null)"
