@@ -16,10 +16,11 @@ export const useChatStore = defineStore('chat', () => {
   const isStreaming = ref(false)
   const sending = ref(false)
 
-  // Self-driving (tick harness) state. Installed = the orchestrator command is
-  // on disk. Whether it runs is the active chat's own mode (see harnessActive
-  // below). Progress is parsed from the chat's project progress.md by the adapter.
-  const harnessInstalled = ref(false)
+  // Modes whose command is installed in this workspace (plain chat always is).
+  const availableModes = ref<ChatMode[]>(['chat'])
+  // Self-driving (tick harness) state. Whether it runs is the active chat's own
+  // mode (see harnessActive below). Progress is parsed from the chat's project
+  // progress.md by the adapter.
   const harnessProgress = ref<HarnessProgress | null>(null)
   // The project dir the adapter actually matched (chat-name path or fallback).
   // Surfaced in the banner so the user can tell which progress.md is being read.
@@ -390,10 +391,10 @@ export const useChatStore = defineStore('chat', () => {
 
   // ---- Self-driving (tick harness) ----
 
-  async function refreshHarnessInstalled() {
+  async function refreshAvailableModes() {
     try {
-      const res = await natsService.invoke('get_auto_mode_available', {}) as { available?: boolean }
-      harnessInstalled.value = !!res?.available
+      const res = await natsService.invoke('get_available_modes', {}) as { modes?: ChatMode[] }
+      if (res?.modes) availableModes.value = res.modes
     } catch { /* ignore — keep last known value */ }
   }
 
@@ -455,9 +456,9 @@ export const useChatStore = defineStore('chat', () => {
     chats, activeChatId, activeChat, messages, streamingText, isStreaming,
     sending,
     liveTimeline, completedTimelines,
-    harnessActive, harnessInstalled, harnessProgress, harnessProject,
+    harnessActive, availableModes, harnessProgress, harnessProject,
     loadChats, createChat, deleteChat, selectChat, sendMessage,
     stopChat, updateChatName,
-    refreshHarnessInstalled, refreshHarnessProgress, setChatProjectDir, setChatMode,
+    refreshAvailableModes, refreshHarnessProgress, setChatProjectDir, setChatMode,
   }
 })

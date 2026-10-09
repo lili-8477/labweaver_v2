@@ -48,8 +48,8 @@ export interface HarnessProgress {
 // Chat
 // ============================================================
 
-/** How a chat runs its turns: plain agent, or the self-driving tick harness. */
-export type ChatMode = 'chat' | 'auto'
+/** How a chat runs its turns: plain agent, the self-driving tick harness, or an agent team. */
+export type ChatMode = 'chat' | 'auto' | 'team'
 
 export interface ChatInfo {
   id: string
@@ -208,6 +208,34 @@ export interface ChatStats {
   turns: number
   lastTurn: TokenTotals | null
   subagents: SubagentRun[]
+  /** The chat's Agent Team; null until the lead creates a teammate or task. */
+  team: TeamBoard | null
+}
+
+export interface TeamMember {
+  /** Session id; a teammate's matches its subagent run's sessionId. */
+  id: string
+  name: string
+  role: 'lead' | 'teammate'
+  status: 'running' | 'inactive' | 'provisioning' | 'failed'
+  description?: string
+  model?: string
+}
+
+export interface TeamTask {
+  id: string
+  subject: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'completed'
+  ownerName?: string
+  blockedBy: string[]
+  ready: boolean
+}
+
+export interface TeamBoard {
+  members: TeamMember[]
+  tasks: TeamTask[]
+  updatedAt: number
 }
 
 // ============================================================

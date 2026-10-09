@@ -6,7 +6,8 @@ import type { ChatMode } from '@/types'
 
 const props = defineProps<{
   modelValue: ChatMode
-  autoAvailable: boolean
+  /** Modes whose command is installed; the rest are shown greyed out. */
+  available: ChatMode[]
   disabled?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [mode: ChatMode] }>()
@@ -14,6 +15,7 @@ const emit = defineEmits<{ 'update:modelValue': [mode: ChatMode] }>()
 const MODES: { id: ChatMode; label: string; desc: string }[] = [
   { id: 'chat', label: 'Chat', desc: 'Back-and-forth with the agent.' },
   { id: 'auto', label: 'Auto', desc: 'Plans, runs and reviews each step until progress.md is complete.' },
+  { id: 'team', label: 'Team', desc: 'A lead agent splits the work among named teammates on a shared task board.' },
 ]
 
 const open = ref(false)
@@ -43,7 +45,7 @@ onBeforeUnmount(close)
   <div ref="root" class="mode-menu">
     <button
       class="mode-trigger"
-      :class="{ auto: modelValue === 'auto' }"
+      :class="{ active: modelValue !== 'chat' }"
       :disabled="disabled"
       :title="`Mode: ${current.label}`"
       aria-haspopup="listbox"
@@ -59,14 +61,14 @@ onBeforeUnmount(close)
         :key="m.id"
         role="option"
         :aria-selected="m.id === modelValue"
-        :aria-disabled="m.id === 'auto' && !autoAvailable"
+        :aria-disabled="!available.includes(m.id)"
         class="mode-item"
-        :class="{ selected: m.id === modelValue, unavailable: m.id === 'auto' && !autoAvailable }"
-        @click="!(m.id === 'auto' && !autoAvailable) && pick(m.id)"
+        :class="{ selected: m.id === modelValue, unavailable: !available.includes(m.id) }"
+        @click="available.includes(m.id) && pick(m.id)"
       >
         <span class="mode-name">{{ m.label }}</span>
         <span class="mode-desc">
-          {{ m.id === 'auto' && !autoAvailable ? 'Tick harness not installed for this workspace.' : m.desc }}
+          {{ available.includes(m.id) ? m.desc : 'Not installed for this workspace.' }}
         </span>
       </li>
     </ul>
@@ -84,7 +86,7 @@ onBeforeUnmount(close)
 }
 .mode-trigger:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .mode-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
-.mode-trigger.auto { color: var(--accent); border-color: var(--accent); }
+.mode-trigger.active { color: var(--accent); border-color: var(--accent); }
 .caret { font-size: 0.75em; opacity: 0.7; }
 
 .mode-list {

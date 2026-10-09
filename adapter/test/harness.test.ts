@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { autoModePrompt, enterAutoMode, leaveAutoMode, recordedProject, sessionFile } from "../src/harness.js";
+import { enterAutoMode, leaveAutoMode, recordedProject, sessionFile } from "../src/harness.js";
 
 describe("auto mode helpers", () => {
   let home: string;
@@ -11,11 +11,6 @@ describe("auto mode helpers", () => {
 
   beforeEach(() => {
     home = mkdtempSync(path.join(tmpdir(), "harness-"));
-  });
-
-  it("routes typed messages to /tick and leaves slash commands alone", () => {
-    expect(autoModePrompt("analyse GSE123")).toBe("/tick analyse GSE123");
-    expect(autoModePrompt("/memory")).toBe("/memory");
   });
 
   it("marks only the given session, with its bound project or none", async () => {

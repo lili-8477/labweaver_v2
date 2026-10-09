@@ -484,7 +484,7 @@ watch(() => chat.sending, () => {
 onMounted(() => {
   window.addEventListener('dragover', swallow)
   window.addEventListener('drop', swallow)
-  void chat.refreshHarnessInstalled()
+  void chat.refreshAvailableModes()
   void chat.refreshHarnessProgress()
   scheduleProgressTick()
 })
@@ -679,7 +679,7 @@ watch(
         <div class="input-row">
           <ModeMenu
             :model-value="chat.activeChat?.mode ?? 'chat'"
-            :auto-available="chat.harnessInstalled"
+            :available="chat.availableModes"
             :disabled="!chat.activeChatId || chat.sending"
             @update:model-value="setMode"
           />

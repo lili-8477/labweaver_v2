@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { natsService } from '@/services/nats'
 import { formatTokens, formatDuration } from '@/utils/format'
-import type { ChatStats, TokenTotals, SubagentRun } from '@/types'
+import type { ChatStats, TokenTotals, SubagentRun, TeamMember, TeamTask } from '@/types'
 
 const POLL_MS = 3000
 
@@ -96,6 +96,26 @@ function runTime(r: SubagentRun): string {
 const STATUS_LABEL: Record<SubagentRun['status'], string> = {
   running: 'Running', done: 'Done', failed: 'Failed', stopped: 'Stopped',
 }
+
+// Team rows reuse the subagent run styles: each status maps onto a run class.
+const team = computed(() => stats.value?.team ?? null)
+const MEMBER_STATUS: Record<TeamMember['status'], { label: string; cls: string }> = {
+  running: { label: 'Running', cls: 'running' },
+  provisioning: { label: 'Starting', cls: 'running' },
+  inactive: { label: 'Idle', cls: 'stopped' },
+  failed: { label: 'Failed', cls: 'failed' },
+}
+/** Teammates run as subagent sessions; name those runs after the teammate. */
+function runName(r: SubagentRun): string {
+  const mate = team.value?.members.find(m => m.id === r.sessionId)
+  return r.description || (mate ? `Teammate ${mate.name}` : 'Subagent')
+}
+
+function taskStatus(t: TeamTask): { label: string; cls: string } {
+  if (t.status === 'completed') return { label: 'Done', cls: 'done' }
+  if (t.status === 'in_progress') return { label: 'In progress', cls: 'running' }
+  return t.ready ? { label: 'Ready', cls: 'stopped' } : { label: 'Blocked', cls: 'blocked' }
+}
 </script>
 
 <template>
@@ -145,6 +165,42 @@ const STATUS_LABEL: Record<SubagentRun['status'], string> = {
           </template>
         </section>
 
+        <!-- Team (Team mode: the lead's roster and shared task board) -->
+        <section v-if="team || chat.activeChat?.mode === 'team'" class="section">
+          <div class="section-title">
+            Team
+            <span v-if="team" class="scope">
+              {{ team.members.length }} member{{ team.members.length === 1 ? '' : 's' }} ·
+              {{ team.tasks.filter(t => t.status === 'completed').length }}/{{ team.tasks.length }} tasks done
+            </span>
+          </div>
+          <div v-if="!team" class="empty">No team yet. The lead creates teammates once you send a task.</div>
+          <template v-else>
+            <article v-for="m in team.members" :key="m.name" class="run" :class="MEMBER_STATUS[m.status].cls">
+              <div class="run-head">
+                <span class="status-dot" :title="MEMBER_STATUS[m.status].label" />
+                <span class="run-name">{{ m.name }}</span>
+                <span class="badge">{{ MEMBER_STATUS[m.status].label }}</span>
+              </div>
+              <p v-if="m.description" class="run-result" :title="m.description">{{ m.description }}</p>
+            </article>
+            <div class="subsection-title">Task board</div>
+            <div v-if="team.tasks.length === 0" class="empty">No tasks on the board yet.</div>
+            <article v-for="t in team.tasks" :key="t.id" class="run" :class="taskStatus(t).cls">
+              <div class="run-head">
+                <span class="status-dot" :title="taskStatus(t).label" />
+                <span class="run-name">{{ t.subject }}</span>
+              </div>
+              <div class="run-meta">
+                <span class="badge">{{ taskStatus(t).label }}</span>
+                <span v-if="t.ownerName">{{ t.ownerName }}</span>
+                <span class="mono">{{ t.id }}</span>
+                <span v-if="t.blockedBy.length">after {{ t.blockedBy.join(', ') }}</span>
+              </div>
+            </article>
+          </template>
+        </section>
+
         <!-- Subagents -->
         <section class="section">
           <div class="section-title">
@@ -154,12 +210,12 @@ const STATUS_LABEL: Record<SubagentRun['status'], string> = {
             </span>
           </div>
           <div v-if="stats && runs.length === 0" class="empty">
-            No subagent runs in this chat. In self-driving mode, each finished step is reviewed by one.
+            No subagent runs in this chat. In Auto mode, each finished step is reviewed by one.
           </div>
           <article v-for="r in runs" :key="r.sessionId" class="run" :class="r.status">
             <div class="run-head">
               <span class="status-dot" :title="STATUS_LABEL[r.status]" />
-              <span class="run-name">{{ r.description || 'Subagent' }}</span>
+              <span class="run-name">{{ runName(r) }}</span>
               <span class="run-tokens">{{ formatTokens(sum(r.tokens)) }}</span>
             </div>
             <div class="run-meta">
@@ -247,6 +303,12 @@ const STATUS_LABEL: Record<SubagentRun['status'], string> = {
 .run.running { --status: var(--accent); }
 .run.done { --status: var(--success); }
 .run.failed { --status: var(--danger); }
+.run.blocked { --status: var(--warning); }
+.subsection-title {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-2xs); color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
 .run-head { display: flex; align-items: center; gap: var(--space-2); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status); flex-shrink: 0; }
 .run.running .status-dot { animation: pulse 1.2s ease-in-out infinite; }

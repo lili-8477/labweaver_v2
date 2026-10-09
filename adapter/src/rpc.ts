@@ -4,7 +4,8 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { CHAT_MODES, ChatsRepo, type ChatMode } from "./chats-repo.js";
+import { ChatsRepo } from "./chats-repo.js";
+import { CHAT_MODES, MODE_COMMANDS, modePrompt, type ChatMode } from "./modes.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import { FileManager } from "./fs-rpc.js";
@@ -26,7 +27,8 @@ import {
   resolveModelRef,
   type ProviderSpec,
 } from "./providers/registry.js";
-import { autoModePrompt, enterAutoMode, leaveAutoMode, recordedProject } from "./harness.js";
+import { enterAutoMode, leaveAutoMode, recordedProject } from "./harness.js";
+import { readTeamBoard } from "./dsh/team-board.js";
 import { runTurn } from "./turn-runner.js";
 import type { StreamEvent } from "./types.js";
 
@@ -248,20 +250,26 @@ export class RpcRouter {
       case "get_chat_stats": {
         const chatId = params.chat_id as string;
         const chat = await this.chats.read(chatId);
+        const sessionId = chat?.session_id ?? chatId;
         const stats = await readChatStats(
           this.deps.home,
           this.deps.defaultProjectCwd,
-          chat?.session_id ?? chatId,
+          sessionId,
           this.aborts.has(chatId),
         );
-        return { success: true, ...stats };
+        const team = await readTeamBoard(this.deps.home, sessionId);
+        return { success: true, ...stats, team };
       }
 
-      case "get_auto_mode_available": {
-        // Auto mode needs the orchestrator command on disk.
-        const cmdFile = path.join(this.deps.home, ".claude", "commands", "tick.md");
-        const available = await fs.stat(cmdFile).then(() => true).catch(() => false);
-        return { success: true, available };
+      case "get_available_modes": {
+        // A mode is available when its command is on disk (plain chat always is).
+        const modes: ChatMode[] = [];
+        for (const mode of CHAT_MODES) {
+          const cmd = MODE_COMMANDS[mode];
+          const file = cmd && path.join(this.deps.home, ".claude", "commands", `${cmd}.md`);
+          if (!file || await fs.stat(file).then(() => true, () => false)) modes.push(mode);
+        }
+        return { success: true, modes };
       }
 
       case "set_chat_mode": {
@@ -659,7 +667,7 @@ export class RpcRouter {
     // mid-chat would fragment history and break resume. Auto mode hands the
     // agent its project through the session's file instead (harness.ts).
     const autoMode = chat.mode === "auto";
-    if (autoMode) prompt = autoModePrompt(prompt);
+    prompt = modePrompt(chat.mode, prompt);
     let sessionId: string | undefined;
     const model = await this.currentModel();
     const mutex = this.mutexes.get(chatId);

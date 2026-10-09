@@ -25,8 +25,26 @@ export interface PatchOptions {
 
 type Row = Record<string, unknown>;
 
+/**
+ * Agent Teams (Team mode). The team tools are installed in every top-level
+ * session, but their built-in policy keeps them idle unless the user asks;
+ * Team mode asks through the /team command. Three team tools share names with
+ * dsh-base's subagent controls, so those rows are disabled. `subagent` itself
+ * stays (auto mode's reviewer dispatches through it), one-shot now that its
+ * follow-up tool, `send_message`, belongs to the team.
+ */
+const TEAM_ROWS: Row[] = [
+  { id: "tool-subagent-control", disabled: true },
+  { id: "tool-subagent-list-agents", disabled: true },
+  { id: "tool-subagent", config: { provider: "spawn", toolName: "subagent", backgroundMode: "one-shot" } },
+];
+const TEAM_INSERTS: Row[] = [
+  { id: "agent-team", name: "@deepseek-ai/dsh-experimental-agent-team", config: { maxMembers: 8 } },
+  { id: "tool-agent-team", name: "@deepseek-ai/dsh-experimental-tool-agent-team" },
+];
+
 /** Adapter-owned dsh plugins, each at dsh-plugins/<id>.js. */
-const LOCAL_PLUGINS = ["next-step", "tick", "usage", "sidechain"];
+const LOCAL_PLUGINS = ["next-step", "tick", "usage", "sidechain", "team-board"];
 
 export function buildDshPatch(opts: PatchOptions): Row[] {
   const def = parseModelRef(opts.defaultModel);
@@ -55,8 +73,9 @@ export function buildDshPatch(opts: PatchOptions): Row[] {
     { id: "llm-pi-ai", config: { providers: routes } },
     { id: "acp", config: { provider: def.provider, model: def.model } },
     { id: "skill-filesystem", config: { customSkillDirs: opts.skillDirs } },
+    ...TEAM_ROWS,
   ];
-  const inserts: Row[] = [];
+  const inserts: Row[] = [...TEAM_INSERTS];
   if (opts.hooksConfigPath) {
     inserts.push({
       id: "hooks-claude-code",
@@ -71,7 +90,7 @@ export function buildDshPatch(opts: PatchOptions): Row[] {
     const config = mcpClientConfig(s);
     if (config) inserts.push({ id: `mcp-${s.name}`, name: "@deepseek-ai/dsh-mcp-client", config });
   }
-  if (inserts.length > 0) rows.push({ insert: inserts });
+  rows.push({ insert: inserts });
   return rows;
 }
 

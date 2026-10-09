@@ -33,6 +33,7 @@ import { ChatsRepo } from "./chats-repo.js";
 import { DshAcpConnection } from "./dsh/acp-connection.js";
 import { DshAcpEngine } from "./dsh/engine.js";
 import { buildDshPatch, serializePatch } from "./dsh/patch.js";
+import { dshHome as dshHomeDir } from "./dsh/team-board.js";
 import { loadMcpServers } from "./mcp-config.js";
 import { buildProviders, DEFAULT_MODEL_REF, type ProviderSpec } from "./providers/registry.js";
 import { loadDbConfig } from "./db-config.js";
@@ -169,7 +170,7 @@ async function main(): Promise<void> {
  * child, which spawns lazily on the first turn.
  */
 async function createEngine(opts: { home: string; workspaceRoot: string; providers: ProviderSpec[] }): Promise<DshAcpEngine> {
-  const dshHome = process.env.DSH_HOME ?? path.join(opts.home, ".dsh");
+  const dshHome = dshHomeDir(opts.home);
   mkdirSync(dshHome, { recursive: true });
   const settingsPath = path.join(opts.home, ".claude", "settings.json");
   const patchFile = path.join(dshHome, "labweaver.patch.yml");

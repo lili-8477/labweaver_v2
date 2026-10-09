@@ -2,7 +2,7 @@
 // on its chats row. While a chat is in auto mode, ~/.claude/auto/<session id>
 // marks its dsh session for the tick plugin and the harness hooks, and holds
 // the session's project as one absolute path (empty until tick-bootstrap
-// writes one). The adapter starts each auto-mode turn as `/tick <message>`;
+// writes one). Auto-mode turns start as `/tick <message>` (modes.ts);
 // dsh-plugins/tick.js drives the rounds after that.
 
 import { promises as fs } from "node:fs";
@@ -10,11 +10,6 @@ import * as path from "node:path";
 
 export const sessionFile = (home: string, sessionId: string): string =>
   path.join(home, ".claude", "auto", sessionId);
-
-/** Route a typed message into the orchestrator; slash commands pass through. */
-export function autoModePrompt(prompt: string): string {
-  return prompt.trimStart().startsWith("/") ? prompt : `/tick ${prompt}`;
-}
 
 /**
  * Mark a session as auto mode, pointed at the chat's bound project

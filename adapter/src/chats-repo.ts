@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import type { ChatMode } from "./modes.js";
 
 export interface ChatRow {
   chat_id: string;
@@ -15,10 +16,6 @@ export interface ChatRow {
   last_used_at: string;
   deleted_at: string | null;
 }
-
-/** How a chat runs its turns: plain agent, or the self-driving tick harness. */
-export type ChatMode = "chat" | "auto";
-export const CHAT_MODES: readonly ChatMode[] = ["chat", "auto"];
 
 export interface ChatInfo {
   id: string;
