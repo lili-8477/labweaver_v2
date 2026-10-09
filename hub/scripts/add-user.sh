@@ -10,8 +10,14 @@ HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HTPASSWD_FILE="${HUB_DIR}/htpasswd"
 WORKSPACES_DIR="${HUB_DIR}/workspaces"
 SHARED_DIR="${WORKSPACES_DIR}/shared"
-NETWORK="labweaver_labweaver-net"
-NATS_HOST="labweaver-nats"
+# Hub infrastructure the user container joins. Defaults are the production
+# hub (hub/docker-compose.yml); override all five to attach to another stack,
+# e.g. the dev stack (see usage).
+NETWORK="${NETWORK:-labweaver_labweaver-net}"
+NATS_HOST="${NATS_HOST:-labweaver-nats}"
+PG_HOST="${PG_HOST:-labweaver-postgres}"
+INDEXER_HOST="${INDEXER_HOST:-labweaver-indexer}"
+NGINX_CONTAINER="${NGINX_CONTAINER:-labweaver-nginx}"
 ENV_FILE="${HUB_DIR}/.env"
 
 ensure_hub_env() {
@@ -60,6 +66,11 @@ Examples:
   OLLAMA_API_KEY=xxxx add-user.sh dave
   add-user.sh bob --data /home/bob/dataset1 --data /shared/refs:/workspace/shared/refs:ro
   add-user.sh carol --chpc-unid u0123456
+
+  # Attach to the dev stack (docker-compose.dev.yml) instead of the prod hub:
+  NETWORK=labweaver-dev_labweaver-dev-net NATS_HOST=labweaver-dev-nats \
+  PG_HOST=labweaver-dev-postgres INDEXER_HOST=labweaver-dev-indexer \
+  NGINX_CONTAINER=labweaver-dev-web add-user.sh erin --image labweaver:dsh-dev
 
 The script creates:
   hub/workspaces/<user>/               workspace root, bind-mounted at /workspace
@@ -285,7 +296,7 @@ else
     sed -i.bak "/^${USERNAME}:/d" "${HTPASSWD_FILE}" && rm -f "${HTPASSWD_FILE}.bak"
     echo "${ENTRY}" >> "${HTPASSWD_FILE}"
 fi
-docker exec labweaver-nginx nginx -s reload >/dev/null 2>&1 || true
+docker exec "${NGINX_CONTAINER}" nginx -s reload >/dev/null 2>&1 || true
 
 # --- 3. Service ID -----------------------------------------------------------
 # Random secret recorded in hub/users.md (reused if the user existed before).
@@ -368,10 +379,10 @@ docker run -d \
     -e "NATS_USER=agent" \
     -e "WORKSPACE_ROOT=/workspace" \
     -e "DEFAULT_PROJECT=/workspace" \
-    -e "PG_URL=postgres://labweaver:${POSTGRES_PASSWORD}@labweaver-postgres:5432/labweaver" \
+    -e "PG_URL=postgres://labweaver:${POSTGRES_PASSWORD}@${PG_HOST}:5432/labweaver" \
     -e "USERNAME=${USERNAME}" \
     -e "HOME=/home/node" \
-    -e "MEMORY_API_URL=http://labweaver-indexer:8400" \
+    -e "MEMORY_API_URL=http://${INDEXER_HOST}:8400" \
     -e "MEMORY_ENABLED=1" \
     "${MOUNTS[@]}" \
     -w /workspace \
