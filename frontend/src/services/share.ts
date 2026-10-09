@@ -3,6 +3,7 @@ import { natsService } from './nats';
 import type {
   ShareRequest, ShareCapabilities, ArtifactKind, ShareStatus,
 } from '@/types/share';
+import { hubPath } from '@/utils/hub-path';
 
 export interface ListResponse {
   items: ShareRequest[];
@@ -80,7 +81,7 @@ export const shareService = {
    * (skills are small; folders defer to phase 3).
    */
   fetchSnapshotFile: async (id: string, relPath: string): Promise<string> => {
-    const url = `/share-snapshot/${encodeURIComponent(id)}/file?path=${encodeURIComponent(relPath)}`;
+    const url = hubPath(`share-snapshot/${encodeURIComponent(id)}/file?path=${encodeURIComponent(relPath)}`);
     // Same-origin request — nginx HTTP Basic Auth is carried automatically; no `credentials` flag needed.
     const r = await fetch(url);
     if (!r.ok) {

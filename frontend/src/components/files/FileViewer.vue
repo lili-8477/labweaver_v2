@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { hubPath } from '@/utils/hub-path'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useFileStore } from '@/stores/files'
 import { renderMarkdown } from '@/utils/markdown'
@@ -53,7 +54,7 @@ const dataUri = computed(() => {
 const directDownloadUrl = computed(() => {
   if (!files.openFile) return ''
   const segs = files.openFile.path.split('/').map(encodeURIComponent)
-  return `/download/${segs.join('/')}`
+  return hubPath(`download/${segs.join('/')}`)
 })
 
 /** Trigger a download of the current file. Prefers the nginx endpoint

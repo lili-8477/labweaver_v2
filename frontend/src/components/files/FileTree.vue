@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { hubPath } from '@/utils/hub-path'
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFileStore } from '@/stores/files'
@@ -329,7 +330,7 @@ async function handleDelete(fe: FlatEntry) {
  *  Works at any size — streams directly from disk, bypassing NATS. */
 function downloadUrl(filePath: string): string {
   const segs = filePath.split('/').map(encodeURIComponent)
-  return `/download/${segs.join('/')}`
+  return hubPath(`download/${segs.join('/')}`)
 }
 
 async function reloadTreeFromRoot() {

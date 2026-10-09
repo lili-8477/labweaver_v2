@@ -363,3 +363,44 @@ What each subagent buys:
 - **retrospective**: a single memory pass at the end. The main agent can do it.
 
 Leaner shape: `tick.js` steers the main agent with the work item ("do step X; follow `tick-executor.md`"), and the main agent dispatches only `tick-reviewer` as a subagent. Implemented the same day; verified in the UI on a 2-step project (one main transcript, one reviewer sidechain per step). See `adapter/dsh-plugins/tick.js`, `hub/skeleton/harness/commands/tick.md`.
+
+## 2026-10-07 — Move the LabWeaver UI onto the DeepSeek Harness web UI?
+
+**Q:** I want to refactor the current UI to the DeepSeek Harness UI. Does it make sense? I need to keep the LabWeaver brand (logo, color scheme, font).
+
+**A:** Branding is not the obstacle. dsh's web UI takes its logo from a swappable plugin, `dsh-client-ui-brand-official`, and its colors and fonts from roughly 108 `--dsw-*` CSS variables, including `--dsw-font-family-brand`. A LabWeaver brand plugin plus one variable override layer covers it.
+
+The real cost is porting everything else. Every LabWeaver panel would be rewritten from Vue into React plugins for dsh's web UI: auto-mode checklist, files and h5ad viewer, notebook, memory, skills and share review, the CHPC pill, drag-and-drop projects, next-step chips. The adapter's RPCs would become dsh server plugins. Multi-user routing (nginx, plus a NATS service per user, plus chats in Postgres) would have to be rebuilt around one `dsh web` server per user container. On top of that, dsh is still at 0.2.0-rc.2, and plugins are told to re-check its plugin interfaces before relying on them.
+
+You would gain dsh's own views of its features (subagents, workflows, goals, plan mode, approvals, jobs, terminal) kept current with the engine at no cost, and the ACP translation layer would shrink.
+
+Recommendation: no big-bang rewrite yet. Keep the thin bridge that hosts dsh web plugins inside LabWeaver (commit `af19aec`). If the idea stays attractive, first run a short spike: `dsh web` with a LabWeaver brand plugin, plus one ported feature (the auto-mode checklist). Then decide using the measured cost, and once dsh's plugin interfaces are stable.
+
+## 2026-10-08 — Can dsh Agent Teams be switched on for one chat only?
+
+**Q:** Team mode: can the dsh team tools be enabled only in chats set to Team, when dsh mounts plugins for the whole process?
+
+**A:** Not cleanly. `dsh-experimental-tool-agent-team` installs its nine tools per agent, but for every agent that `agentTeams.tryMembership` accepts, and every top-level session counts as a Lead. The tools are attached once, when the session's agent is created, and dsh has no hook to filter tools per request (`agent/request` swaps model settings only). Three of the team tools (`send_message`, `list_agents`, `interrupt_agent`) share names with dsh's subagent-control tools, so those have to be turned off process-wide either way. The `subagent` tool itself doesn't clash: the team profile disables it as a policy choice, but Auto's reviewer needs it.
+
+Options: (1) mount the team tools for every chat and let Team mode prepend a `/team` instruction, relying on the built-in policy ("create teammates only when the user explicitly asks") to keep them dormant elsewhere; (2) a wrapper plugin that installs or removes them per session (fragile against an experimental package); (3) a second dsh process with the team profile for Team chats (clean, but a session must never be loaded in both processes). Recommendation: (1), keeping `subagent` (switched to one-shot) for Auto.
+
+## 2026-10-08 — Can the main agent run subagents on a different model?
+
+**Q:** Can the main agent use a different model for subagents?
+
+**A:** Yes, for the `subagent` tool; not yet for team teammates. Today every subagent inherits the parent's model, because dsh-base leaves model selection off. dsh offers two switches on the `tool-subagent` row (built in `adapter/src/dsh/patch.ts`):
+- **Fixed:** `agentOptions: { provider, model }` sends every subagent to one configured model (e.g. a cheap, fast one for Auto's reviewer).
+- **Agent's choice:** mount `@deepseek-ai/dsh-tool-subagent/model-selection-settings` with `enabled: true` and an `allowedModels` list, and set `modelSelectionSettings: true` on the tool. The `subagent` tool then gains `provider` / `model` / `reasoning_effort` fields plus a `list_subagent_models` tool, limited to the allowed routes. The policy is recorded when a session is created, so only new chats get it. Our in-process `spawn` backend supports this.
+
+Limits: `subagent_fork` always keeps the parent's model (so the copied history stays cacheable), and `spawn_teammate` has no model field, so teammates inherit the Lead's model.
+
+## 2026-10-09 — Using a Claude Max plan with the dsh-based labweaver
+
+**Q:** In the old labweaver (built on the Claude Code SDK) we used the Max plan. Can the current dsh-based version add Anthropic models and still bill them to a Max plan?
+
+**A:** Anthropic models: yes. Max plan through dsh: no.
+
+- **Why the old version worked:** the Agent SDK spawned the official `claude` CLI inside each container. `claude /login` stored OAuth tokens in `~/.claude.json`, so turns ran *as Claude Code* and were billed to the subscription.
+- **Why dsh can't do the same:** subscription OAuth is only for Anthropic's own clients. The Agent SDK docs say: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK. Use the API key authentication methods…" (code.claude.com/docs/en/agent-sdk). Press reports say Anthropic has rejected subscription tokens from third-party clients since early 2026. Feeding a Max token to dsh breaks the terms and will likely be refused.
+- **Path A (recommended): API key through dsh.** dsh's pi-ai adapter ships an `anthropic` route (`apiKeyEnv: ANTHROPIC_API_KEY`, `anthropic-messages` protocol). Adding it means one provider entry in `adapter/src/providers/registry.ts` plus a route in `adapter/src/dsh/patch.ts`. Billing is per token on the API.
+- **Path B: a Claude Code engine.** The `AgentEngine` seam (`adapter/src/engine/types.ts`) could host a second engine built on the Agent SDK. That brings back subscription login, but only for your own personal use of your own Max plan. Sharing one Max plan across lab users is not allowed; each user would need their own key or plan. It's also a large job: hooks, MCP, skills and the transcript format all have to run on both engines.

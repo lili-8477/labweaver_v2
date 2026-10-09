@@ -2,6 +2,8 @@
 // file under local_projects/.chat-attachments/ — the existing upload-http
 // allowlist already covers that subtree, so no backend change is needed.
 
+import { hubPath } from '@/utils/hub-path'
+
 const SUBDIR = 'local_projects/.chat-attachments'
 const MAX_BYTES = 10 * 1024 * 1024
 const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -70,7 +72,7 @@ export function uploadAttachment(
 
   const ext = extFor(file)
   const destPath = `${SUBDIR}/${attachmentId}${ext}`
-  const url = '/upload/' + destPath.split('/').map(encodeURIComponent).join('/')
+  const url = hubPath('upload/') + destPath.split('/').map(encodeURIComponent).join('/')
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()

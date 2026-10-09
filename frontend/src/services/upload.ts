@@ -1,4 +1,5 @@
 import { useUploadsStore } from '@/stores/uploads'
+import { hubPath } from '@/utils/hub-path'
 
 const MAX_SIZE = 2 * 1024 * 1024 * 1024  // 2 GiB
 
@@ -47,7 +48,7 @@ function runUpload(id: string, file: File): Promise<void> {
   }
 
   return new Promise<void>((resolve, reject) => {
-    const url = '/upload/' + entry.destPath.split('/').map(encodeURIComponent).join('/')
+    const url = hubPath('upload/') + entry.destPath.split('/').map(encodeURIComponent).join('/')
     const xhr = new XMLHttpRequest()
     liveXhrs.set(id, xhr)
     xhr.open('PUT', url, true)
