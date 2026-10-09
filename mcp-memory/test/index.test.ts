@@ -4,6 +4,7 @@ import {
   callMemoryGet,
   callMemoryTimeline,
   callMemoryDir,
+  callMemoryTree,
   callMemoryWrite,
   callMemoryMerge,
   callMemoryFeedback,
@@ -41,7 +42,7 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the nine memory tools", () => {
+  it("exposes exactly the ten memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
       "memory_dir",
@@ -52,6 +53,7 @@ describe("toolDefinitions", () => {
       "memory_merge",
       "memory_search",
       "memory_timeline",
+      "memory_tree",
       "memory_write",
     ]);
   });
@@ -479,5 +481,27 @@ describe("callMemoryForget", () => {
     expect(calls).toHaveLength(0);
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain("'memory_id' is required");
+  });
+});
+
+describe("callMemoryTree", () => {
+  it("returns directory counts and ranked topics without the memory leaves", async () => {
+    const tree = {
+      dirs: [{ dir_key: "user/experience", entry_count: 2 }],
+      memories: [{ memory_id: "a" }, { memory_id: "b" }],
+      topics: [{ topic: "tool:scanpy", ready: true }],
+      thresholds: { memories: 3, successes: 3 },
+    };
+    const { stub, calls } = makeFetchStub(new Response(JSON.stringify(tree), { status: 200 }));
+    const res = await callMemoryTree({}, baseDeps(stub));
+    expect(new URL(calls[0]!.url).pathname).toBe("/memory/tree");
+    expect(JSON.parse(res.content[0]!.text)).toEqual({
+      memories_total: 2, dirs: tree.dirs, topics: tree.topics, thresholds: tree.thresholds,
+    });
+  });
+
+  it("surfaces HTTP errors as tool errors", async () => {
+    const { stub } = makeFetchStub(new Response("{}", { status: 500 }));
+    expect((await callMemoryTree({}, baseDeps(stub))).isError).toBe(true);
   });
 });

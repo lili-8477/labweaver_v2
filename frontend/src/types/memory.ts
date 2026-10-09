@@ -48,3 +48,41 @@ export interface MemoryDirSummary {
   entry_count: number
   updated_at: string | null
 }
+
+// Memory tree (GET /memory/tree): every live memory with usage counters, and
+// facet topics ranked by how ready they are to become a skill.
+export interface MemoryTreeLeaf {
+  memory_id: string
+  name: string
+  description: string
+  dir_key: string
+  scope: ScopeTier
+  project_dir: string | null
+  created_at: string
+  updated_at: string
+  hit_count: number
+  success_count: number
+  failure_count: number
+  topics: string[]           // "pipeline:toy-stats", "tool:pandas", …
+}
+
+export interface MemoryTopic {
+  topic: string
+  key: string
+  value: string
+  memory_ids: string[]
+  dirs: string[]
+  memory_count: number
+  hit_count: number
+  success_count: number
+  failure_count: number
+  readiness: number          // 0..1
+  ready: boolean
+}
+
+export interface MemoryTree {
+  dirs: MemoryDirSummary[]
+  memories: MemoryTreeLeaf[]
+  topics: MemoryTopic[]
+  thresholds: { memories: number; successes: number }
+}

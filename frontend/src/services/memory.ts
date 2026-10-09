@@ -3,7 +3,7 @@
 
 import { natsService } from './nats'
 import type {
-  MemoryListItem, MemoryDetail, MemoryAuditEntry, MemorySearchHit, MemoryDirSummary,
+  MemoryListItem, MemoryDetail, MemoryAuditEntry, MemorySearchHit, MemoryDirSummary, MemoryTree,
   MemoryType, MemorySource, ScopeTier,
 } from '@/types'
 
@@ -92,6 +92,14 @@ export const memoryService = {
   dirs: async (): Promise<MemoryDirSummary[]> => {
     const result = await natsService.invoke('memory_dirs', { all_projects: true }) as { success: true; dirs: MemoryDirSummary[] }
     return result.dirs
+  },
+
+  /**
+   * Every live memory with usage counters, plus facet topics ranked by skill readiness.
+   */
+  tree: async (): Promise<MemoryTree> => {
+    const { success: _, ...tree } = await natsService.invoke('memory_tree', {}) as { success: true } & MemoryTree
+    return tree
   },
 
   /**

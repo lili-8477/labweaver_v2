@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { memoryService, type ListQuery, type WriteParams } from '@/services/memory'
-import type { MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier, MemoryDirSummary } from '@/types'
+import type { MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier, MemoryDirSummary, MemoryTree } from '@/types'
 
 export const useMemoryStore = defineStore('memory', () => {
   const items = ref<MemoryListItem[]>([])
@@ -26,6 +26,8 @@ export const useMemoryStore = defineStore('memory', () => {
   const editDraft = ref<{ name: string; description: string; body: string } | null>(null)
   const error = ref<string | null>(null)
   const dirs = ref<MemoryDirSummary[]>([])
+  const tree = ref<MemoryTree | null>(null)
+  const treeLoading = ref(false)
 
   // Directory counts change with every write/forget, so refresh them with
   // each first-page load. Failure only hides the directory row.
@@ -34,6 +36,18 @@ export const useMemoryStore = defineStore('memory', () => {
       dirs.value = await memoryService.dirs()
     } catch {
       dirs.value = []
+    }
+  }
+
+  async function loadTree() {
+    treeLoading.value = true
+    error.value = null
+    try {
+      tree.value = await memoryService.tree()
+    } catch (e) {
+      error.value = (e as Error)?.message || 'Failed to load memory tree'
+    } finally {
+      treeLoading.value = false
     }
   }
 
@@ -124,6 +138,7 @@ export const useMemoryStore = defineStore('memory', () => {
         if (idx >= 0) {
           items.value[idx].deleted_at = new Date().toISOString()
         }
+        if (tree.value) void loadTree()
         // If the selected item was just deleted, refetch it to get the updated state
         if (selected.value?.memory_id === id) {
           await select(id)
@@ -144,6 +159,7 @@ export const useMemoryStore = defineStore('memory', () => {
         if (idx >= 0) {
           items.value[idx].deleted_at = null
         }
+        if (tree.value) void loadTree()
         // If the selected item was just restored, refetch it
         if (selected.value?.memory_id === id) {
           await select(id)
@@ -208,5 +224,8 @@ export const useMemoryStore = defineStore('memory', () => {
     cancelEdit,
     setFilter,
     dirs,
+    tree,
+    treeLoading,
+    loadTree,
   }
 })

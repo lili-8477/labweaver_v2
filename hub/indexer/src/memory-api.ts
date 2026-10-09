@@ -15,6 +15,7 @@ import type {
   getMetrics,
   listDirs,
   getDir,
+  memoryTree,
   recordFeedback,
 } from "./memory-repo.js";
 import { InvalidDirError } from "./memory-dirs.js";
@@ -47,6 +48,7 @@ export interface MemoryApiDeps {
     getMetrics:       typeof getMetrics;
     listDirs:         typeof listDirs;
     getDir:           typeof getDir;
+    memoryTree:       typeof memoryTree;
     recordFeedback:   typeof recordFeedback;
     proposeExperiences: typeof proposeExperiences;
     writeDistillation: typeof writeDistillation;
@@ -143,6 +145,11 @@ const DirsQuery = z.object({
   all_projects: z.union([z.literal('true'), z.literal('false')]).optional()
                  .transform(v => v === 'true'),
   limit:       z.coerce.number().int().positive().max(200).optional(),
+});
+
+const TreeQuery = z.object({
+  username: z.string().min(1),
+  limit:    z.coerce.number().int().positive().max(5000).optional(),
 });
 
 const FeedbackBody = z.object({
@@ -331,6 +338,17 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       return { error: "directory not found" };
     }
     return dir;
+  });
+
+  // GET /memory/tree — every directory with its entries' usage counters and
+  // the facet topics ranked by skill readiness.
+  app.get("/memory/tree", async (req, reply) => {
+    const parsed = TreeQuery.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    return await deps.repo.memoryTree({ pool: deps.pool, ...parsed.data });
   });
 
   // POST /memory/feedback — outcome of a task that used these memories.

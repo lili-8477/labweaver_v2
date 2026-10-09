@@ -8,7 +8,7 @@ import { contentHash } from "../src/content-hash.js";
 import { InvalidDirError } from "../src/memory-dirs.js";
 import {
   searchMemories, writeUserMemory, updateMemory, getAuditTrail, getMemory,
-  listMemories, listDirs, getDir, recordFeedback,
+  listMemories, listDirs, getDir, recordFeedback, memoryTree,
 } from "../src/memory-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
@@ -46,6 +46,7 @@ interface Seed {
   type?:        string;
   name?:        string;
   dir?:         string;
+  facets?:      Record<string, string[]>;
 }
 
 async function seed(rows: Seed[]): Promise<string[]> {
@@ -64,7 +65,7 @@ async function seed(rows: Seed[]): Promise<string[]> {
         name:              r.name ?? `m-${n}`,
         description:       `d-${n}`,
         body:              r.body,
-        facets:            {},
+        facets:            r.facets ?? {},
         content_hash:      contentHash({ body: `${n}`, promptVersion: 0 }),
         dir_key:           r.dir,
       });
@@ -294,5 +295,38 @@ describe("recordFeedback", () => {
     }
     const dir = await getDir({ pool, username: "alice", project_dir: null, dir_key: "user/preferences" });
     expect(dir!.entries.map((e) => e.name)).toEqual(["helped", "hurt"]);
+  });
+});
+
+describe("memoryTree", () => {
+  it("groups the caller's memories into facet topics ranked by skill readiness", async () => {
+    const qc = { pipeline: ["scrna-qc"], tool: ["scanpy"] };
+    const [a, b, c] = await seed([
+      { username: "alice", project_dir: "-w-p", body: "qc 1", facets: qc },
+      { username: "alice", body: "qc 2", facets: qc },
+      { username: "alice", body: "qc 3", facets: { ...qc, file: ["x.py"] } },
+      { username: "alice", body: "plot", facets: { tool: ["matplotlib"] } },
+      { username: "bob",   body: "bob qc", facets: qc },
+    ]);
+    await recordFeedback({ pool, username: "alice", memory_ids: [a!, b!, c!], outcome: "success" });
+
+    const tree = await memoryTree({ pool, username: "alice" });
+
+    expect(tree.memories).toHaveLength(4);                       // bob's excluded
+    expect(tree.memories.find((m) => m.memory_id === c)!.topics)
+      .toEqual(["pipeline:scrna-qc", "tool:scanpy"]);            // file facet is not a topic
+    expect(tree.topics.map((t) => t.topic)).toEqual(["pipeline:scrna-qc", "tool:scanpy"]); // singletons dropped
+    expect(tree.topics[0]).toMatchObject({
+      memory_count: 3, success_count: 3, readiness: 1, ready: true,
+      dirs: expect.arrayContaining(["project/decisions", "user/experience"]),
+    });
+    expect(tree.dirs.some((d) => d.dir_key === "project/decisions")).toBe(true);
+  });
+
+  it("scores partial readiness when a topic has knowledge but no proven uses", async () => {
+    await seed([1, 2].map((i) => ({ username: "alice", body: `p${i}`, facets: { pipeline: ["bulk-rna"] } })));
+    const [topic] = (await memoryTree({ pool, username: "alice" })).topics;
+    expect(topic).toMatchObject({ value: "bulk-rna", ready: false });
+    expect(topic!.readiness).toBeCloseTo(1 / 3);
   });
 });

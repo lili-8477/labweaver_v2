@@ -1192,6 +1192,118 @@ export async function listDirs(args: {
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Memory tree: every directory, its live entries with usage counters, and
+// "topics" — memories sharing a pipeline/tool/dataset facet. A topic that has
+// gathered enough knowledge and has proven itself in tasks is a candidate to
+// be distilled into a skill. Feeds the UI tree view and the memory_tree tool.
+
+const TOPIC_FACETS = ["pipeline", "tool", "dataset"];
+export const SKILL_MIN_MEMORIES  = 3;
+export const SKILL_MIN_SUCCESSES = 3;
+
+export interface TreeMemory {
+  memory_id:     string;
+  name:          string;
+  description:   string;
+  dir_key:       string;
+  scope:         "user" | "project" | "org";
+  project_dir:   string | null;
+  created_at:    string;
+  updated_at:    string;
+  hit_count:     number;
+  success_count: number;
+  failure_count: number;
+  topics:        string[];        // "pipeline:toy-stats", "tool:pandas", …
+}
+
+export interface TreeTopic {
+  topic:         string;
+  key:           string;
+  value:         string;
+  memory_ids:    string[];
+  dirs:          string[];
+  memory_count:  number;
+  hit_count:     number;
+  success_count: number;
+  failure_count: number;
+  readiness:     number;          // 0..1; 1 = both thresholds met
+  ready:         boolean;
+}
+
+export interface MemoryTree {
+  dirs:       DirSummary[];
+  memories:   TreeMemory[];
+  topics:     TreeTopic[];        // ≥2 memories, most ready first
+  thresholds: { memories: number; successes: number };
+}
+
+export async function memoryTree(args: {
+  pool:     Pool;
+  username: string;
+  limit?:   number;
+}): Promise<MemoryTree> {
+  type Row = Omit<TreeMemory, "created_at" | "updated_at"> & { created_at: Date; updated_at: Date };
+  const [dirs, r] = await Promise.all([
+    listDirs({ pool: args.pool, username: args.username, project_dir: null, all_projects: true }),
+    args.pool.query<Row>(
+      `SELECT m.memory_id, m.name, m.description, m.dir_key, m.scope, m.project_dir,
+              m.created_at, m.updated_at, m.hit_count, m.success_count, m.failure_count,
+              COALESCE(array_agg(f.key || ':' || f.value ORDER BY f.key, f.value)
+                       FILTER (WHERE f.key IS NOT NULL), '{}') AS topics
+         FROM memories m
+         LEFT JOIN memory_facets f ON f.memory_id = m.memory_id AND f.key = ANY($2)
+        WHERE m.deleted_at IS NULL
+          AND m.name <> '${DISTILL_FAILED_NAME}'
+          AND (m.scope = 'org' OR m.username = $1)
+        GROUP BY m.memory_id
+        ORDER BY m.created_at DESC
+        LIMIT $3`,
+      [args.username, TOPIC_FACETS, args.limit ?? 2000],
+    ),
+  ]);
+  const memories = r.rows.map((row) => ({
+    ...row,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  }));
+  return {
+    dirs,
+    memories,
+    topics: groupTopics(memories),
+    thresholds: { memories: SKILL_MIN_MEMORIES, successes: SKILL_MIN_SUCCESSES },
+  };
+}
+
+function groupTopics(memories: TreeMemory[]): TreeTopic[] {
+  const byTopic = new Map<string, TreeMemory[]>();
+  for (const m of memories) {
+    for (const t of m.topics) byTopic.set(t, [...(byTopic.get(t) ?? []), m]);
+  }
+  const topics: TreeTopic[] = [];
+  for (const [topic, ms] of byTopic) {
+    if (ms.length < 2) continue;
+    const sum = (k: "hit_count" | "success_count" | "failure_count") =>
+      ms.reduce((n, m) => n + m[k], 0);
+    const success_count = sum("success_count");
+    const readiness =
+      (Math.min(1, ms.length / SKILL_MIN_MEMORIES) + Math.min(1, success_count / SKILL_MIN_SUCCESSES)) / 2;
+    const [key, ...rest] = topic.split(":");
+    topics.push({
+      topic, key: key!, value: rest.join(":"),
+      memory_ids:    ms.map((m) => m.memory_id),
+      dirs:          [...new Set(ms.map((m) => m.dir_key))],
+      memory_count:  ms.length,
+      hit_count:     sum("hit_count"),
+      success_count,
+      failure_count: sum("failure_count"),
+      readiness,
+      ready:         readiness >= 1,
+    });
+  }
+  return topics.sort((a, b) => b.readiness - a.readiness || b.memory_count - a.memory_count);
+}
+
 export interface DirDetail extends DirSummary {
   entries: Array<{
     memory_id:   string;

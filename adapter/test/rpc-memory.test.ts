@@ -42,6 +42,7 @@ function makeMemoryClient(overrides: Partial<{
   restore: ReturnType<typeof vi.fn>;
   audit: ReturnType<typeof vi.fn>;
   dirs: ReturnType<typeof vi.fn>;
+  tree: ReturnType<typeof vi.fn>;
 }> = {}): MemoryRpcClient {
   return {
     search: overrides.search ?? vi.fn().mockResolvedValue([]),
@@ -54,6 +55,7 @@ function makeMemoryClient(overrides: Partial<{
     restore: overrides.restore ?? vi.fn().mockResolvedValue({ ok: true }),
     audit: overrides.audit ?? vi.fn().mockResolvedValue({ rows: [] }),
     dirs: overrides.dirs ?? vi.fn().mockResolvedValue([]),
+    tree: overrides.tree ?? vi.fn().mockResolvedValue({ dirs: [], memories: [], topics: [] }),
   } as unknown as MemoryRpcClient;
 }
 
@@ -154,6 +156,16 @@ describe("RpcRouter memory_* dispatch", () => {
       const res = await router.dispatch("memory_dirs", { all_projects: true });
       expect(dirs).toHaveBeenCalledWith({ all_projects: true });
       expect(res).toEqual({ success: true, dirs: [{ dir_key: "user/notes", entry_count: 2 }] });
+    });
+  });
+
+  describe("memory_tree", () => {
+    it("calls client.tree and spreads the tree alongside success", async () => {
+      const tree = vi.fn().mockResolvedValue({ dirs: [], memories: [], topics: [{ topic: "tool:scanpy" }] });
+      const router = makeRouter(makeMemoryClient({ tree }));
+      const res = await router.dispatch("memory_tree", {});
+      expect(tree).toHaveBeenCalled();
+      expect(res).toEqual({ success: true, dirs: [], memories: [], topics: [{ topic: "tool:scanpy" }] });
     });
   });
 
@@ -265,6 +277,7 @@ describe("RpcRouter memory_* dispatch", () => {
         ["memory_search", { query: "x" }],
         ["memory_get", { memory_id: "m1" }],
         ["memory_timeline", {}],
+        ["memory_tree", {}],
         ["memory_list", {}],
         ["memory_write", { scope: "user", type: "user", name: "n", description: "d", body: "b" }],
         ["memory_update", { memory_id: "m1", name: "n", description: "d", body: "b" }],

@@ -85,6 +85,12 @@ export const toolDefinitions = [
     },
   },
   {
+    name: "memory_tree",
+    description:
+      "Overview of how your memory is growing: every directory with its entry count, plus topics — memories sharing a pipeline/tool/dataset facet — with how often they were used and succeeded in tasks. Topics are ranked by skill readiness (0..1); `ready: true` means the topic has enough memories and proven successful uses that it is worth distilling into a skill. Use it to suggest building a skill, then read the topic's memory_ids with memory_get.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "memory_write",
     description:
       "Author a new memory. scope='user' for personal memories, scope='project' (with project_dir) for project-scoped. scope='org' is admin-only and rejected here. If near-duplicates already exist in the target directory nothing is written and the result carries `similar` matches: merge into one with memory_merge, or re-send with force_new if it is genuinely distinct.",
@@ -305,6 +311,25 @@ export async function callMemoryDir(args: any, deps: ToolDeps): Promise<ToolResu
   }
 }
 
+// The hub's tree also carries every memory leaf for the UI; the agent only
+// needs the directory counts and the ranked topics.
+export async function callMemoryTree(_args: any, deps: ToolDeps): Promise<ToolResult> {
+  const params = new URLSearchParams({ username: deps.username });
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}/memory/tree?${params.toString()}`);
+    if (!res.ok) return await unwrap(res, "memory_tree");
+    const tree = await res.json() as { dirs: unknown[]; memories: unknown[]; topics: unknown[]; thresholds: unknown };
+    return ok({
+      memories_total: tree.memories.length,
+      dirs:           tree.dirs,
+      topics:         tree.topics,
+      thresholds:     tree.thresholds,
+    });
+  } catch (err) {
+    return fail(`memory_tree network error: ${(err as Error).message}`);
+  }
+}
+
 export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolResult> {
   // Hard reject org-scope BEFORE any HTTP traffic. The memory-api will
   // happily accept it (it's used by the indexer's own admin writes), so
@@ -458,6 +483,7 @@ async function main(): Promise<void> {
       case "memory_get":      result = await callMemoryGet(args, deps); break;
       case "memory_timeline": result = await callMemoryTimeline(args, deps); break;
       case "memory_dir":      result = await callMemoryDir(args, deps); break;
+      case "memory_tree":     result = await callMemoryTree(args, deps); break;
       case "memory_write":    result = await callMemoryWrite(args, deps); break;
       case "memory_merge":    result = await callMemoryMerge(args, deps); break;
       case "memory_feedback": result = await callMemoryFeedback(args, deps); break;

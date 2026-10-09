@@ -26,6 +26,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   getMetrics:       ReturnType<typeof vi.fn>;
   listDirs:         ReturnType<typeof vi.fn>;
   getDir:           ReturnType<typeof vi.fn>;
+  memoryTree:       ReturnType<typeof vi.fn>;
   recordFeedback:   ReturnType<typeof vi.fn>;
   proposeExperiences: ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
@@ -53,6 +54,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     })),
     listDirs:         vi.fn(async () => []),
     getDir:           vi.fn(async () => null),
+    memoryTree:       vi.fn(async () => ({ dirs: [], memories: [], topics: [], thresholds: { memories: 3, successes: 3 } })),
     recordFeedback:   vi.fn(async () => ({ updated: 0 })),
     proposeExperiences: vi.fn(async () => ({ proposed: [] as string[] })),
     writeDistillation: vi.fn(async () => ({ similar: [] as never[] })),
@@ -818,6 +820,15 @@ describe("memory-api", () => {
       expect(res.statusCode).toBe(404);
       expect(depsBag.repo.getDir).toHaveBeenCalledWith(
         expect.objectContaining({ dir_key: "user/notes", project_dir: null, limit: 5 }),
+      );
+    });
+
+    it("GET /memory/tree passes owner and limit through", async () => {
+      const res = await app.inject({ method: "GET", url: "/memory/tree?username=alice&limit=10" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ topics: [], thresholds: { memories: 3 } });
+      expect(depsBag.repo.memoryTree).toHaveBeenCalledWith(
+        expect.objectContaining({ username: "alice", limit: 10 }),
       );
     });
 

@@ -23,6 +23,7 @@ import {
   getMetrics,
   listDirs,
   getDir,
+  memoryTree,
   recordFeedback,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
       getMetrics,
       listDirs,
       getDir,
+      memoryTree,
       recordFeedback,
       proposeExperiences,
       writeDistillation,

@@ -6,6 +6,10 @@
  *   - Calls store.loadFirstPage() on mount (MemoryList.vue does NOT do this).
  *   - Does NOT reset state on unmount so filter+selection survive a Files/Notebook detour.
  *
+ * View: 'overview' (MemoryOverview: stats + knowledge graph, the default) or 'list' (filterable
+ * MemoryList). Scope/source/directory filters apply to the list only; typing a
+ * search switches to the list.
+ *
  * Search mode:
  *   When searchActive is true, store.items is overwritten with search hits coerced
  *   to MemoryListItem shape. The store is otherwise oblivious to search mode — this
@@ -26,8 +30,20 @@ import { memoryService } from '@/services/memory'
 import type { MemoryListItem, MemorySource, ScopeTier } from '@/types'
 import MemoryList from './MemoryList.vue'
 import MemoryDetail from './MemoryDetail.vue'
+import MemoryOverview from './MemoryOverview.vue'
 
 const store = useMemoryStore()
+
+// ── View: tree overview or filterable list ────────────────────────────────────
+
+const VIEW_KEY = 'labweaver-memory-view'
+const view = ref<'overview' | 'list'>(
+  (() => { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'overview' } catch { return 'overview' } })()
+)
+function setView(v: 'overview' | 'list') {
+  view.value = v
+  try { localStorage.setItem(VIEW_KEY, v) } catch { /* ignore */ }
+}
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +73,7 @@ function scheduleSearch(val: string) {
 }
 
 function onSearchInput() {
+  if (searchInput.value.trim()) view.value = 'list'
   scheduleSearch(searchInput.value)
 }
 
@@ -224,10 +241,21 @@ onUnmounted(() => {
           />
           <button v-if="searchInput" class="search-clear" @click="clearSearch" aria-label="Clear search">×</button>
         </div>
+        <div class="view-toggle" role="tablist" aria-label="View">
+          <button
+            v-for="v in (['overview', 'list'] as const)"
+            :key="v"
+            class="scope-tab"
+            :class="{ active: view === v }"
+            role="tab"
+            :aria-selected="view === v"
+            @click="setView(v)"
+          >{{ v === 'overview' ? 'Overview' : 'List' }}</button>
+        </div>
       </div>
 
       <!-- Scope tabs -->
-      <div class="filter-row" role="tablist" aria-label="Scope">
+      <div v-if="view === 'list'" class="filter-row" role="tablist" aria-label="Scope">
         <button
           v-for="tab in scopeTabs"
           :key="String(tab.value)"
@@ -261,7 +289,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Directories of the selected scope -->
-      <div v-if="scopeDirs.length" class="filter-row dir-row" role="tablist" aria-label="Directory">
+      <div v-if="view === 'list' && scopeDirs.length" class="filter-row dir-row" role="tablist" aria-label="Directory">
         <button
           v-for="d in scopeDirs"
           :key="d.dir_key"
@@ -282,7 +310,10 @@ onUnmounted(() => {
         <div v-if="narrowView === 'detail'" class="narrow-back-row">
           <button class="btn-back" @click="narrowView = 'list'">‹ Back</button>
         </div>
-        <MemoryList v-if="narrowView === 'list'" class="pane-fill" />
+        <template v-if="narrowView === 'list'">
+          <MemoryOverview v-if="view === 'overview'" class="pane-fill" />
+          <MemoryList v-else class="pane-fill" />
+        </template>
         <MemoryDetail v-else class="pane-fill" />
       </div>
     </template>
@@ -298,7 +329,8 @@ onUnmounted(() => {
           class="split-pane pane-list"
           :style="{ height: splitPercent + '%' }"
         >
-          <MemoryList class="pane-fill" />
+          <MemoryOverview v-if="view === 'overview'" class="pane-fill" />
+          <MemoryList v-else class="pane-fill" />
         </div>
 
         <!-- Drag handle -->
@@ -330,8 +362,13 @@ onUnmounted(() => {
 }
 
 .search-row {
-  padding: var(--space-2) var(--space-3) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
 }
+.search-row .search-wrap { flex: 1; min-width: 0; }
+.view-toggle { display: flex; gap: 2px; flex-shrink: 0; }
 
 .search-wrap {
   position: relative;
@@ -385,7 +422,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  padding: 0 var(--space-3) var(--space-2);
   flex-wrap: wrap;
 }
 
