@@ -6,6 +6,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { stripSessionContext } from "./session-context.js";
 
 export interface LegacyMessage {
   role: "user" | "assistant" | "tool" | "system";
@@ -96,7 +97,7 @@ function projectEntry(entry: Record<string, unknown>): LegacyMessage[] {
     const content = msg.content;
     if (typeof content === "string") {
       if (isMeta) return [];
-      return [{ role: "user", content }];
+      return [{ role: "user", content: stripSessionContext(content) }];
     }
     if (Array.isArray(content)) {
       const out: LegacyMessage[] = [];
@@ -129,7 +130,7 @@ function projectEntry(entry: Record<string, unknown>): LegacyMessage[] {
           });
         }
       }
-      if (textParts.length > 0) out.unshift({ role: "user", content: textParts.join("") });
+      if (textParts.length > 0) out.unshift({ role: "user", content: stripSessionContext(textParts.join("")) });
       return out;
     }
   }

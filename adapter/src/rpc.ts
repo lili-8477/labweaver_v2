@@ -4,12 +4,14 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { ChatsRepo } from "./chats-repo.js";
+import { ChatsRepo, type ChatRow } from "./chats-repo.js";
 import { CHAT_MODES, MODE_COMMANDS, modePrompt, type ChatMode } from "./modes.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import { FileManager } from "./fs-rpc.js";
-import { readSessionMessages, type LegacyMessage } from "./history.js";
+import { readSessionMessages, transcriptPath, type LegacyMessage } from "./history.js";
+import { parentDigest, withSessionContext, type SessionContext } from "./session-context.js";
+import { createProject, listProjects } from "./projects.js";
 import { readChatStats } from "./chat-stats.js";
 import { H5adService } from "./h5ad-rpc.js";
 import { KernelBridge, type IOPubEvent } from "./kernel.js";
@@ -215,9 +217,25 @@ export class RpcRouter {
 
       case "create_chat": {
         const name = (params.chat_name as string | undefined) ?? "New chat";
+        const parentId = (params.parent_chat_id as string | undefined)?.trim();
         const chatId = crypto.randomUUID();
-        await this.chats.create(chatId, name);
+        if (parentId) {
+          if (!(await this.chats.createChild(chatId, name, parentId))) {
+            throw new Error(`parent chat not found: ${parentId}`);
+          }
+        } else {
+          await this.chats.create(chatId, name, this.projectDirParam(params.project_dir));
+        }
         return { success: true, chat_id: chatId };
+      }
+
+      case "list_projects":
+        return { success: true, projects: await listProjects(this.deps.workspaceRoot) };
+
+      case "create_project": {
+        const name = (params.name as string | undefined)?.trim();
+        if (!name) throw new Error("name required");
+        return { success: true, project: await createProject(this.deps.workspaceRoot, name) };
       }
 
       case "delete_chat": {
@@ -430,23 +448,7 @@ export class RpcRouter {
         // so a malformed value never reaches the DB or the agent's cwd.
         const chatId = (params.chat_id as string)?.trim();
         if (!chatId) throw new Error("chat_id required");
-        const raw = (params.project_dir as string | undefined)?.trim() ?? "";
-        let projectDir: string | null = null;
-        if (raw !== "") {
-          if (raw.startsWith("/") || raw.includes("..") || raw.startsWith(".")) {
-            throw new Error("project_dir must be a safe workspace-relative path");
-          }
-          const abs = path.resolve(this.deps.workspaceRoot, raw);
-          if (!abs.startsWith(this.deps.workspaceRoot + path.sep)) {
-            throw new Error("project_dir escapes workspace");
-          }
-          // Don't require the dir to exist yet — drop-to-project calls this
-          // immediately after createDirectory, and the order of the two
-          // calls is racy across NATS round-trips. The binding is just a
-          // pointer; runChat handles a missing dir by falling back to the
-          // default cwd.
-          projectDir = raw.replace(/\/+$/, "");
-        }
+        const projectDir = this.projectDirParam(params.project_dir);
         await this.chats.setProjectDir(chatId, projectDir);
         return { success: true, project_dir: projectDir };
       }
@@ -663,6 +665,40 @@ export class RpcRouter {
     }
   }
 
+  /** Validate a workspace-relative project dir param; "" or absent → null.
+   *  The dir needn't exist yet — drop-to-project binds right after
+   *  createDirectory, racing it across NATS. The binding is just a pointer. */
+  private projectDirParam(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (raw === "") return null;
+    if (raw.startsWith("/") || raw.includes("..") || raw.startsWith(".")) {
+      throw new Error("project_dir must be a safe workspace-relative path");
+    }
+    const abs = path.resolve(this.deps.workspaceRoot, raw);
+    if (!abs.startsWith(this.deps.workspaceRoot + path.sep)) {
+      throw new Error("project_dir escapes workspace");
+    }
+    return raw.replace(/\/+$/, "");
+  }
+
+  /** First turn of a fresh session: tell the agent its project and, for a
+   *  sub-session, what the parent conversation covered. */
+  private async firstTurnContext(chat: ChatRow, prompt: string): Promise<string> {
+    const { home, defaultProjectCwd, workspaceRoot } = this.deps;
+    const ctx: SessionContext = {};
+    if (chat.project_dir) ctx.projectDir = path.resolve(workspaceRoot, chat.project_dir);
+    const parent = chat.parent_chat_id ? await this.chats.read(chat.parent_chat_id) : null;
+    if (parent?.session_id) {
+      const messages = await readSessionMessages(home, defaultProjectCwd, parent.session_id);
+      ctx.parent = {
+        name: parent.name,
+        transcript: transcriptPath(home, defaultProjectCwd, parent.session_id),
+        digest: parentDigest(messages),
+      };
+    }
+    return withSessionContext(prompt, ctx);
+  }
+
   private async runChat(chatId: string, prompt: string, images: ImageRef[] = []): Promise<unknown> {
     const chat = await this.chats.read(chatId);
     if (!chat) throw new Error(`chat not found: ${chatId}`);
@@ -673,6 +709,7 @@ export class RpcRouter {
     // mid-chat would fragment history and break resume. Auto mode hands the
     // agent its project through the session's file instead (harness.ts).
     const autoMode = chat.mode === "auto";
+    if (!chat.session_id) prompt = await this.firstTurnContext(chat, prompt);
     prompt = modePrompt(chat.mode, prompt);
     let sessionId: string | undefined;
     const model = await this.currentModel();

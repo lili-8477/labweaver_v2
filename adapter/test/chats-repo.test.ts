@@ -33,6 +33,9 @@ describe("ChatsRepo", () => {
     expect(chat!.name).toBe("My first chat");
     expect(chat!.chat_id).toBe(chatId);
     expect(chat!.username).toBe("alice");
+    expect(chat!.project_dir).toBeNull();
+    await repo.create("22222222-2222-2222-2222-222222222222", "in project", "local_projects/p");
+    expect((await repo.read("22222222-2222-2222-2222-222222222222"))!.project_dir).toBe("local_projects/p");
   });
 
   it("mode defaults to chat and is set per chat", async () => {
@@ -182,5 +185,26 @@ describe("ChatsRepo", () => {
     );
     const list = await repo.list();
     expect(list.find((c) => c.id === chatId)!.name).toBe("hello from the user");
+  });
+
+  it("createChild inherits project/mode, nests via parent_chat_id, survives parent delete", async () => {
+    const alice = new ChatsRepo(pool, "alice");
+    const bob = new ChatsRepo(pool, "bob");
+    const parent = "11111111-1111-1111-1111-111111111111";
+    const child = "22222222-2222-2222-2222-222222222222";
+    await alice.create(parent, "parent");
+    await alice.setProjectDir(parent, "local_projects/p");
+    await alice.setMode(parent, "auto");
+
+    expect(await bob.createChild(child, "x", parent)).toBe(false);
+    expect(await alice.createChild(child, "child", parent)).toBe(true);
+    const c = (await alice.read(child))!;
+    expect(c.parent_chat_id).toBe(parent);
+    expect(c.project_dir).toBe("local_projects/p");
+    expect(c.mode).toBe("auto");
+    expect((await alice.list()).find((x) => x.id === child)!.parent_chat_id).toBe(parent);
+
+    await alice.delete(parent);
+    expect((await alice.read(child))!.parent_chat_id).toBeNull();
   });
 });

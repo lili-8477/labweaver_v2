@@ -5,11 +5,12 @@ import { extractTextContent } from '@/utils/content'
 import type {
   ChatInfo, ChatMessage, StreamMessage, StreamChunk,
   StepMessage, ChatFinished,
-  StepMessageData, TimelineStep, HarnessProgress, ChatMode,
+  StepMessageData, TimelineStep, HarnessProgress, ChatMode, ProjectInfo,
 } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
   const chats = ref<ChatInfo[]>([])
+  const projects = ref<ProjectInfo[]>([])
   const activeChatId = ref<string | null>(null)
   const messages = ref<ChatMessage[]>([])
   const streamingText = ref('')
@@ -58,9 +59,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function createChat(name?: string): Promise<string | null> {
+  async function loadProjects() {
+    try {
+      const result = await natsService.invoke('list_projects') as { success: boolean; projects: ProjectInfo[] }
+      if (result?.success) projects.value = result.projects
+    } catch (e) {
+      console.warn('Failed to load projects:', e)
+    }
+  }
+
+  /** Create a project folder under local_projects/; returns its dir. */
+  async function createProject(name: string): Promise<string | null> {
+    const result = await natsService.invoke('create_project', { name }) as { success: boolean; project: ProjectInfo }
+    if (!result?.success) return null
+    await loadProjects()
+    return result.project.dir
+  }
+
+  /** opts.projectDir creates the chat inside that project. opts.parentChatId
+   *  creates a sub-session instead: it inherits the parent's project and mode
+   *  and is seeded with the parent conversation on its first turn. */
+  async function createChat(
+    name?: string,
+    opts: { parentChatId?: string; projectDir?: string } = {},
+  ): Promise<string | null> {
     const result = await natsService.invoke('create_chat', {
       chat_name: name || undefined,
+      parent_chat_id: opts.parentChatId,
+      project_dir: opts.projectDir,
     }) as { success: boolean; chat_id: string }
     if (result?.success) {
       await loadChats()
@@ -453,11 +479,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    chats, activeChatId, activeChat, messages, streamingText, isStreaming,
+    chats, projects, activeChatId, activeChat, messages, streamingText, isStreaming,
     sending,
     liveTimeline, completedTimelines,
     harnessActive, availableModes, harnessProgress, harnessProject,
-    loadChats, createChat, deleteChat, selectChat, sendMessage,
+    loadChats, loadProjects, createProject, createChat, deleteChat, selectChat, sendMessage,
     stopChat, updateChatName,
     refreshAvailableModes, refreshHarnessProgress, setChatProjectDir, setChatMode,
   }

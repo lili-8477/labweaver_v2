@@ -3,7 +3,7 @@
 // local_projects/, a new chat bound to it, and the kickoff message the
 // caller will send.
 //
-// The chat→project binding is persisted via set_chat_project_dir, so the
+// The chat→project binding is set when the chat is created, so the
 // adapter cd's the agent into the project for every turn and harness
 // progress.md lookups go to the right file even after the run finishes.
 // The kickoff message still spells out the working directory so the
@@ -102,19 +102,9 @@ export async function createProjectWithFiles(
     uploaded.push({ name: f.name, workspacePath: `${workspaceDir}/${f.name}` })
   }
 
-  const chatId = await chatStore.createChat(projectName)
-  if (chatId) {
-    // Bind first, then select. Selecting triggers refreshHarnessProgress,
-    // which looks up by chat_id — without the binding it would miss.
-    try {
-      await chatStore.setChatProjectDir(chatId, projectDir)
-    } catch (e) {
-      // Non-fatal: the agent will still work via the kickoff message's cwd
-      // hint, just without persistent binding. Log and continue.
-      console.warn('[project-from-drop] failed to bind chat to project:', e)
-    }
-    await chatStore.selectChat(chatId)
-  }
+  // Created already bound, so selecting it finds the project's progress.md.
+  const chatId = await chatStore.createChat(projectName, { projectDir })
+  if (chatId) await chatStore.selectChat(chatId)
 
   return { projectName, projectDir, workspaceDir, files: uploaded, chatId }
 }

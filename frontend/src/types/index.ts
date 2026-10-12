@@ -62,6 +62,15 @@ export interface ChatInfo {
    *  progress is read from <project_dir>/progress.md. Null = unbound. */
   project_dir?: string | null
   mode?: ChatMode
+  /** Set when this chat is a sub-session branched from another chat. */
+  parent_chat_id?: string | null
+}
+
+/** A project folder under local_projects/; chats bind to it via project_dir. */
+export interface ProjectInfo {
+  dir: string
+  name: string
+  modified_at: string
 }
 
 export interface ChatMessage {

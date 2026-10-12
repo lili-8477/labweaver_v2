@@ -12,6 +12,8 @@ export interface ChatRow {
    *  and harness lookups read this dir's progress.md. */
   project_dir: string | null;
   mode: ChatMode;
+  /** The chat this one was branched from as a sub-session, or null. */
+  parent_chat_id: string | null;
   created_at: string;
   last_used_at: string;
   deleted_at: string | null;
@@ -27,6 +29,7 @@ export interface ChatInfo {
   project_dir: string | null;
   mode: ChatMode;
   active_agent: string | null;
+  parent_chat_id: string | null;
 }
 
 /**
@@ -38,19 +41,34 @@ export interface ChatInfo {
 export class ChatsRepo {
   constructor(private pool: Pool, private username: string) {}
 
-  async create(chatId: string, name: string): Promise<void> {
+  async create(chatId: string, name: string, projectDir: string | null = null): Promise<void> {
     await this.pool.query(
-      `INSERT INTO chats (chat_id, username, name)
-       VALUES ($1, $2, $3)
+      `INSERT INTO chats (chat_id, username, name, project_dir)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (chat_id) DO NOTHING`,
-      [chatId, this.username, name],
+      [chatId, this.username, name, projectDir],
     );
+  }
+
+  /** Create a sub-session of `parentId`, inheriting its project binding and
+   *  mode. Returns false (and creates nothing) when the parent isn't one of
+   *  this tenant's live chats. */
+  async createChild(chatId: string, name: string, parentId: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `INSERT INTO chats (chat_id, username, name, parent_chat_id, project_dir, mode)
+       SELECT $1, $2, $3, p.chat_id, p.project_dir, p.mode
+       FROM chats p
+       WHERE p.chat_id = $4 AND p.username = $2 AND p.deleted_at IS NULL
+       ON CONFLICT (chat_id) DO NOTHING`,
+      [chatId, this.username, name, parentId],
+    );
+    return (r.rowCount ?? 0) > 0;
   }
 
   async read(chatId: string): Promise<ChatRow | null> {
     const r = await this.pool.query(
       `SELECT chat_id, username, session_id, name, active_agent, project_dir, mode,
-              created_at, last_used_at, deleted_at
+              parent_chat_id, created_at, last_used_at, deleted_at
        FROM chats
        WHERE chat_id = $1 AND username = $2 AND deleted_at IS NULL`,
       [chatId, this.username],
@@ -65,6 +83,7 @@ export class ChatsRepo {
       active_agent: row.active_agent,
       project_dir: row.project_dir,
       mode: row.mode,
+      parent_chat_id: row.parent_chat_id,
       created_at: row.created_at.toISOString(),
       last_used_at: row.last_used_at.toISOString(),
       deleted_at: row.deleted_at ? row.deleted_at.toISOString() : null,
@@ -80,6 +99,7 @@ export class ChatsRepo {
          c.active_agent   AS active_agent,
          c.project_dir    AS project_dir,
          c.mode           AS mode,
+         c.parent_chat_id AS parent_chat_id,
          COALESCE(s.project_display, '') AS project_name
        FROM chats c
        LEFT JOIN sessions s ON s.session_id = c.session_id
@@ -98,6 +118,7 @@ export class ChatsRepo {
       project_dir: row.project_dir,
       mode: row.mode,
       active_agent: row.active_agent,
+      parent_chat_id: row.parent_chat_id,
     }));
   }
 
