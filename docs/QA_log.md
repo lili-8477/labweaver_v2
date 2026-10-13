@@ -404,3 +404,14 @@ Limits: `subagent_fork` always keeps the parent's model (so the copied history s
 - **Why dsh can't do the same:** subscription OAuth is only for Anthropic's own clients. The Agent SDK docs say: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK. Use the API key authentication methods…" (code.claude.com/docs/en/agent-sdk). Press reports say Anthropic has rejected subscription tokens from third-party clients since early 2026. Feeding a Max token to dsh breaks the terms and will likely be refused.
 - **Path A (recommended): API key through dsh.** dsh's pi-ai adapter ships an `anthropic` route (`apiKeyEnv: ANTHROPIC_API_KEY`, `anthropic-messages` protocol). Adding it means one provider entry in `adapter/src/providers/registry.ts` plus a route in `adapter/src/dsh/patch.ts`. Billing is per token on the API.
 - **Path B: a Claude Code engine.** The `AgentEngine` seam (`adapter/src/engine/types.ts`) could host a second engine built on the Agent SDK. That brings back subscription login, but only for your own personal use of your own Max plan. Sharing one Max plan across lab users is not allowed; each user would need their own key or plan. It's also a large job: hooks, MCP, skills and the transcript format all have to run on both engines.
+
+## 2026-10-13 — Can the labweaver agent search the web?
+
+**Q:** can the agent do web search in labweaver
+
+**A:** The tools are there, but search is broken in the current setup. The DeepSeek Harness base config (`dsh-base/cordis.patch.yml`, rows `web`, `web-search-deepseek`, `web-fetch-http`, `tool-web`) gives every agent `web_search` and `web_fetch`, and labweaver's ACP profile doesn't remove them.
+- `web_fetch` works: plain HTTP(S) to public URLs; cross-origin redirects must be retried by hand.
+- `web_search` goes only through DeepSeek's native search (`searchProvider: deepseek-official`), which needs `DEEPSEEK_API_KEY` even when chat runs on Ollama. Neither dev container has that key, so searches fail with "DeepSeek search has no API key" (seen in devuser session 46a3e4f8, 2026-10-06). Agents fall back to fetching DuckDuckGo Lite pages.
+- Fix: set `DEEPSEEK_API_KEY` in `hub/workspaces/<user>/.env` and restart the container, or add another search provider (none other is installed in the image).
+
+*Follow-up (same day):* `web_search` now runs through Ollama's search API with `OLLAMA_API_KEY` (`adapter/dsh-plugins/web-search-ollama.js`, pinned in `adapter/src/dsh/patch.ts`), so no DeepSeek key is needed.

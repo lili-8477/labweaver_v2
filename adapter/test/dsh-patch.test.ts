@@ -50,7 +50,9 @@ describe("buildDshPatch", () => {
         { id: "usage", name: "file:///opt/adapter/dsh-plugins/usage.js" },
         { id: "sidechain", name: "file:///opt/adapter/dsh-plugins/sidechain.js" },
         { id: "team-board", name: "file:///opt/adapter/dsh-plugins/team-board.js" },
+        { id: "web-search-ollama", name: "file:///opt/adapter/dsh-plugins/web-search-ollama.js" },
     ]);
+    expect(rows).toContainEqual({ id: "web", config: { searchProvider: "ollama", fetchProvider: "http" } });
   });
 
   it("mounts .mcp.json servers process-wide through dsh-mcp-client", () => {

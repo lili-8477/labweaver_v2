@@ -44,7 +44,11 @@ const TEAM_INSERTS: Row[] = [
 ];
 
 /** Adapter-owned dsh plugins, each at dsh-plugins/<id>.js. */
-const LOCAL_PLUGINS = ["next-step", "tick", "usage", "sidechain", "team-board"];
+const LOCAL_PLUGINS = ["next-step", "tick", "usage", "sidechain", "team-board", "web-search-ollama"];
+
+/** web_search runs through Ollama's search API (dsh-plugins/web-search-ollama.js)
+ *  instead of dsh-base's DeepSeek native search; fetch stays on plain HTTP. */
+const WEB_ROW: Row = { id: "web", config: { searchProvider: "ollama", fetchProvider: "http" } };
 
 export function buildDshPatch(opts: PatchOptions): Row[] {
   const def = parseModelRef(opts.defaultModel);
@@ -84,6 +88,7 @@ export function buildDshPatch(opts: PatchOptions): Row[] {
     });
   }
   if (opts.pluginsDirUrl) {
+    rows.push(WEB_ROW);
     for (const id of LOCAL_PLUGINS) inserts.push({ id, name: new URL(`${id}.js`, opts.pluginsDirUrl).href });
   }
   for (const s of opts.mcpServers ?? []) {
