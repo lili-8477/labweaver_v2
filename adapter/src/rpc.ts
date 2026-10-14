@@ -716,7 +716,11 @@ export class RpcRouter {
     const mutex = this.mutexes.get(chatId);
     const run = mutex.tryRun(async () => {
       const ac = this.aborts.register(chatId);
+      // Auto mode covers one request: the tick plugin keys off the session
+      // file (enterAutoMode below), so this run keeps going while the chat's
+      // next message goes in as plain chat.
       try {
+        if (autoMode) await this.chats.setMode(chatId, "chat");
         await runTurn(this.deps.engine, {
           chatId,
           prompt,

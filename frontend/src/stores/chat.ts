@@ -40,7 +40,12 @@ export const useChatStore = defineStore('chat', () => {
   let stepCounter = 0
 
   const activeChat = computed(() => chats.value.find(c => c.id === activeChatId.value))
-  const harnessActive = computed(() => activeChat.value?.mode === 'auto')
+  // Auto mode covers one request: sending flips the chat back to plain chat
+  // (the adapter does the same), and this keeps the banner up while that
+  // request runs.
+  const autoRunChatId = ref<string | null>(null)
+  const harnessActive = computed(() =>
+    activeChat.value?.mode === 'auto' || (!!activeChatId.value && autoRunChatId.value === activeChatId.value))
 
   // ---- Chat CRUD ----
 
@@ -376,6 +381,10 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({ role: 'user', content: fullContent })
 
     const chatId = activeChatId.value
+    if (activeChat.value?.mode === 'auto') {
+      activeChat.value.mode = 'chat'
+      autoRunChatId.value = chatId
+    }
     try {
       await natsService.invoke('chat', {
         chat_id: chatId,
@@ -383,6 +392,8 @@ export const useChatStore = defineStore('chat', () => {
       }, 600_000)
     } catch (e) {
       console.error('Chat error:', e)
+    } finally {
+      if (autoRunChatId.value === chatId) autoRunChatId.value = null
     }
 
     if (activeChatId.value === chatId) {

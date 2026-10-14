@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   x: number
@@ -20,6 +20,20 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
+// Opened at the click point, then pulled back inside the viewport when the
+// menu would run past the right or bottom edge.
+const pos = ref({ left: props.x, top: props.y })
+const MARGIN = 8
+
+function fitToViewport() {
+  const el = root.value
+  if (!el) return
+  const { width, height } = el.getBoundingClientRect()
+  pos.value = {
+    left: Math.max(MARGIN, Math.min(props.x, window.innerWidth - width - MARGIN)),
+    top: Math.max(MARGIN, Math.min(props.y, window.innerHeight - height - MARGIN)),
+  }
+}
 
 function onClickOutside(ev: MouseEvent) {
   if (!root.value) return
@@ -29,7 +43,14 @@ function onKey(ev: KeyboardEvent) {
   if (ev.key === 'Escape') emit('close')
 }
 
+// Reopening on another row reuses this instance, so refit on every move.
+watch(() => [props.x, props.y], () => {
+  pos.value = { left: props.x, top: props.y }
+  void nextTick(fitToViewport)
+})
+
 onMounted(() => {
+  void nextTick(fitToViewport)
   document.addEventListener('mousedown', onClickOutside, true)
   document.addEventListener('keydown', onKey)
 })
@@ -53,10 +74,11 @@ function pick(action: 'copy-path' | 'rename' | 'move-to' | 'new-file' | 'new-fol
 </script>
 
 <template>
+  <Teleport to="body">
   <div
     ref="root"
     class="ctx-menu"
-    :style="{ left: x + 'px', top: y + 'px' }"
+    :style="{ left: pos.left + 'px', top: pos.top + 'px' }"
     role="menu"
   >
     <button
@@ -82,6 +104,7 @@ function pick(action: 'copy-path' | 'rename' | 'move-to' | 'new-file' | 'new-fol
     <div class="ctx-sep" />
     <button class="ctx-item ctx-danger" role="menuitem" @click="pick('delete')">Delete</button>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>

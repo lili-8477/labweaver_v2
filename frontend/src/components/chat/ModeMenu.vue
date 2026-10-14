@@ -14,7 +14,7 @@ const emit = defineEmits<{ 'update:modelValue': [mode: ChatMode] }>()
 
 const MODES: { id: ChatMode; label: string; desc: string }[] = [
   { id: 'chat', label: 'Chat', desc: 'Back-and-forth with the agent.' },
-  { id: 'auto', label: 'Auto', desc: 'Plans, runs and reviews each step until progress.md is complete.' },
+  { id: 'auto', label: 'Auto', desc: 'For your next message: plans, runs and reviews each step until progress.md is complete.' },
   { id: 'team', label: 'Team', desc: 'A lead agent splits the work among named teammates on a shared task board.' },
 ]
 

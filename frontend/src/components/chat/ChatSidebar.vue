@@ -336,15 +336,16 @@ async function handleDelete(chatId: string, childCount: number) {
 .chat-item.active { background: var(--bg-tertiary); border-left: 2px solid var(--accent); }
 .chat-item-content { flex: 1; min-width: 0; }
 .chat-item.sub .chat-name { font-size: 0.85em; color: var(--text-secondary); }
-.twisty, .twisty-spacer { flex: none; width: 16px; margin-right: 4px; }
+.twisty, .twisty-spacer { flex: none; width: 20px; margin-right: 4px; }
 .twisty {
-  height: 16px; padding: 0; background: transparent; border: none;
-  color: var(--text-muted); font-size: 0.8em; line-height: 1;
+  height: 20px; padding: 0; background: transparent; border: none;
+  border-radius: 4px; cursor: pointer;
+  color: var(--text-secondary); font-size: 15px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
   transition: transform 0.1s;
 }
 .twisty.open { transform: rotate(90deg); }
-.twisty:hover { color: var(--text-primary); }
+.twisty:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 .sub-count { opacity: 0.8; }
 .chat-name {
   font-size: 0.9em; white-space: nowrap; overflow: hidden;
