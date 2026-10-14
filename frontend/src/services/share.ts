@@ -82,7 +82,7 @@ export const shareService = {
    */
   fetchSnapshotFile: async (id: string, relPath: string): Promise<string> => {
     const url = hubPath(`share-snapshot/${encodeURIComponent(id)}/file?path=${encodeURIComponent(relPath)}`);
-    // Same-origin request — nginx HTTP Basic Auth is carried automatically; no `credentials` flag needed.
+    // Same-origin request: the service cookie nginx routes by is sent automatically.
     const r = await fetch(url);
     if (!r.ok) {
       throw new Error(`snapshot file fetch failed (HTTP ${r.status})`);

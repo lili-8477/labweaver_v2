@@ -1,12 +1,10 @@
 #!/bin/bash
-# Remove a labweaver user — stops container, removes htpasswd entry and
-# retires the user's service ID in hub/users.md.
+# Remove a labweaver user — stops container and retires the user's service ID in hub/users.md.
 # Workspace files are PRESERVED on disk; rm them manually if intended.
 
 set -euo pipefail
 
 HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HTPASSWD_FILE="${HUB_DIR}/htpasswd"
 
 USERNAME="${1:-}"
 if [[ -z "$USERNAME" ]]; then
@@ -29,14 +27,8 @@ else
     echo "No container named ${CONTAINER}."
 fi
 
-if [[ -f "${HTPASSWD_FILE}" ]]; then
-    sed -i.bak "/^${USERNAME}:/d" "${HTPASSWD_FILE}"
-    rm -f "${HTPASSWD_FILE}.bak"
-    docker exec labweaver-nginx nginx -s reload >/dev/null 2>&1 || true
-    echo "Removed htpasswd entry for ${USERNAME}."
-fi
-
 "${HUB_DIR}/scripts/service-id.sh" remove "${USERNAME}"
+docker exec labweaver-nginx nginx -s reload >/dev/null 2>&1 || true
 echo "Retired service ID for ${USERNAME}."
 
 echo "Workspace preserved at ${HUB_DIR}/workspaces/${USERNAME}/"

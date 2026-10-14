@@ -326,7 +326,7 @@ async function handleDelete(fe: FlatEntry) {
 }
 
 /** URL to nginx's direct-download endpoint for this file.
- *  Scoped by HTTP Basic auth to the authenticated user's own workspace.
+ *  Scoped by the service cookie to the user's own workspace.
  *  Works at any size — streams directly from disk, bypassing NATS. */
 function downloadUrl(filePath: string): string {
   const segs = filePath.split('/').map(encodeURIComponent)

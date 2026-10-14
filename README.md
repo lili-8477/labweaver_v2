@@ -96,7 +96,7 @@ See `image/README.md` for Dockerfile details.
 
 ## Quick start (multi-user hub)
 
-Prerequisites: Docker, Node 20, `htpasswd` (or Docker can stand in).
+Prerequisites: Docker, Node 20.
 
 ```bash
 # 1. Build the adapter bundle.
@@ -119,8 +119,10 @@ cd ..
 #    instead: see image/Dockerfile.overlay.
 docker build -f image/Dockerfile -t labweaver:dev .
 
-# 4. Start shared infra (NATS + nginx).
+# 4. Start shared infra (NATS + nginx). nginx mounts the service-ID routes
+#    file, so write it first.
 cd hub
+./scripts/service-id.sh map
 docker compose up -d
 docker compose ps
 
@@ -134,8 +136,9 @@ key — share it only with that user. `recreate-user.sh` reuses it and
 `remove-user.sh` retires it; `hub/scripts/service-id.sh get <user>` looks it
 up. Open
 `http://localhost:8088/` (or whatever nginx binds), enter
-`ws://localhost:8088/ws/` as the WebSocket URL, the printed service ID, and
-the username/password you chose.
+`ws://localhost:8088/ws/` as the WebSocket URL and the printed service ID.
+There is no separate login: the service ID is the credential, and the app
+also uses it (as a cookie) for file uploads and downloads.
 
 ## Quick start (single-user local dev)
 

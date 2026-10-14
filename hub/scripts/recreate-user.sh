@@ -1,6 +1,6 @@
 #!/bin/bash
 # Recreate a user's container (e.g. after bumping the image) while keeping the
-# workspace, htpasswd entry, and IDs.
+# workspace and IDs.
 
 set -euo pipefail
 

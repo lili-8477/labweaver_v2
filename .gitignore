@@ -5,8 +5,8 @@ dist/
 hub/workspaces/*/
 !hub/workspaces/shared/
 hub/workspaces/shared/projects/
-hub/htpasswd
 hub/users.md
+hub/service-routes.map
 hub/postgres-data/
 hub/.env
 .worktrees/

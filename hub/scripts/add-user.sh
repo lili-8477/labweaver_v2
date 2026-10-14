@@ -1,5 +1,5 @@
 #!/bin/bash
-# Add a new labweaver user: create workspace, register htpasswd entry,
+# Add a new labweaver user: create workspace, register a service ID,
 # spin up the per-user devcontainer.
 #
 # Usage: ./scripts/add-user.sh <username> [api_key] [options]
@@ -7,7 +7,6 @@
 set -euo pipefail
 
 HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HTPASSWD_FILE="${HUB_DIR}/htpasswd"
 WORKSPACES_DIR="${HUB_DIR}/workspaces"
 SHARED_DIR="${WORKSPACES_DIR}/shared"
 # Hub infrastructure the user container joins. Defaults are the production
@@ -138,7 +137,7 @@ set +a
 echo "=== Adding user: ${USERNAME} ==="
 
 # --- 1. Workspace + config scaffolding --------------------------------------
-echo "[1/4] Creating workspace at ${WORKSPACE}"
+echo "[1/3] Creating workspace at ${WORKSPACE}"
 mkdir -p "${WORKSPACE}/.claude/skills" \
          "${WORKSPACE}/.claude/agents" \
          "${WORKSPACE}/.claude/chats" \
@@ -283,29 +282,16 @@ fi
 # on re-runs since the same key just overwrites itself.
 python3 "${HUB_DIR}/scripts/merge-mcp-config.py" "${WORKSPACE}/.mcp.json" "${USERNAME}"
 
-# --- 2. HTTP Basic auth entry ------------------------------------------------
-echo "[2/4] Setting up HTTP auth"
-echo -n "Enter password for ${USERNAME}: "
-read -rs PASSWORD
-echo ""
-touch "${HTPASSWD_FILE}"
-if command -v htpasswd &>/dev/null; then
-    htpasswd -b "${HTPASSWD_FILE}" "${USERNAME}" "${PASSWORD}"
-else
-    ENTRY=$(docker run --rm httpd:alpine htpasswd -nb "${USERNAME}" "${PASSWORD}")
-    sed -i.bak "/^${USERNAME}:/d" "${HTPASSWD_FILE}" && rm -f "${HTPASSWD_FILE}.bak"
-    echo "${ENTRY}" >> "${HTPASSWD_FILE}"
-fi
-docker exec "${NGINX_CONTAINER}" nginx -s reload >/dev/null 2>&1 || true
-
-# --- 3. Service ID -----------------------------------------------------------
+# --- 2. Service ID -----------------------------------------------------------
 # Random secret recorded in hub/users.md (reused if the user existed before).
-echo "[3/4] Service ID"
+echo "[2/3] Service ID"
 SERVICE_ID=$("${HUB_DIR}/scripts/service-id.sh" ensure "${USERNAME}")
 echo "  service_id: ${SERVICE_ID}  (recorded in ${HUB_DIR}/users.md)"
+# ensure rewrote hub/service-routes.map; reload so file routes reach this user.
+docker exec "${NGINX_CONTAINER}" nginx -s reload >/dev/null 2>&1 || true
 
-# --- 4. Spin the container ---------------------------------------------------
-echo "[4/4] Starting container"
+# --- 3. Spin the container ---------------------------------------------------
+echo "[3/3] Starting container"
 MOUNTS=(
     # User's private projects — host and container use the same name so
     # the nginx /download/ endpoint (which serves directly from the host dir)
@@ -418,7 +404,6 @@ cat <<SUMMARY
 Frontend connection:
   WebSocket URL: ws://localhost:8088/ws/   (front with TLS for remote access)
   Service ID:    ${SERVICE_ID}
-  Username:      ${USERNAME}  (HTTP Basic)
   ${CHPC_LINE}
 
 Drop skills into:

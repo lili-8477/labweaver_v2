@@ -49,8 +49,8 @@ const dataUri = computed(() => {
   return `data:${mimeType};charset=utf-8,${encodeURIComponent(content)}`
 })
 
-/** URL to nginx's direct-download endpoint — scoped by HTTP Basic auth to the
- *  authenticated user's own workspace. Works for any size, bypassing NATS. */
+/** URL to nginx's direct-download endpoint — scoped by the service cookie to
+ *  the user's own workspace. Works for any size, bypassing NATS. */
 const directDownloadUrl = computed(() => {
   if (!files.openFile) return ''
   const segs = files.openFile.path.split('/').map(encodeURIComponent)

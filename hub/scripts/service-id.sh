@@ -10,18 +10,28 @@
 #        service-id.sh get    <username>   print the ID; exit 1 if absent
 #        service-id.sh remove <username>   delete the user's row
 #
+#        service-id.sh map                   rewrite the nginx service routes
+#
 # USERS_FILE overrides the registry path (default: hub/users.md).
+# ensure and remove also rewrite ROUTES_FILE (default: hub/service-routes.map),
+# which nginx's file routes use to find the user from the app's service-ID
+# cookie (see hub/nginx.conf).
 
 set -euo pipefail
 
 HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 USERS_FILE="${USERS_FILE:-${HUB_DIR}/users.md}"
+ROUTES_FILE="${ROUTES_FILE:-${HUB_DIR}/service-routes.map}"
 
-usage() { echo "Usage: $0 ensure|get|remove <username>" >&2; exit 2; }
-[[ $# -eq 2 ]] || usage
-CMD="$1"
-USERNAME="$2"
-[[ "$USERNAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid username: ${USERNAME}" >&2; exit 2; }
+usage() { echo "Usage: $0 ensure|get|remove <username> | map" >&2; exit 2; }
+CMD="${1:-}"
+if [[ "$CMD" == map ]]; then
+    [[ $# -eq 1 ]] || usage
+else
+    [[ $# -eq 2 ]] || usage
+    USERNAME="$2"
+    [[ "$USERNAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid username: ${USERNAME}" >&2; exit 2; }
+fi
 
 init_file() {
     [[ -f "$USERS_FILE" ]] && return
@@ -46,6 +56,18 @@ lookup() {
     }' "$USERS_FILE"
 }
 
+# nginx map entries "<service_id> <username>;", one per registered user.
+# Rewritten in place: nginx bind-mounts this file, and a mount keeps
+# pointing at the old inode when a file is replaced.
+write_map() {
+    local entries=""
+    [[ -f "$USERS_FILE" ]] && entries="$(awk -F'|' '{
+        name = $2; id = $3; gsub(/ /, "", name); gsub(/ /, "", id)
+        if (name ~ /^[a-z0-9][a-z0-9-]*$/ && id ~ /^[0-9a-f]+$/ && length(id) == 64) print id " " name ";"
+    }' "$USERS_FILE")"
+    (umask 077 && printf '%s\n' "$entries" > "$ROUTES_FILE")
+}
+
 case "$CMD" in
     get)
         id="$(lookup)"
@@ -59,6 +81,7 @@ case "$CMD" in
             id="$(openssl rand -hex 32)"
             echo "| ${USERNAME} | ${id} | $(date +%Y-%m-%d) |" >> "$USERS_FILE"
         fi
+        write_map
         echo "$id"
         ;;
     remove)
@@ -71,6 +94,8 @@ case "$CMD" in
         # Rewrite in place so the file keeps its mode (600).
         cat "$tmp" > "$USERS_FILE"
         rm -f "$tmp"
+        write_map
         ;;
+    map) write_map ;;
     *) usage ;;
 esac

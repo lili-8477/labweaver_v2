@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { natsService } from '@/services/nats'
+import { setHubService } from '@/utils/hub-path'
 import type { ConnectionConfig } from '@/types'
 
 export const useConnectionStore = defineStore('connection', () => {
@@ -62,6 +63,7 @@ export const useConnectionStore = defineStore('connection', () => {
       await natsService.connect(config)
       connected.value = true
       saveToStorage()
+      setHubService(serviceId.value)
 
       // Fetch endpoint info
       try {
@@ -80,6 +82,7 @@ export const useConnectionStore = defineStore('connection', () => {
     await natsService.disconnect()
     connected.value = false
     endpointServiceId.value = ''
+    setHubService('')
   }
 
   return {
