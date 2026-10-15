@@ -62,7 +62,8 @@ const toolName = computed(() => {
   display: flex; gap: 10px; margin-bottom: 16px; max-width: 85%;
 }
 .chat-message.user { margin-left: auto; flex-direction: row-reverse; }
-.chat-message.assistant { margin-right: auto; }
+/* Agent answers read as plain text across the panel (no bubble), like DSH. */
+.chat-message.assistant { max-width: 100%; margin-bottom: 6px; }
 .chat-message.tool { margin-right: auto; max-width: 70%; }
 
 .avatar {
@@ -81,10 +82,9 @@ const toolName = computed(() => {
   background: var(--accent); color: #fff;
   border-bottom-right-radius: 4px;
 }
-.assistant .bubble {
-  background: var(--bg-secondary); border: 1px solid var(--border);
-  border-bottom-left-radius: 4px;
-}
+.assistant .bubble { padding: 0; border-radius: 0; line-height: 1.6; }
+.assistant .markdown-body > :deep(:first-child) { margin-top: 0; }
+.assistant .markdown-body > :deep(:last-child) { margin-bottom: 0; }
 .tool .bubble {
   background: var(--bg-tertiary); border: 1px solid var(--border);
   border-bottom-left-radius: 4px; font-size: 0.85em;

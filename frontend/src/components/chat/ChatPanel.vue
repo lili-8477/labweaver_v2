@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { isDisplayableMessage, extractTextContent } from '@/utils/content'
 import type { ChatMessage, ChatMode } from '@/types'
 import ChatMessageComp from '@/components/chat/ChatMessage.vue'
+import RequestIndex from '@/components/chat/RequestIndex.vue'
 import ExecutionTimeline from '@/components/chat/ExecutionTimeline.vue'
 import HarnessChecklist from '@/components/chat/HarnessChecklist.vue'
 import ModeMenu from '@/components/chat/ModeMenu.vue'
@@ -120,6 +121,13 @@ function getTimelineForDisplayMsg(displayIdx: number) {
 function hasBubbleBody(msg: ChatMessage): boolean {
   if (msg.role !== 'assistant') return true
   return extractTextContent(msg.content).trim().length > 0
+}
+
+/** Label for the request index: the request's text, minus attached-image lines. */
+function requestLabel(msg: ChatMessage): string | undefined {
+  if (msg.role !== 'user') return undefined
+  const text = extractTextContent(msg.content).replace(/^\[image: [^\]]*\]\n?/gm, '').trim()
+  return text.split('\n')[0].slice(0, 120) || 'Image'
 }
 
 function send() {
@@ -551,10 +559,11 @@ watch(
         :chat-id="chat.activeChatId"
       />
 
+      <div class="messages-row">
       <div ref="messagesEl" class="messages">
         <!-- Rendered messages with inline timelines -->
         <template v-for="(msg, i) in displayMessages" :key="i">
-          <ChatMessageComp v-if="hasBubbleBody(msg)" :message="msg" />
+          <ChatMessageComp v-if="hasBubbleBody(msg)" :message="msg" :data-request="requestLabel(msg)" />
           <!-- Show timeline below assistant messages that had tool activity -->
           <ExecutionTimeline
             v-if="msg.role === 'assistant' && getTimelineForDisplayMsg(i)"
@@ -584,6 +593,8 @@ watch(
           </div>
           <span class="thinking-text">Agent is thinking...</span>
         </div>
+      </div>
+      <RequestIndex :scroller="messagesEl" :version="displayMessages.length" />
       </div>
 
       <!-- Hints -->
@@ -753,7 +764,9 @@ watch(
 .empty-state h3 { margin-bottom: 8px; color: var(--text-secondary); }
 .empty-state p { font-size: 0.9em; }
 
-.messages { flex: 1; overflow-y: auto; padding: 16px; }
+.messages-row { flex: 1; min-height: 0; display: flex; }
+/* position: relative makes this the offsetParent RequestIndex measures against. */
+.messages { flex: 1; min-width: 0; overflow-y: auto; padding: 16px; position: relative; }
 
 .streaming-msg { opacity: 0.95; }
 
