@@ -185,7 +185,7 @@ const selectedLabel = computed(() => selected.value === '' ? '/ (workspace root)
 }
 .btn:hover:not(:disabled) { background: var(--bg-hover); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .spinner {
   display: inline-block; width: 8px; height: 8px;
   border: 1.5px solid var(--border); border-top-color: var(--accent);

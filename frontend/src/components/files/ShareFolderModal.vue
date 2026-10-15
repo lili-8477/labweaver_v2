@@ -68,6 +68,6 @@ async function onSubmit() {
   padding: var(--space-1) var(--space-3); border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--bg-secondary); cursor: pointer;
 }
-.modal-actions button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.modal-actions button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .modal-actions button:disabled { opacity: 0.5; cursor: default; }
 </style>

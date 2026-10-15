@@ -355,7 +355,7 @@ button.ghost { background: transparent; color: var(--text-secondary); }
 button.ghost:hover:not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); }
 button.primary {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 button.primary:disabled { opacity: 0.55; cursor: not-allowed; }

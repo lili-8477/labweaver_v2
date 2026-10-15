@@ -342,7 +342,7 @@ async function submitShare() {
   padding: var(--space-1) var(--space-3); border-radius: var(--radius);
   font-size: var(--text-sm); border: 1px solid transparent; transition: background 0.1s, opacity 0.1s;
 }
-.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border); }

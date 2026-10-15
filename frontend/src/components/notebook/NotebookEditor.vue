@@ -366,7 +366,7 @@ watch(
 .btn-sm {
   padding: 4px 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   font-size: 0.8em;

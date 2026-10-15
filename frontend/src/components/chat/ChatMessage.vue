@@ -71,7 +71,7 @@ const toolName = computed(() => {
   display: flex; align-items: center; justify-content: center;
   font-size: 0.8em; font-weight: 600;
 }
-.user .avatar { background: var(--accent); color: #fff; }
+.user .avatar { background: var(--accent); color: var(--on-accent); }
 .tool .avatar { background: var(--bg-tertiary); color: var(--text-muted); font-size: 0.7em; }
 
 .bubble {
@@ -79,7 +79,7 @@ const toolName = computed(() => {
   line-height: 1.5; min-width: 0;
 }
 .user .bubble {
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
   border-bottom-right-radius: 4px;
 }
 .assistant .bubble { padding: 0; border-radius: 0; line-height: 1.6; }

@@ -21,8 +21,15 @@ import SkillsPanel from '@/components/skills/SkillsPanel.vue'
 import { useNotebookStore } from '@/stores/notebook'
 import { useShareStore } from '@/stores/share'
 import { useSkillsStore } from '@/stores/skills'
+import { applyTheme, loadTheme, type Theme } from '@/utils/theme'
 
 const conn = useConnectionStore()
+
+const theme = ref<Theme>(loadTheme())
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'colorful' : 'dark'
+  applyTheme(theme.value)
+}
 const chat = useChatStore()
 const files = useFileStore()
 const nb = useNotebookStore()
@@ -207,6 +214,11 @@ const connStatus = computed(() => {
           title="Notebook"
         >Notebook</button>
         <span class="divider" />
+        <button
+          class="tb-btn theme-btn"
+          :title="theme === 'dark' ? 'Switch to the colorful theme' : 'Switch to the dark theme'"
+          @click="toggleTheme"
+        >{{ theme === 'dark' ? '◐ Dark' : '◑ Colorful' }}</button>
         <button class="tb-btn disconnect" @click="conn.disconnect()" title="Disconnect">
           Disconnect
         </button>
@@ -450,7 +462,7 @@ const connStatus = computed(() => {
 .panel-tab-badge {
   margin-left: 4px;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border-radius: var(--radius-pill);
   padding: 0 6px;
   font-size: var(--text-2xs);

@@ -971,7 +971,7 @@ watch(
   border: none; display: flex; align-items: center; justify-content: center;
   font-size: 1.1em;
 }
-.btn-send { background: var(--accent); color: #fff; }
+.btn-send { background: var(--accent); color: var(--on-accent); }
 .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-send:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-stop { background: var(--danger); color: #fff; }

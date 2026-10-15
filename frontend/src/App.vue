@@ -53,6 +53,7 @@ onMounted(() => {
   /* ── Glass ─────────────────────────────────────────────────────── */
   --glass-tint:   oklch(0.190 0.012 135 / 0.42);
   --glass-filter: blur(28px) saturate(170%);
+  --glass-sheen:  oklch(1 0 0 / 0.09);      /* specular highlight */
   --glass-rim:    inset 0 1px 0 oklch(1 0 0 / 0.16), inset 0 -1px 0 oklch(1 0 0 / 0.04);
 
   /* ── Text (warm off-white, tinted 85°) ─────────────────────────── */
@@ -65,6 +66,8 @@ onMounted(() => {
   --accent:       oklch(0.725 0.148 35);
   --accent-hover: oklch(0.790 0.118 38);
   --accent-soft:  oklch(0.725 0.148 35 / 0.14);
+  --on-accent:    #fff;                      /* text on an accent fill */
+  --selection:    oklch(0.725 0.148 35 / 0.32);
 
   /* Sage-green success (Seurat plot energy, not neon green) */
   --success:      oklch(0.760 0.105 148);
@@ -134,6 +137,59 @@ onMounted(() => {
   /* Motion */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-out-expo:  cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Page backdrop the glass panes refract: the colorful ambient glow. */
+  --page-bg:
+    radial-gradient(55% 65% at 10% 15%, oklch(0.66 0.16 35 / 0.55), transparent 72%),
+    radial-gradient(50% 60% at 90% 10%, oklch(0.66 0.12 240 / 0.50), transparent 72%),
+    radial-gradient(60% 60% at 75% 95%, oklch(0.68 0.11 150 / 0.42), transparent 72%),
+    radial-gradient(45% 55% at 25% 92%, oklch(0.58 0.13 300 / 0.36), transparent 72%),
+    var(--bg-base);
+}
+
+/*
+ * Dark theme: gray on near-black, no ambient color. Surfaces go nearly
+ * opaque and the accent turns a light neutral gray; status colors stay but
+ * are muted so they still read as success / warning / danger.
+ * Toggled from the top bar (utils/theme.ts sets data-theme on <html>).
+ */
+:root[data-theme="dark"] {
+  --bg-base:      oklch(0.145 0 0);
+  --bg-primary:   oklch(0.165 0 0 / 0.90);
+  --bg-secondary: oklch(0.205 0 0 / 0.90);
+  --bg-tertiary:  oklch(1 0 0 / 0.06);
+  --bg-hover:     oklch(1 0 0 / 0.10);
+  --bg-elevated:  oklch(0.225 0 0 / 0.97);
+  --border:       oklch(1 0 0 / 0.10);
+  --border-soft:  oklch(1 0 0 / 0.05);
+
+  --glass-tint:   oklch(0.185 0 0 / 0.94);
+  --glass-rim:    inset 0 1px 0 oklch(1 0 0 / 0.06);
+  --glass-sheen:  oklch(1 0 0 / 0.03);
+
+  --text-primary:   oklch(0.920 0 0);
+  --text-secondary: oklch(0.720 0 0);
+  --text-muted:     oklch(0.540 0 0);
+
+  --accent:       oklch(0.820 0 0);
+  --accent-hover: oklch(0.900 0 0);
+  --accent-soft:  oklch(1 0 0 / 0.10);
+  --on-accent:    oklch(0.170 0 0);
+  --selection:    oklch(1 0 0 / 0.20);
+
+  --success:      oklch(0.720 0.070 150);
+  --success-soft: oklch(0.720 0.070 150 / 0.14);
+  --warning:      oklch(0.760 0.090 80);
+  --warning-soft: oklch(0.760 0.090 80 / 0.14);
+  --danger:       oklch(0.640 0.130 25);
+  --danger-soft:  oklch(0.640 0.130 25 / 0.14);
+  --info:         oklch(0.720 0.050 240);
+
+  --code-bg:        oklch(0.110 0 0 / 0.80);
+  --code-bg-inline: oklch(1 0 0 / 0.07);
+  --scrollbar-thumb: oklch(1 0 0 / 0.14);
+
+  --page-bg: var(--bg-base);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -144,12 +200,7 @@ body {
   font-feature-settings: 'ss01', 'ss02', 'cv11';
   /* Ambient light the glass panes refract. Static on purpose: animating
      it would force every backdrop-filter to re-blur each frame. */
-  background:
-    radial-gradient(55% 65% at 10% 15%, oklch(0.66 0.16 35 / 0.55), transparent 72%),
-    radial-gradient(50% 60% at 90% 10%, oklch(0.66 0.12 240 / 0.50), transparent 72%),
-    radial-gradient(60% 60% at 75% 95%, oklch(0.68 0.11 150 / 0.42), transparent 72%),
-    radial-gradient(45% 55% at 25% 92%, oklch(0.58 0.13 300 / 0.36), transparent 72%),
-    var(--bg-base);
+  background: var(--page-bg);
   color: var(--text-primary);
   font-size: var(--text-md);
   line-height: 1.5;
@@ -188,7 +239,7 @@ body {
   border-radius: inherit;
   /* specular sheen from the top-left, over the tint */
   background:
-    linear-gradient(135deg, oklch(1 0 0 / 0.09), transparent 45%),
+    linear-gradient(135deg, var(--glass-sheen), transparent 45%),
     var(--glass-tint);
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
@@ -212,7 +263,7 @@ option, optgroup { background: var(--bg-base); color: var(--text-primary); }
 
 /* ── Selection tinted to the brand coral ────────────────────────── */
 ::selection {
-  background: oklch(0.725 0.148 35 / 0.32);
+  background: var(--selection);
   color: var(--text-primary);
 }
 

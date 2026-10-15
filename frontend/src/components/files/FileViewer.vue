@@ -278,7 +278,7 @@ onUnmounted(() => {
 }
 .viewer-actions { display: flex; gap: 8px; }
 .btn-save {
-  padding: 4px 14px; background: var(--accent); color: #fff;
+  padding: 4px 14px; background: var(--accent); color: var(--on-accent);
   border: none; border-radius: var(--radius); font-size: 0.85em;
 }
 .btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -287,7 +287,7 @@ onUnmounted(() => {
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85em;
 }
 .btn-download:hover { background: var(--bg-hover); }
-.btn-download.large { padding: 8px 20px; background: var(--accent); color: #fff; border: none; }
+.btn-download.large { padding: 8px 20px; background: var(--accent); color: var(--on-accent); border: none; }
 .btn-toggle {
   padding: 4px 12px; background: var(--bg-tertiary); color: var(--text-primary);
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85em;

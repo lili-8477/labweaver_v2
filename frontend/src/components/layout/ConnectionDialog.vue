@@ -105,7 +105,7 @@ function handleConnect() {
   font-size: 0.85em; margin-bottom: 16px;
 }
 .btn-primary {
-  width: 100%; padding: 10px; background: var(--accent); color: #fff;
+  width: 100%; padding: 10px; background: var(--accent); color: var(--on-accent);
   border: none; border-radius: var(--radius); font-weight: 600;
   font-size: 0.95em; transition: background 0.15s;
 }

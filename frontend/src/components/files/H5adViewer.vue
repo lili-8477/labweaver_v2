@@ -543,7 +543,7 @@ const imgSrc = computed(() => pngB64.value ? `data:image/png;base64,${pngB64.val
 }
 
 .btn-run {
-  padding: 6px 18px; background: var(--accent); color: #fff;
+  padding: 6px 18px; background: var(--accent); color: var(--on-accent);
   border: none; border-radius: var(--radius); font-size: 0.85em;
   cursor: pointer;
 }

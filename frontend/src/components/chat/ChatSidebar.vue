@@ -299,7 +299,7 @@ async function handleDelete(chatId: string, childCount: number) {
 }
 .title { font-weight: 600; font-size: 0.9em; }
 .btn-new {
-  width: 28px; height: 28px; background: var(--accent); color: #fff;
+  width: 28px; height: 28px; background: var(--accent); color: var(--on-accent);
   border: none; border-radius: var(--radius); font-size: 1.2em;
   display: flex; align-items: center; justify-content: center;
   line-height: 1;

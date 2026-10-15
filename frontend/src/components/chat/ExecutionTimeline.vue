@@ -168,7 +168,7 @@ function stepStatusClass(step: TimelineStep): string {
 .live-badge {
   font-size: 0.65em; font-weight: 700; letter-spacing: 0.5px;
   padding: 1px 5px; border-radius: 3px;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
   animation: pulse-badge 2s infinite;
 }
 @keyframes pulse-badge {
