@@ -25,6 +25,12 @@ describe("providers registry", () => {
     expect(providers.find((p) => p.id === "deepseek-official")!.openaiCompatible).toBeUndefined();
   });
 
+  it("declares image input only for the vision-capable ollama models", () => {
+    const ollama = buildProviders({}).find((p) => p.id === "ollama-cloud")!;
+    const vision = ollama.models.filter((m) => m.vision).map((m) => m.id);
+    expect(vision).toEqual(["deepseek-v4.1-flash", "kimi-k2.6"]);
+  });
+
   it("falls back to the default for unknown or legacy refs", () => {
     const providers = buildProviders({});
     expect(resolveModelRef(providers, "claude-sonnet-4-6")).toBe(DEFAULT_MODEL_REF);

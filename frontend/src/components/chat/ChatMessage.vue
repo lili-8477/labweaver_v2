@@ -34,10 +34,9 @@ const toolName = computed(() => {
 
 <template>
   <div class="chat-message" :class="{ user: isUser, assistant: !isUser && !isTool, tool: isTool }">
-    <div class="avatar">
+    <div v-if="isUser || isTool" class="avatar">
       <span v-if="isUser">U</span>
-      <span v-else-if="isTool">T</span>
-      <span v-else>A</span>
+      <span v-else>T</span>
     </div>
     <div class="bubble">
       <!-- Tool message -->
@@ -72,7 +71,6 @@ const toolName = computed(() => {
   font-size: 0.8em; font-weight: 600;
 }
 .user .avatar { background: var(--accent); color: #fff; }
-.assistant .avatar { background: var(--bg-tertiary); color: var(--text-secondary); }
 .tool .avatar { background: var(--bg-tertiary); color: var(--text-muted); font-size: 0.7em; }
 
 .bubble {

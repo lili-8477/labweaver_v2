@@ -35,7 +35,8 @@ import { DshAcpEngine } from "./dsh/engine.js";
 import { buildDshPatch, serializePatch } from "./dsh/patch.js";
 import { dshHome as dshHomeDir } from "./dsh/team-board.js";
 import { loadMcpServers } from "./mcp-config.js";
-import { buildProviders, DEFAULT_MODEL_REF, type ProviderSpec } from "./providers/registry.js";
+import { buildProviders, DEFAULT_MODEL_REF, ollamaBaseURL, type ProviderSpec } from "./providers/registry.js";
+import { discoverOllamaModels } from "./providers/ollama-discovery.js";
 import { loadDbConfig } from "./db-config.js";
 import { MemoryRpcClient } from "./memory-rpc.js";
 import { NatsBus } from "./nats-bus.js";
@@ -101,7 +102,10 @@ async function main(): Promise<void> {
     console.warn("[adapter] MEMORY_API_URL not set — share_* RPCs will be unavailable");
   }
 
-  const providers = buildProviders();
+  const ollamaKey = process.env.OLLAMA_API_KEY;
+  const ollamaModels = ollamaKey ? await discoverOllamaModels(ollamaBaseURL(), ollamaKey) : null;
+  if (ollamaModels) console.log(`[adapter] Ollama Cloud: ${ollamaModels.length} models`);
+  const providers = buildProviders(process.env, ollamaModels);
   const engine = await createEngine({ home, workspaceRoot, providers });
 
   await bus.connect();

@@ -3,7 +3,9 @@
 //
 // - deepseek-official is built into DSH (key: DEEPSEEK_API_KEY).
 // - ollama-cloud is an OpenAI-compatible route DSH serves through its llm-pi-ai
-//   adapter; dsh/patch.ts declares it.
+//   adapter; dsh/patch.ts declares it. Its models come from Ollama's live
+//   catalog (ollama-discovery.ts), else OLLAMA_CLOUD_MODELS, else the static
+//   list below.
 
 export interface ModelSpec {
   id: string;
@@ -30,12 +32,26 @@ export interface ModelOption {
 }
 
 const OLLAMA_DEFAULT_MODELS = ["gpt-oss:120b", "deepseek-v4.1-flash", "kimi-k2.6", "glm-5.3", "minimax-m2.7"];
+// Fallback-list models that take image input ("vision" in ollama.com/api/show's
+// capabilities). Without it dsh refuses to read images for the model.
+const OLLAMA_VISION_MODELS = new Set(["deepseek-v4.1-flash", "kimi-k2.6"]);
 
-export function buildProviders(env: NodeJS.ProcessEnv = process.env): ProviderSpec[] {
+export const ollamaBaseURL = (env: NodeJS.ProcessEnv = process.env): string =>
+  env.OLLAMA_BASE_URL ?? "https://ollama.com/v1";
+
+/** `discovered` is Ollama's live catalog; an explicit OLLAMA_CLOUD_MODELS wins over it. */
+export function buildProviders(env: NodeJS.ProcessEnv = process.env, discovered: ModelSpec[] | null = null): ProviderSpec[] {
   const ollamaModels = (env.OLLAMA_CLOUD_MODELS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const staticModels = (ollamaModels.length ? ollamaModels : OLLAMA_DEFAULT_MODELS).map((id) => ({
+    id,
+    label: id,
+    contextWindow: 131_072,
+    maxTokens: 32_768,
+    vision: OLLAMA_VISION_MODELS.has(id),
+  }));
   return [
     {
       id: "deepseek-official",
@@ -50,14 +66,8 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): ProviderSp
       id: "ollama-cloud",
       label: "Ollama Cloud",
       apiKeyEnv: "OLLAMA_API_KEY",
-      openaiCompatible: { baseURL: env.OLLAMA_BASE_URL ?? "https://ollama.com/v1" },
-      models: (ollamaModels.length ? ollamaModels : OLLAMA_DEFAULT_MODELS).map((id) => ({
-        id,
-        label: id,
-        contextWindow: 131_072,
-        maxTokens: 32_768,
-        vision: false,
-      })),
+      openaiCompatible: { baseURL: ollamaBaseURL(env) },
+      models: !ollamaModels.length && discovered?.length ? discovered : staticModels,
     },
   ];
 }
