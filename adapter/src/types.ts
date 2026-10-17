@@ -45,7 +45,10 @@ export interface StepMessageData {
 export type StreamEvent =
   | { type: "chunk"; chunk: { type: string; text: string }; chat_id: string }
   | { type: "step_message"; step_message: StepMessageData; chat_id: string }
-  | { type: "chat_finished"; chat_id: string };
+  /** Ends every accepted turn, whatever its outcome (chat-turn.ts). */
+  | { type: "chat_finished"; chat_id: string; status: TurnStatus; error?: string };
+
+export type TurnStatus = "done" | "stopped" | "error";
 
 export interface StreamEnvelope {
   type: "chat";

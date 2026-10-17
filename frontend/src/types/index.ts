@@ -56,6 +56,8 @@ export interface ChatInfo {
   name: string
   last_activity_date?: string
   running?: boolean
+  /** The running turn is an Auto-mode run (the chat's own mode is back to chat). */
+  auto_running?: boolean
   project_name?: string
   /** Workspace-relative project directory bound to this chat (e.g.
    *  "local_projects/foo-1a2b"). When set, the agent cd's here and harness
@@ -168,6 +170,8 @@ export interface TimelineStep {
 export interface ChatFinished {
   type: 'chat_finished'
   chat_id: string
+  status: 'done' | 'stopped' | 'error'
+  error?: string
 }
 
 export interface BgTaskUpdate {

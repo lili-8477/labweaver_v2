@@ -109,11 +109,10 @@ export class EventTranslator {
 
   /**
    * Turn ended. Emit a synthetic final step_message carrying cumulative tokens
-   * and cost in _metadata, followed by a `chat_finished`. The synthetic step
-   * lets the existing ExecutionTimeline render cumulative metrics without UI
-   * changes.
+   * and cost in _metadata, so the existing ExecutionTimeline can render
+   * cumulative metrics without UI changes. chat_finished comes from chat-turn.ts.
    */
-  turnEnd(chatId: string, agentName: string | undefined, now = Date.now() / 1000): StreamEvent[] {
+  turnEnd(chatId: string, agentName: string | undefined, now = Date.now() / 1000): StreamEvent {
     const total_tokens = this.lastUsage.input + this.lastUsage.output;
     const syntheticStep: StepMessageData = {
       role: "assistant",
@@ -127,10 +126,7 @@ export class EventTranslator {
         current_cost: this.cumulativeCost,
       },
     };
-    return [
-      { type: "step_message", step_message: syntheticStep, chat_id: chatId },
-      { type: "chat_finished", chat_id: chatId },
-    ];
+    return { type: "step_message", step_message: syntheticStep, chat_id: chatId };
   }
 }
 

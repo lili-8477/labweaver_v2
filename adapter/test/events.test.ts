@@ -81,22 +81,17 @@ describe("EventTranslator.toolResult", () => {
 });
 
 describe("EventTranslator.turnEnd", () => {
-  it("emits a synthetic step_message with cumulative tokens+cost, then chat_finished", () => {
+  it("emits a synthetic step_message with cumulative tokens+cost", () => {
     const t = new EventTranslator();
     t.recordUsage(100, 50);
     t.recordCost(0.0123);
-    const evs = t.turnEnd(CHAT, "researcher", 99);
-    expect(evs).toHaveLength(2);
-    const [step, end] = evs;
+    const step = t.turnEnd(CHAT, "researcher", 99);
     if (step!.type !== "step_message") throw new Error();
     expect(step!.step_message._metadata?.total_tokens).toBe(150);
     expect(step!.step_message._metadata?.input_tokens).toBe(100);
     expect(step!.step_message._metadata?.output_tokens).toBe(50);
     expect(step!.step_message._metadata?.current_cost).toBe(0.0123);
     expect(step!.step_message._metadata?.end_timestamp).toBe(99);
-    expect(end!.type).toBe("chat_finished");
-    if (end!.type !== "chat_finished") throw new Error();
-    expect(end!.chat_id).toBe(CHAT);
   });
 });
 

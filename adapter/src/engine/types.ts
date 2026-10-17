@@ -2,7 +2,11 @@
 // executes a turn. Engines translate their native stream into AgentEvents;
 // turn-runner.ts fans those out to the frontend stream and the transcript.
 
-import type { ImageRef } from "../rpc.js";
+/** An attached image the engine reads from disk. */
+export interface ImageRef {
+  path: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+}
 
 export type AgentEvent =
   | { kind: "text"; text: string }

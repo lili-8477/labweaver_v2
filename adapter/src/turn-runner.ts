@@ -2,9 +2,8 @@
 //   - the frontend stream (EventTranslator → StreamEvent, contract unchanged)
 //   - the Claude-format transcript (memory indexer + get_chat_messages)
 
-import type { AgentEngine, AgentEvent } from "./engine/types.js";
+import type { AgentEngine, AgentEvent, ImageRef } from "./engine/types.js";
 import { EventTranslator, capToolOutput } from "./events.js";
-import type { ImageRef } from "./rpc.js";
 import { expandSlashCommand } from "./slash-commands.js";
 import { ClaudeTranscriptWriter } from "./transcript/claude-jsonl.js";
 import type { StreamEvent } from "./types.js";
@@ -72,6 +71,6 @@ export async function runTurn(engine: AgentEngine, args: RunTurnArgs): Promise<v
   }
 
   if (!signal.aborted) {
-    for (const ev of t.turnEnd(chatId, undefined)) args.onEvent(ev);
+    args.onEvent(t.turnEnd(chatId, undefined));
   }
 }

@@ -4,14 +4,13 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { ChatsRepo, type ChatRow } from "./chats-repo.js";
-import { CHAT_MODES, MODE_COMMANDS, modePrompt, type ChatMode } from "./modes.js";
+import { ChatsRepo } from "./chats-repo.js";
+import { ChatTurns } from "./chat-turn.js";
+import { CHAT_MODES, MODE_COMMANDS, type ChatMode } from "./modes.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
-import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import type { FleetMonitor } from "./fleet-status.js";
 import { FileManager } from "./fs-rpc.js";
-import { readSessionMessages, transcriptPath, type LegacyMessage } from "./history.js";
-import { parentDigest, withSessionContext, type SessionContext } from "./session-context.js";
+import { readSessionMessages, type LegacyMessage } from "./history.js";
 import { createProject, listProjects } from "./projects.js";
 import { readChatStats } from "./chat-stats.js";
 import { H5adService } from "./h5ad-rpc.js";
@@ -23,16 +22,14 @@ import { listOrgSkills } from "./org-skills-rpc.js";
 import { listUserSkills, readUserSkillManifest } from "./skills-rpc.js";
 import { listUserCommands } from "./commands-rpc.js";
 import { acpProfileDir, listClientModules } from "./dsh-client-modules.js";
-import type { AgentEngine } from "./engine/types.js";
+import type { AgentEngine, ImageRef } from "./engine/types.js";
 import {
   findModel,
   listModelOptions,
   resolveModelRef,
   type ProviderSpec,
 } from "./providers/registry.js";
-import { enterAutoMode, leaveAutoMode, recordedProject } from "./harness.js";
 import { readTeamBoard } from "./dsh/team-board.js";
-import { runTurn } from "./turn-runner.js";
 import type { StreamEvent } from "./types.js";
 
 export interface RpcDeps {
@@ -70,11 +67,19 @@ export class RpcRouter {
   private notebooks: NotebookManager;
   private h5ad: H5adService;
   private chpc: ChpcBridge;
-  private mutexes = new ChatMutexRegistry();
-  private aborts = new AbortRegistry();
+  private turns: ChatTurns;
 
   constructor(private deps: RpcDeps) {
     this.chats = deps.chats;
+    this.turns = new ChatTurns({
+      engine: deps.engine,
+      chats: deps.chats,
+      home: deps.home,
+      workspaceRoot: deps.workspaceRoot,
+      defaultProjectCwd: deps.defaultProjectCwd,
+      currentModel: () => this.currentModel(),
+      publishStream: deps.publishStream,
+    });
     this.files = new FileManager(deps.workspaceRoot);
     // CHPC bridge: publishes OpenEvent frames on pantheon.stream.chpc_bridge_events.
     this.chpc = new ChpcBridge(deps.home, (ev) => {
@@ -173,11 +178,11 @@ export class RpcRouter {
 
   /** Counts for this container's fleet status report. */
   activity(): { activeTurns: number; kernels: number } {
-    return { activeTurns: this.aborts.size, kernels: this.notebooks.kernelCount };
+    return { activeTurns: this.turns.count, kernels: this.notebooks.kernelCount };
   }
 
   abortAll(): void {
-    this.aborts.abortAll();
+    this.turns.stopAll();
     this.notebooks.shutdownAll();
     this.h5ad.shutdown();
   }
@@ -219,7 +224,10 @@ export class RpcRouter {
       }
 
       case "list_chats": {
-        const chats = await this.chats.list();
+        const chats = (await this.chats.list()).map((c) => {
+          const turn = this.turns.activeTurn(c.id);
+          return { ...c, running: turn !== null, auto_running: turn?.auto ?? false };
+        });
         return { success: true, chats };
       }
 
@@ -248,8 +256,8 @@ export class RpcRouter {
 
       case "delete_chat": {
         const chatId = params.chat_id as string;
+        this.turns.stop(chatId);
         await this.chats.delete(chatId);
-        this.mutexes.delete(chatId);
         return { success: true };
       }
 
@@ -281,7 +289,7 @@ export class RpcRouter {
           this.deps.home,
           this.deps.defaultProjectCwd,
           sessionId,
-          this.aborts.has(chatId),
+          this.turns.activeTurn(chatId) !== null,
         );
         const team = await readTeamBoard(this.deps.home, sessionId);
         return { success: true, ...stats, team };
@@ -385,7 +393,7 @@ export class RpcRouter {
                 matchedDir = rel;
                 matchedDisplay = name;
                 // Fire-and-forget: backfill the binding so subsequent calls
-                // (and runChat's cwd) use the explicit path.
+                // (and the chat turn) use the explicit path.
                 this.chats.setProjectDir(chatRow.chat_id, rel).catch((e) => {
                   console.warn(`[rpc] backfill project_dir for ${chatRow!.chat_id}:`, e);
                 });
@@ -463,15 +471,17 @@ export class RpcRouter {
 
       case "stop_chat": {
         const chatId = params.chat_id as string;
-        const stopped = this.aborts.abort(chatId);
+        const stopped = this.turns.stop(chatId);
         return { success: true, stopped };
       }
 
       case "chat": {
         const chatId = params.chat_id as string;
         const messageArr = params.message as Array<{ role: string; content: string }>;
-        const { text, images } = extractPrompt(messageArr);
-        return await this.runChat(chatId, text, images);
+        // Acknowledged once the turn is accepted; its end arrives on the
+        // stream as chat_finished, so long Auto runs outlive any RPC timeout.
+        await this.turns.start(chatId, extractPrompt(messageArr));
+        return { success: true };
       }
 
       case "proxy_toolset": {
@@ -696,95 +706,6 @@ export class RpcRouter {
     }
     return raw.replace(/\/+$/, "");
   }
-
-  /** First turn of a fresh session: tell the agent its project and, for a
-   *  sub-session, what the parent conversation covered. */
-  private async firstTurnContext(chat: ChatRow, prompt: string): Promise<string> {
-    const { home, defaultProjectCwd, workspaceRoot } = this.deps;
-    const ctx: SessionContext = {};
-    if (chat.project_dir) ctx.projectDir = path.resolve(workspaceRoot, chat.project_dir);
-    const parent = chat.parent_chat_id ? await this.chats.read(chat.parent_chat_id) : null;
-    if (parent?.session_id) {
-      const messages = await readSessionMessages(home, defaultProjectCwd, parent.session_id);
-      ctx.parent = {
-        name: parent.name,
-        transcript: transcriptPath(home, defaultProjectCwd, parent.session_id),
-        digest: parentDigest(messages),
-      };
-    }
-    return withSessionContext(prompt, ctx);
-  }
-
-  private async runChat(chatId: string, prompt: string, images: ImageRef[] = []): Promise<unknown> {
-    const chat = await this.chats.read(chatId);
-    if (!chat) throw new Error(`chat not found: ${chatId}`);
-
-    // cwd stays at defaultProjectCwd even when the chat is bound to a
-    // project. Transcripts live under ~/.claude/projects/<encoded-cwd>/ and
-    // DSH resume requires the session's original cwd — switching cwd
-    // mid-chat would fragment history and break resume. Auto mode hands the
-    // agent its project through the session's file instead (harness.ts).
-    const autoMode = chat.mode === "auto";
-    if (!chat.session_id) prompt = await this.firstTurnContext(chat, prompt);
-    prompt = modePrompt(chat.mode, prompt);
-    let sessionId: string | undefined;
-    const model = await this.currentModel();
-    const mutex = this.mutexes.get(chatId);
-    const run = mutex.tryRun(async () => {
-      const ac = this.aborts.register(chatId);
-      // Auto mode covers one request: the tick plugin keys off the session
-      // file (enterAutoMode below), so this run keeps going while the chat's
-      // next message goes in as plain chat.
-      try {
-        if (autoMode) await this.chats.setMode(chatId, "chat");
-        await runTurn(this.deps.engine, {
-          chatId,
-          prompt,
-          images,
-          cwd: this.deps.defaultProjectCwd,
-          home: this.deps.home,
-          model,
-          // Resume only if we've already captured a real session UUID.
-          resumeSessionId: chat.session_id ?? undefined,
-          signal: ac.signal,
-          onEvent: (ev) => this.deps.publishStream(`chat_${chatId}`, ev),
-          onSessionId: async (sid) => {
-            sessionId = sid;
-            await (autoMode
-              ? enterAutoMode(this.deps.home, this.deps.workspaceRoot, sid, chat.project_dir ?? null)
-              : leaveAutoMode(this.deps.home, sid));
-            if (sid === chat.session_id) return;
-            // Fire-and-forget — stash the real session UUID so next resume works.
-            this.chats.setSessionUuid(chatId, sid).catch((e) => {
-              console.warn(`[rpc] failed to stash session_uuid for ${chatId}:`, e);
-            });
-          },
-        });
-        await this.chats.touch(chatId);
-      } finally {
-        this.aborts.clear(chatId);
-        // Bind the chat to the project tick-bootstrap created, so the next
-        // message continues it rather than bootstrapping another.
-        if (autoMode && !chat.project_dir && sessionId) {
-          const rel = await recordedProject(this.deps.home, this.deps.workspaceRoot, sessionId);
-          if (rel) await this.chats.setProjectDir(chatId, rel).catch((e) => {
-            console.warn(`[rpc] failed to bind ${chatId} to ${rel}:`, e);
-          });
-        }
-      }
-      return { success: true };
-    });
-
-    if (run === null) {
-      throw new Error(`chat ${chatId} is already streaming a turn`);
-    }
-    return await run;
-  }
-}
-
-export interface ImageRef {
-  path: string;
-  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 }
 
 // Allow-listed parent for any image path the frontend can attach. The frontend

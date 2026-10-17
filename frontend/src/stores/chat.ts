@@ -40,12 +40,10 @@ export const useChatStore = defineStore('chat', () => {
   let stepCounter = 0
 
   const activeChat = computed(() => chats.value.find(c => c.id === activeChatId.value))
-  // Auto mode covers one request: sending flips the chat back to plain chat
-  // (the adapter does the same), and this keeps the banner up while that
-  // request runs.
-  const autoRunChatId = ref<string | null>(null)
+  // Auto mode covers one request: the adapter flips the chat back to plain
+  // chat as it starts, and reports auto_running while that request runs.
   const harnessActive = computed(() =>
-    activeChat.value?.mode === 'auto' || (!!activeChatId.value && autoRunChatId.value === activeChatId.value))
+    activeChat.value?.mode === 'auto' || !!activeChat.value?.auto_running)
 
   // ---- Chat CRUD ----
 
@@ -207,6 +205,7 @@ export const useChatStore = defineStore('chat', () => {
     activeChatId.value = chatId
     streamingText.value = ''
     isStreaming.value = false
+    sending.value = !!chats.value.find(c => c.id === chatId)?.running
     liveTimeline.value = []
     completedTimelines.value.clear()
     pendingToolCalls.clear()
@@ -240,7 +239,10 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
       case 'chat_finished': {
+        const fin = data as ChatFinished
+        if (fin.status === 'error') console.error('Chat error:', fin.error)
         finishStreaming()
+        loadMessages(fin.chat_id)
         break
       }
     }
@@ -380,38 +382,26 @@ export const useChatStore = defineStore('chat', () => {
 
     messages.value.push({ role: 'user', content: fullContent })
 
+    // The adapter acknowledges once the turn starts; chat_finished ends it.
     const chatId = activeChatId.value
-    if (activeChat.value?.mode === 'auto') {
-      activeChat.value.mode = 'chat'
-      autoRunChatId.value = chatId
-    }
     try {
       await natsService.invoke('chat', {
         chat_id: chatId,
         message: [{ role: 'user', content: fullContent }],
-      }, 600_000)
+      })
     } catch (e) {
       console.error('Chat error:', e)
-    } finally {
-      if (autoRunChatId.value === chatId) autoRunChatId.value = null
+      if (activeChatId.value === chatId) sending.value = false
     }
-
-    if (activeChatId.value === chatId) {
-      await loadMessages(chatId)
-      streamingText.value = ''
-      isStreaming.value = false
-      sending.value = false
-      liveTimeline.value = []
-      pendingToolCalls.clear()
-      loadChats()
-    }
+    loadChats()
   }
 
   async function stopChat() {
     if (!activeChatId.value) return
     const chatId = activeChatId.value
     try {
-      await natsService.invoke('stop_chat', { chat_id: chatId })
+      const res = await natsService.invoke('stop_chat', { chat_id: chatId }) as { stopped?: boolean }
+      if (res?.stopped) return // the turn's chat_finished does the rest
     } catch { /* ignore */ }
     await loadMessages(chatId)
     streamingText.value = ''
