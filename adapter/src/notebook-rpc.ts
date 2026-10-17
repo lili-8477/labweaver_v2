@@ -108,6 +108,11 @@ export class NotebookManager {
   /** One kernel per notebook, keyed by the resolved absolute path. */
   private kernels = new Map<string, KernelBridge>();
 
+  /** Live notebook kernels. */
+  get kernelCount(): number {
+    return this.kernels.size;
+  }
+
   private resolve(relPath: string): string {
     const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
     const abs = path.resolve(this.root, normalized);

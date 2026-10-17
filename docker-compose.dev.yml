@@ -35,6 +35,9 @@ services:
       HOME: "/home/node"
       PG_URL: "postgres://labweaver:${POSTGRES_PASSWORD}@postgres:5432/labweaver"
       USERNAME: "devuser"
+      # The manager container: its UI gets a Manager view listing every
+      # container's status (adapter/src/fleet-status.ts).
+      LABWEAVER_ROLE: "manager"
       MEMORY_API_URL: "http://indexer:8400"
       # Auto-shutdown kernels idle (no in-flight cell) longer than this.
       # Next execute re-spawns lazily. 0 disables culling.

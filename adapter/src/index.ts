@@ -24,6 +24,8 @@
 //   DSH_NODE          node binary for dsh (needs >= 22.19); default this process's
 //   DSH_PERMISSION_MODE default "danger-full-access" (headless, like bypassPermissions)
 //   MCP_CONFIG        Claude-style .mcp.json forwarded to sessions; default "$WORKSPACE_ROOT/.mcp.json"
+//   LABWEAVER_ROLE    "manager" collects every container's status for the
+//                     manager view (fleet_status RPC); default "user"
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -34,6 +36,7 @@ import { DshAcpConnection } from "./dsh/acp-connection.js";
 import { DshAcpEngine } from "./dsh/engine.js";
 import { buildDshPatch, serializePatch } from "./dsh/patch.js";
 import { dshHome as dshHomeDir } from "./dsh/team-board.js";
+import { FleetMonitor, StatusReporter, type Publish, type Subscribe } from "./fleet-status.js";
 import { loadMcpServers } from "./mcp-config.js";
 import { buildProviders, DEFAULT_MODEL_REF, ollamaBaseURL, type ProviderSpec } from "./providers/registry.js";
 import { discoverOllamaModels } from "./providers/ollama-discovery.js";
@@ -111,6 +114,21 @@ async function main(): Promise<void> {
   await bus.connect();
   console.log(`[adapter] connected to NATS ${servers}, service_id=${serviceId.slice(0, 12)}...`);
 
+  const isManager = process.env.LABWEAVER_ROLE === "manager";
+  const publish: Publish = (subject, body) => bus.publishRaw(subject, body);
+  const subscribe: Subscribe = (subject, onMessage) => bus.subscribeJson(subject, onMessage);
+  // Everyone with chats is expected to have a container, so a silent one
+  // still shows up (as offline) after the manager restarts.
+  const fleet = isManager
+    ? new FleetMonitor({
+        publish,
+        subscribe,
+        roster: async () =>
+          (await pool.query<{ username: string }>("SELECT DISTINCT username FROM chats")).rows.map((r) => r.username),
+      })
+    : null;
+  fleet?.start();
+
   const router = new RpcRouter({
     serviceId,
     workspaceRoot,
@@ -130,7 +148,18 @@ async function main(): Promise<void> {
     share: shareClient,
     engine,
     providers,
+    fleet,
   });
+
+  const reporter = new StatusReporter({
+    username: dbCfg.username,
+    role: isManager ? "manager" : "user",
+    publish,
+    subscribe,
+    activity: () => router.activity(),
+  });
+  reporter.start();
+  if (isManager) console.log("[adapter] manager container: collecting fleet status");
 
   await bus.serve((method, params) => router.dispatch(method, params));
   console.log("[adapter] serving RPCs");
@@ -153,6 +182,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (sig: string) => {
     console.log(`[adapter] ${sig} received, shutting down`);
+    reporter.stop();
     router.abortAll();
     await new Promise((r) => setTimeout(r, 500)); // let aborts flush
     await engine.close().catch(() => undefined);

@@ -94,6 +94,20 @@ export class NatsBus {
     return this.streamSubject(streamId);
   }
 
+  /** Subscribe to JSON messages on an absolute subject (fleet status). */
+  subscribeJson(subject: string, onMessage: (body: unknown) => void): void {
+    const sub = this.nc.subscribe(subject);
+    (async () => {
+      for await (const m of sub) {
+        try {
+          onMessage(jc.decode(m.data));
+        } catch (err) {
+          console.warn(`[nats] bad message on ${subject}:`, err);
+        }
+      }
+    })().catch((err) => console.error(`[nats] ${subject} loop failed:`, err));
+  }
+
   /** Publish a pre-built envelope as JSON. For non-chat streams (notebook IOPub). */
   publishRaw(subject: string, envelope: Record<string, unknown>): void {
     this.nc.publish(subject, jc.encode(envelope));

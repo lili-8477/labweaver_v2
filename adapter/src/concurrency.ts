@@ -49,6 +49,11 @@ export class AbortRegistry {
     return this.controllers.has(chatId);
   }
 
+  /** Turns in flight. */
+  get size(): number {
+    return this.controllers.size;
+  }
+
   abort(chatId: string): boolean {
     const ac = this.controllers.get(chatId);
     if (!ac) return false;

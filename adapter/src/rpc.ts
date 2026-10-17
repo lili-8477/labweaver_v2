@@ -8,6 +8,7 @@ import { ChatsRepo, type ChatRow } from "./chats-repo.js";
 import { CHAT_MODES, MODE_COMMANDS, modePrompt, type ChatMode } from "./modes.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
+import type { FleetMonitor } from "./fleet-status.js";
 import { FileManager } from "./fs-rpc.js";
 import { readSessionMessages, transcriptPath, type LegacyMessage } from "./history.js";
 import { parentDigest, withSessionContext, type SessionContext } from "./session-context.js";
@@ -59,6 +60,8 @@ export interface RpcDeps {
   engine: AgentEngine;
   /** Model providers offered to the frontend (providers/registry.ts). */
   providers: ProviderSpec[];
+  /** Set only in the manager container: every container's status. */
+  fleet?: FleetMonitor | null;
 }
 
 export class RpcRouter {
@@ -166,6 +169,11 @@ export class RpcRouter {
       },
       metadata: { cell_id: ev.cell_id ?? undefined },
     });
+  }
+
+  /** Counts for this container's fleet status report. */
+  activity(): { activeTurns: number; kernels: number } {
+    return { activeTurns: this.aborts.size, kernels: this.notebooks.kernelCount };
   }
 
   abortAll(): void {
@@ -658,6 +666,14 @@ export class RpcRouter {
       case "chpc_bridge_close": {
         const res = await this.chpc.close();
         return { success: true, ...res };
+      }
+
+      case "get_role":
+        return { success: true, manager: !!this.deps.fleet };
+
+      case "fleet_status": {
+        if (!this.deps.fleet) throw new Error("fleet_status is only available in the manager container");
+        return { success: true, containers: await this.deps.fleet.list() };
       }
 
       default:
