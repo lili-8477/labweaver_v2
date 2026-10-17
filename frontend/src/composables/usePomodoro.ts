@@ -1,7 +1,8 @@
 /**
- * Pomodoro timer: 25 min focus → 5 min break, every 4th break is 15 min.
+ * Pomodoro timer: focus → short break, every 4th break is long. The clock
+ * counts up from 00:00 to the phase length; phase lengths are user-set.
  *
- * Time is tracked as an absolute `endsAt` timestamp (not a decrementing
+ * Time is tracked as an absolute `startedAt` timestamp (not an incrementing
  * counter) so it stays correct when the tab is throttled in the
  * background, and survives a reload via localStorage.
  */
@@ -9,24 +10,30 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 
 export type PomodoroMode = 'focus' | 'short' | 'long'
 
-export const MODE_MINUTES: Record<PomodoroMode, number> = { focus: 25, short: 5, long: 15 }
+export const DEFAULT_MINUTES: Record<PomodoroMode, number> = { focus: 25, short: 5, long: 15 }
 export const MODE_LABEL: Record<PomodoroMode, string> = { focus: 'Focus', short: 'Short break', long: 'Long break' }
+export const MAX_MINUTES = 180
 const LONG_BREAK_EVERY = 4
 const STORAGE_KEY = 'labweaver-pomodoro'
 
 interface Saved {
   mode: PomodoroMode
-  endsAt: number | null      // set while running
-  remainingMs: number        // authoritative while paused
+  startedAt: number | null   // set while running (now - elapsed)
+  elapsedMs: number          // authoritative while paused
   completed: number          // focus sessions finished
+  minutes: Record<PomodoroMode, number>
 }
 
 function load(): Saved {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch { /* ignore */ }
-  return { mode: 'focus', endsAt: null, remainingMs: MODE_MINUTES.focus * 60_000, completed: 0 }
+  let raw: Partial<Saved> = {}
+  try { raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') } catch { /* ignore */ }
+  return {
+    mode: raw.mode ?? 'focus',
+    startedAt: raw.startedAt ?? null,
+    elapsedMs: raw.elapsedMs ?? 0,
+    completed: raw.completed ?? 0,
+    minutes: { ...DEFAULT_MINUTES, ...raw.minutes },
+  }
 }
 
 /** Short two-note chime via WebAudio — no asset to ship. */
@@ -59,14 +66,14 @@ export function usePomodoro() {
   const state = ref<Saved>(load())
   const now = ref(Date.now())
 
-  const running = computed(() => state.value.endsAt !== null)
-  const remainingMs = computed(() =>
-    running.value ? Math.max(0, state.value.endsAt! - now.value) : state.value.remainingMs,
+  const running = computed(() => state.value.startedAt !== null)
+  const totalMs = computed(() => state.value.minutes[state.value.mode] * 60_000)
+  const elapsedMs = computed(() =>
+    Math.min(totalMs.value, running.value ? now.value - state.value.startedAt! : state.value.elapsedMs),
   )
-  const totalMs = computed(() => MODE_MINUTES[state.value.mode] * 60_000)
-  const progress = computed(() => 1 - remainingMs.value / totalMs.value)
+  const progress = computed(() => elapsedMs.value / totalMs.value)
   const display = computed(() => {
-    const s = Math.ceil(remainingMs.value / 1000)
+    const s = Math.floor(elapsedMs.value / 1000)
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
   })
   /** Position within the current 4-session cycle, for the progress dots. */
@@ -77,7 +84,14 @@ export function usePomodoro() {
   }, { deep: true })
 
   function setMode(mode: PomodoroMode) {
-    state.value = { ...state.value, mode, endsAt: null, remainingMs: MODE_MINUTES[mode] * 60_000 }
+    state.value = { ...state.value, mode, startedAt: null, elapsedMs: 0 }
+  }
+
+  /** Change a phase's length; a running phase keeps its elapsed time. */
+  function setMinutes(mode: PomodoroMode, minutes: number) {
+    if (!Number.isFinite(minutes)) return
+    const m = Math.min(MAX_MINUTES, Math.max(1, Math.round(minutes)))
+    state.value = { ...state.value, minutes: { ...state.value.minutes, [mode]: m } }
   }
 
   function start() {
@@ -85,12 +99,12 @@ export function usePomodoro() {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission()
     }
-    state.value = { ...state.value, endsAt: Date.now() + state.value.remainingMs }
+    state.value = { ...state.value, startedAt: Date.now() - state.value.elapsedMs }
   }
 
   function pause() {
     if (!running.value) return
-    state.value = { ...state.value, endsAt: null, remainingMs: remainingMs.value }
+    state.value = { ...state.value, startedAt: null, elapsedMs: elapsedMs.value }
   }
 
   const toggle = () => (running.value ? pause() : start())
@@ -114,16 +128,17 @@ export function usePomodoro() {
     advance()
   }
 
-  // Tick only drives the display; completion is derived from endsAt.
+  // Tick only drives the display; completion is derived from startedAt.
   const timer = window.setInterval(() => {
     now.value = Date.now()
-    if (running.value && remainingMs.value <= 0) finish()
+    if (running.value && now.value - state.value.startedAt! >= totalMs.value) finish()
   }, 250)
   onUnmounted(() => window.clearInterval(timer))
 
   return {
     mode: computed(() => state.value.mode),
-    running, remainingMs, progress, display, cycleDone,
-    setMode, toggle, reset, skip: advance,
+    minutes: computed(() => state.value.minutes),
+    running, elapsedMs, progress, display, cycleDone,
+    setMode, setMinutes, toggle, reset, skip: advance,
   }
 }

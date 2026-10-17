@@ -4,7 +4,7 @@
  * Collapses to a draggable pill; position and open state persist.
  */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { usePomodoro, MODE_LABEL, type PomodoroMode } from '@/composables/usePomodoro'
+import { usePomodoro, MODE_LABEL, MAX_MINUTES, type PomodoroMode } from '@/composables/usePomodoro'
 import MusicPlayer from '@/components/focus/MusicPlayer.vue'
 
 const timer = usePomodoro()
@@ -17,6 +17,7 @@ const saved = (() => {
 })() as { open?: boolean; right?: number; bottom?: number }
 
 const open = ref(saved.open ?? false)
+const settingsOpen = ref(false)
 // Anchored to the bottom-right corner so it stays put when the window resizes.
 const pos = ref({ right: saved.right ?? 20, bottom: saved.bottom ?? 20 })
 const dock = ref<HTMLElement | null>(null)
@@ -68,7 +69,7 @@ onUnmounted(() => {
   document.title = 'LabWeaver'
 })
 
-// Countdown in the browser tab while running.
+// Elapsed time in the browser tab while running.
 watch([timer.display, timer.running, timer.mode], ([display, running, mode]) => {
   document.title = running ? `${display} · ${MODE_LABEL[mode]} — LabWeaver` : 'LabWeaver'
 }, { immediate: true })
@@ -117,6 +118,15 @@ const ringOffset = computed(() => RING_C * (1 - timer.progress.value))
       <header class="panel-head">
         <span class="grip" aria-hidden="true" />
         <span class="panel-title">Focus</span>
+        <button
+          class="icon-btn"
+          :class="{ lit: settingsOpen }"
+          @click="settingsOpen = !settingsOpen"
+          aria-label="Timer settings"
+          title="Timer settings"
+        >
+          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4" /><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+        </button>
         <button class="icon-btn" @click="open = false" aria-label="Collapse focus window">
           <svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
@@ -133,6 +143,18 @@ const ringOffset = computed(() => RING_C * (1 - timer.progress.value))
         >{{ MODE_LABEL[m] }}</button>
       </div>
 
+      <div v-if="settingsOpen" class="settings">
+        <label v-for="m in MODES" :key="m">
+          <span>{{ MODE_LABEL[m] }}</span>
+          <input
+            type="number" min="1" :max="MAX_MINUTES" step="1"
+            :value="timer.minutes.value[m]"
+            @change="timer.setMinutes(m, ($event.target as HTMLInputElement).valueAsNumber); ($event.target as HTMLInputElement).value = String(timer.minutes.value[m])"
+          />
+          <span class="unit">min</span>
+        </label>
+      </div>
+
       <div class="dial">
         <svg viewBox="0 0 128 128" aria-hidden="true">
           <circle class="track" cx="64" cy="64" :r="RING_R" />
@@ -145,6 +167,7 @@ const ringOffset = computed(() => RING_C * (1 - timer.progress.value))
         </svg>
         <div class="dial-text">
           <span class="time" role="timer">{{ timer.display.value }}</span>
+          <span class="target">of {{ timer.minutes.value[timer.mode.value] }} min</span>
           <span class="cycle" :title="`${timer.cycleDone.value} of 4 focus sessions this cycle`">
             <i v-for="n in 4" :key="n" :class="{ done: n <= timer.cycleDone.value }" />
           </span>
@@ -328,6 +351,22 @@ const ringOffset = computed(() => RING_C * (1 - timer.progress.value))
   box-shadow: 0 4px 16px color-mix(in oklch, var(--mode) 35%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.35);
 }
 .ctl.primary:hover { filter: brightness(1.08); color: oklch(0.18 0.01 135); }
+
+.target { font-size: var(--text-xs); color: var(--text-muted); margin-top: -4px; }
+
+.settings { display: flex; flex-direction: column; gap: 4px; }
+.settings label {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-xs); color: var(--text-secondary);
+}
+.settings label > span:first-child { flex: 1; }
+.settings input {
+  width: 56px; height: 24px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-primary); color: var(--text-primary);
+  font-family: var(--font-mono); font-size: var(--text-xs); text-align: right;
+}
+.settings .unit { width: 24px; color: var(--text-muted); }
 
 hr { border: none; border-top: 1px solid var(--border-soft); margin: 0 calc(-1 * var(--space-4)); }
 </style>
