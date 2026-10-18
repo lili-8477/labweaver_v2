@@ -113,6 +113,16 @@ describe("callMemorySearch", () => {
     expect(body.since).toBe("2026-01-01T00:00:00Z");
   });
 
+  it("forwards conditions and strict when supplied", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response("[]", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await callMemorySearch({ query: "x", conditions: { cell_line: ["a549"] }, strict: true }, baseDeps(stub));
+    const body = JSON.parse(calls[0]!.init.body as string);
+    expect(body.conditions).toEqual({ cell_line: ["a549"] });
+    expect(body.strict).toBe(true);
+  });
+
   it("returns isError=true when memory-api responds 400", async () => {
     const { stub } = makeFetchStub(
       new Response(

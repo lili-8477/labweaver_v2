@@ -111,6 +111,20 @@ services:
     networks:
       - labweaver-dev-net
 
+  # Memory search embeddings (indexer default EMBEDDER_URL http://embedder:8000).
+  # Without it, search falls back to full-text only.
+  embedder:
+    build: ./hub/embedder
+    container_name: labweaver-dev-embedder
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks:
+      - labweaver-dev-net
+
 networks:
   labweaver-dev-net:
     driver: bridge

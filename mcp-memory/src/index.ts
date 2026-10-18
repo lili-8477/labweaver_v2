@@ -40,10 +40,12 @@ export const toolDefinitions = [
       properties: {
         query:       { type: "string", description: "Free-text query." },
         project_dir: { type: "string", description: "Encoded project dir (e.g. -home-alice-proj). Omit for cross-project search." },
-        types:       { type: "array",  items: { type: "string" }, description: "Filter to memory types (user, feedback, project, reference)." },
+        types:       { type: "array",  items: { type: "string" }, description: "Filter to memory types (user, feedback, project, reference, claim, experience)." },
         limit:       { type: "integer", minimum: 1, maximum: 100 },
         since:       { type: "string", description: "ISO-8601 cutoff; only memories created after are returned." },
         dirs:        { type: "array",  items: { type: "string" }, description: "Restrict to directories (dir_key, e.g. project/decisions); see memory_dir." },
+        conditions:  { type: "object", description: "Condition facets, key → values (same keys as memory_context). Excludes memories from other conditions.", additionalProperties: { type: "array", items: { type: "string" } } },
+        strict:      { type: "boolean", description: "Also exclude memories that do not state a requested condition." },
       },
       required: ["query"],
     },
@@ -308,6 +310,8 @@ export async function callMemorySearch(args: any, deps: ToolDeps): Promise<ToolR
   if (args?.types       !== undefined) body.types       = args.types;
   if (args?.since       !== undefined) body.since       = args.since;
   if (args?.dirs        !== undefined) body.dirs        = args.dirs;
+  if (args?.conditions  !== undefined) body.conditions  = args.conditions;
+  if (args?.strict      !== undefined) body.strict      = args.strict;
   try {
     const res = await deps.fetch(`${deps.baseUrl}/memory/search`, {
       method:  "POST",
