@@ -153,50 +153,100 @@ export const toolDefinitions = [
   {
     name: "memory_distill_session",
     description:
-      "Pin the current conversation to long-term memory. The agent itself produces a structured summary + 0..8 observations from its own context (no server-side re-summarisation). Call ONCE per /memory invocation; subsequent calls in the same session create duplicate rows. Observations should capture decisions, findings, file changes, command results, or user preferences worth recalling later — skip operational noise. Observations that duplicate an existing memory are not written; they come back under `similar` with their matches — fold each into its best match with memory_merge.",
+      "Pin the current conversation to long-term scientific memory. Call ONCE per /memory invocation. Send exactly one `run` (what this session did: subject, statement, conditions, inputs, parameters, outputs, QC, evidence), 0..5 `claims` (observations, results, interpretations, decisions; claim_kind 'feedback' for user preferences), and 0..3 `experiences` (reusable lessons; each must name when it applies and at least one boundary condition or failure mode). Claims are immutable. The server never overwrites an older claim: same-condition re-runs with a newer version supersede it, different conditions qualify it. The result lists `related` claims to label with memory_link and `similar` experiences to fold in with memory_merge.",
     inputSchema: {
       type: "object",
       properties: {
         project_dir:       { type: "string", description: "Encoded project dir (e.g. -home-alice-proj). Omit for user-scope distill." },
-        source_session_id: { type: "string", description: "Optional session UUID this distill came from; omit if not known." },
-        summary: {
+        source_session_id: { type: "string", description: "Session UUID, only if you know it." },
+        run: {
           type: "object",
-          description: "Single session-summary row. name ≤80c, description ≤200c, body ≤1500c.",
+          description: "Exactly one run claim for this session.",
           properties: {
-            name:        { type: "string", maxLength: 80 },
-            description: { type: "string", maxLength: 200 },
-            body:        { type: "string", maxLength: 1500 },
+            subject:     { type: "string", maxLength: 120, description: "What was studied, e.g. 'PBMC3k clustering'." },
+            statement:   { type: "string", maxLength: 800, description: "What was done and found, with the key numbers." },
+            conditions:  { type: "object", description: "Condition facets, key → values. Keys: species, model, cell_line, tissue, sample, cohort, assay, protocol, protocol_version, reagent_lot, instrument, run_id, dose, timepoint, dataset, dataset_version, reference, pipeline, pipeline_version, code_version, gene, tool, file.", additionalProperties: { type: "array", items: { type: "string" } } },
+            inputs:      { type: "array", items: { type: "string" } },
+            parameters:  { type: "object" },
+            outputs:     { type: "array", items: { type: "string" } },
+            qc:          { type: "object", properties: { status: { type: "string", enum: ["pass", "warn", "fail", "unknown"] }, metrics: { type: "object" } }, required: ["status"] },
+            evidence:    { type: "array", description: "Evidence URIs you saw: file:///abs/path, chpc://job/<id>, s3://…, https://…. Never invent one. Optional access_class: restricted or irb for controlled data.", items: { type: "object", properties: { uri: { type: "string" }, role: { type: "string", enum: ["source", "input", "output", "qc"] }, access_class: { type: "string", enum: ["public", "internal", "restricted", "irb"] } }, required: ["uri"] } },
+            observed_at: { type: "string", description: "ISO-8601 time of the experiment or run, if not now." },
           },
-          required: ["name", "description", "body"],
+          required: ["subject", "statement"],
         },
-        observations: {
+        claims: {
           type: "array",
-          maxItems: 8,
-          description: "0..8 observation rows. Each is independently dedup'd by content hash.",
+          maxItems: 5,
           items: {
             type: "object",
             properties: {
-              type: { type: "string", enum: ["decision", "finding", "file-touched", "command-result", "user-preference"] },
-              name:        { type: "string", maxLength: 80 },
-              description: { type: "string", maxLength: 200 },
-              body:        { type: "string", maxLength: 800 },
-              facets: {
-                type: "object",
-                properties: {
-                  gene:     { type: "array", items: { type: "string" } },
-                  dataset:  { type: "array", items: { type: "string" } },
-                  tool:     { type: "array", items: { type: "string" } },
-                  pipeline: { type: "array", items: { type: "string" } },
-                  file:     { type: "array", items: { type: "string" } },
-                },
-                additionalProperties: false,
-              },
+              claim_kind:  { type: "string", enum: ["observation", "result", "interpretation", "decision", "feedback"] },
+              subject:     { type: "string", maxLength: 120 },
+              statement:   { type: "string", maxLength: 800 },
+              conditions:  { type: "object", description: "Condition facets, key → values. Keys: species, model, cell_line, tissue, sample, cohort, assay, protocol, protocol_version, reagent_lot, instrument, run_id, dose, timepoint, dataset, dataset_version, reference, pipeline, pipeline_version, code_version, gene, tool, file.", additionalProperties: { type: "array", items: { type: "string" } } },
+              confidence:  { type: "number", minimum: 0, maximum: 1 },
+              qc:          { type: "object", properties: { status: { type: "string", enum: ["pass", "warn", "fail", "unknown"] }, metrics: { type: "object" } }, required: ["status"] },
+              evidence:    { type: "array", description: "Evidence URIs you saw: file:///abs/path, chpc://job/<id>, s3://…, https://…. Never invent one. Optional access_class: restricted or irb for controlled data.", items: { type: "object", properties: { uri: { type: "string" }, role: { type: "string", enum: ["source", "input", "output", "qc"] }, access_class: { type: "string", enum: ["public", "internal", "restricted", "irb"] } }, required: ["uri"] } },
+              observed_at: { type: "string" },
             },
-            required: ["type", "name", "description", "body", "facets"],
+            required: ["claim_kind", "subject", "statement"],
+          },
+        },
+        experiences: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            type: "object",
+            properties: {
+              task:                { type: "string", maxLength: 200 },
+              solution:            { type: "string", maxLength: 1200 },
+              applicability:       { type: "array", items: { type: "string" }, minItems: 1 },
+              boundary_conditions: { type: "array", items: { type: "string" } },
+              failure_modes:       { type: "array", items: { type: "string" } },
+              expected_qc:         { type: "object" },
+              search_keys:         { type: "array", items: { type: "string" } },
+              conditions:          { type: "object", description: "Condition facets, key → values. Keys: species, model, cell_line, tissue, sample, cohort, assay, protocol, protocol_version, reagent_lot, instrument, run_id, dose, timepoint, dataset, dataset_version, reference, pipeline, pipeline_version, code_version, gene, tool, file.", additionalProperties: { type: "array", items: { type: "string" } } },
+              source:              { description: "'run' or the index of the claim it derives from.", oneOf: [{ type: "string", enum: ["run"] }, { type: "integer", minimum: 0 }] },
+            },
+            required: ["task", "solution", "applicability"],
           },
         },
       },
-      required: ["summary", "observations"],
+      required: ["run"],
+    },
+  },
+  {
+    name: "memory_context",
+    description:
+      "Get a cited context bundle for a task: relevant prior results and run records, reusable experience, current pipeline/protocol versions, lineage (superseded, qualified, contradicted), evidence links and warnings. Prefer it over memory_search before scientific work. Pass `conditions` to exclude memories from other conditions (e.g. another cell line); memories that do not state a condition are kept and flagged unless strict.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query:         { type: "string", description: "The task or question. Include exact IDs (genes, samples, lots, versions)." },
+        project_dir:   { type: "string", description: "Encoded project dir. Omit for user scope." },
+        conditions:    { type: "object", description: "Condition facets, key → values. Keys: species, model, cell_line, tissue, sample, cohort, assay, protocol, protocol_version, reagent_lot, instrument, run_id, dose, timepoint, dataset, dataset_version, reference, pipeline, pipeline_version, code_version, gene, tool, file.", additionalProperties: { type: "array", items: { type: "string" } } },
+        strict:        { type: "boolean", description: "Also exclude memories that do not state a requested condition." },
+        limit:         { type: "integer", minimum: 1, maximum: 30 },
+        budget_tokens: { type: "integer", minimum: 100, maximum: 8000 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "memory_link",
+    description:
+      "Write a typed edge `src rel dst` between two memories. Use SUPPORTS or CONTRADICTS to label the `related` claims memory_distill_session returns, QUALIFIES when conditions explain a difference, SUPERSEDES when a newer claim replaces yours. RETRACTS, VALIDATED_BY and FAILED_TO_REPLICATE only when the user explicitly says so. status 'rejected' undoes an edge (a rejected SUPERSEDES or RETRACTS restores the old claim).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        src_id: { type: "string" },
+        dst_id: { type: "string" },
+        rel:    { type: "string", enum: ["DERIVED_FROM", "SUPPORTS", "QUALIFIES", "CONTRADICTS", "SUPERSEDES", "RETRACTS", "VALIDATED_BY", "FAILED_TO_REPLICATE"] },
+        status: { type: "string", enum: ["accepted", "rejected"] },
+        note:   { type: "string", maxLength: 500 },
+      },
+      required: ["src_id", "dst_id", "rel"],
     },
   },
 ] as const;
@@ -399,32 +449,36 @@ export async function callMemoryMerge(args: any, deps: ToolDeps): Promise<ToolRe
   }
 }
 
-export async function callMemoryDistillSession(args: any, deps: ToolDeps): Promise<ToolResult> {
-  // Cheap up-front shape check so a malformed call gets a crisp error instead
-  // of a 400 with a zod issue list. The API revalidates regardless.
-  if (!args?.summary || typeof args.summary !== "object") {
-    return fail("memory_distill_session: 'summary' object is required");
-  }
-  if (!Array.isArray(args?.observations)) {
-    return fail("memory_distill_session: 'observations' array is required (use [] for none)");
-  }
-  const body: Record<string, unknown> = {
-    username:     deps.username,
-    summary:      args.summary,
-    observations: args.observations,
-  };
-  if (args?.project_dir       !== undefined) body.project_dir       = args.project_dir;
-  if (args?.source_session_id !== undefined) body.source_session_id = args.source_session_id;
+// POST helper for the scientific-memory tools: forward the agent's args
+// (validation is the API's job) plus the fixed identity field.
+async function postJson(path: string, body: Record<string, unknown>, label: string, deps: ToolDeps): Promise<ToolResult> {
   try {
-    const res = await deps.fetch(`${deps.baseUrl}/memory/distill`, {
+    const res = await deps.fetch(`${deps.baseUrl}${path}`, {
       method:  "POST",
       headers: { "content-type": "application/json" },
       body:    JSON.stringify(body),
     });
-    return await unwrap(res, "memory_distill_session");
+    return await unwrap(res, label);
   } catch (err) {
-    return fail(`memory_distill_session network error: ${(err as Error).message}`);
+    return fail(`${label} network error: ${(err as Error).message}`);
   }
+}
+
+export async function callMemoryDistillSession(args: any, deps: ToolDeps): Promise<ToolResult> {
+  // Cheap up-front shape check so a malformed call gets a crisp error instead
+  // of a 400 with a zod issue list. The API revalidates regardless.
+  if (!args?.run || typeof args.run !== "object") {
+    return fail("memory_distill_session: 'run' object is required (exactly one run claim per session)");
+  }
+  return postJson("/memory/distill", { ...args, username: deps.username }, "memory_distill_session", deps);
+}
+
+export async function callMemoryContext(args: any, deps: ToolDeps): Promise<ToolResult> {
+  return postJson("/memory/bundle", { ...args, username: deps.username }, "memory_context", deps);
+}
+
+export async function callMemoryLink(args: any, deps: ToolDeps): Promise<ToolResult> {
+  return postJson("/memory/link", { ...args, actor: deps.username }, "memory_link", deps);
 }
 
 export async function callMemoryForget(args: any, deps: ToolDeps): Promise<ToolResult> {
@@ -489,6 +543,8 @@ async function main(): Promise<void> {
       case "memory_feedback": result = await callMemoryFeedback(args, deps); break;
       case "memory_forget":   result = await callMemoryForget(args, deps); break;
       case "memory_distill_session": result = await callMemoryDistillSession(args, deps); break;
+      case "memory_context":  result = await callMemoryContext(args, deps); break;
+      case "memory_link":     result = await callMemoryLink(args, deps); break;
       default:                result = fail(`unknown tool: ${name}`); break;
     }
     // SDK 1.x widened CallToolResult to include a "task" variant (long-running

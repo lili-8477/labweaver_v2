@@ -1,75 +1,81 @@
+// Distillation payload, v2 (spec §5.2). The in-session agent builds it (the
+// /memory command → memory_distill_session → POST /memory/distill); the
+// server validates and writes it. One run claim per session always; claims
+// and experiences only when they earn their place.
 import { z } from "zod";
+import { FACET_KEYS } from "./facets.js";
 
-export const PROMPT_VERSION = 1;
+export const PROMPT_VERSION = 2;
 
-const Facets = z
-  .object({
-    gene:     z.array(z.string()).optional(),
-    dataset:  z.array(z.string()).optional(),
-    tool:     z.array(z.string()).optional(),
-    pipeline: z.array(z.string()).optional(),
-    file:     z.array(z.string()).optional(),
-  })
-  .strict();
+const Conditions = z.record(z.enum(FACET_KEYS), z.array(z.string().max(200)).max(20));
 
-const Observation = z.object({
-  type: z.enum([
-    "decision",
-    "finding",
-    "file-touched",
-    "command-result",
-    "user-preference",
-  ]),
-  name:        z.string().max(80),
-  description: z.string().max(200),
-  body:        z.string().max(800),
-  facets:      Facets,
+const AccessClass = z.enum(["public", "internal", "restricted", "irb"]);
+
+// Evidence is cited by URI (file://, s3://, chpc://, https://, transcript://).
+// The agent never invents URIs: it cites paths, job IDs and links it saw.
+const Evidence = z.object({
+  uri:          z.string().min(1).max(2000).regex(/^[a-z][a-z0-9+.-]*:\/\//i, "must be a URI with a scheme"),
+  role:         z.enum(["source", "input", "output", "qc"]).optional(),
+  access_class: AccessClass.optional(),
 });
+
+const Qc = z.object({
+  status:  z.enum(["pass", "warn", "fail", "unknown"]),
+  metrics: z.record(z.union([z.number(), z.string().max(200)])).optional(),
+});
+
+const ClaimBase = {
+  subject:     z.string().min(1).max(120),
+  statement:   z.string().min(1).max(800),
+  conditions:  Conditions.default({}),
+  evidence:    z.array(Evidence).max(20).default([]),
+  observed_at: z.string().datetime().optional(),
+};
+
+export const RunClaim = z.object({
+  ...ClaimBase,
+  inputs:     z.array(z.string().max(500)).max(30).default([]),
+  parameters: z.record(z.union([z.number(), z.string().max(200), z.boolean()])).default({}),
+  outputs:    z.array(z.string().max(500)).max(30).default([]),
+  qc:         Qc.optional(),
+});
+
+export const Claim = z.object({
+  ...ClaimBase,
+  claim_kind: z.enum(["observation", "result", "interpretation", "decision", "feedback"]),
+  confidence: z.number().min(0).max(1).optional(),
+  qc:         Qc.optional(),
+});
+
+// Value bar: reusable on another task, names when it applies, names how it
+// can fail. Anything less is not written.
+export const Experience = z.object({
+  task:                z.string().min(1).max(200),
+  solution:            z.string().min(1).max(1200),
+  applicability:       z.array(z.string().max(300)).min(1).max(10),
+  boundary_conditions: z.array(z.string().max(300)).max(10).default([]),
+  failure_modes:       z.array(z.string().max(300)).max(10).default([]),
+  expected_qc:         z.record(z.union([z.number(), z.string().max(200)])).default({}),
+  search_keys:         z.array(z.string().max(80)).max(10).default([]),
+  conditions:          Conditions.default({}),
+  // The run claim, or an index into `claims`.
+  source:              z.union([z.literal("run"), z.number().int().min(0)]).default("run"),
+}).refine(
+  (e) => e.boundary_conditions.length + e.failure_modes.length > 0,
+  { message: "an experience must name at least one boundary condition or failure mode" },
+);
 
 export const DistillationResult = z.object({
-  summary: z.object({
-    name:        z.string().max(80),
-    description: z.string().max(200),
-    body:        z.string().max(1500),
-  }),
-  observations: z.array(Observation).max(8),
-});
+  run:         RunClaim,
+  claims:      z.array(Claim).max(5).default([]),
+  experiences: z.array(Experience).max(3).default([]),
+}).refine(
+  (r) => r.experiences.every((e) => e.source === "run" || e.source < r.claims.length),
+  { message: "experience.source must be 'run' or an index into claims" },
+);
 
+export type RunClaim = z.infer<typeof RunClaim>;
+export type Claim = z.infer<typeof Claim>;
+export type Experience = z.infer<typeof Experience>;
+export type EvidenceRef = z.infer<typeof Evidence>;
 export type DistillationResult = z.infer<typeof DistillationResult>;
-export type Observation = z.infer<typeof Observation>;
-
-const SYSTEM_PROMPT = `You distill a Claude Code session transcript into structured memory rows for later retrieval. Output strict JSON matching the schema below. Be terse. Skip operational noise (file listings, command echoes, retries).
-
-Schema:
-{
-  "summary": { "name": string ≤80c, "description": string ≤200c, "body": string ≤1500c },
-  "observations": [  // 0..8 items
-    {
-      "type": "decision" | "finding" | "file-touched" | "command-result" | "user-preference",
-      "name": string ≤80c,
-      "description": string ≤200c,
-      "body": string ≤800c,
-      "facets": { "gene"?: string[], "dataset"?: string[], "tool"?: string[], "pipeline"?: string[], "file"?: string[] }
-    }
-  ]
-}
-
-Rules:
-- 'user-preference' captures something the user expressed about how they want the agent to work or what they care about.
-- 'decision' captures a chosen approach with the why; not what was tried and discarded.
-- 'finding' captures a surprising fact the agent learned (data shape, bug root cause, env quirk).
-- 'file-touched' is a path + one-line summary of what changed and why.
-- 'command-result' is a command that produced a result the user is likely to need again (path-to-output, key number, error fingerprint).
-- Skip everything else. Empty observations array is fine.`;
-
-export function buildDistillationPrompt(args: { transcript: string }): {
-  system: string;
-  user: string;
-  promptVersion: number;
-} {
-  return {
-    system: SYSTEM_PROMPT,
-    user: args.transcript,
-    promptVersion: PROMPT_VERSION,
-  };
-}

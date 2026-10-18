@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { fileURLToPath } from "node:url";
 import { runMigrations } from "../src/migrate.js";
 import { writeDistillation } from "../src/distiller-repo.js";
+import { DistillationResult } from "../src/distiller-prompts.js";
 import { writeUserMemory, updateMemory, getAuditTrail, getMemory } from "../src/memory-repo.js";
 import type { MergeCheck } from "../src/memory-merge.js";
 
@@ -96,25 +97,24 @@ describe("writeUserMemory merge check", () => {
 });
 
 describe("writeDistillation merge check", () => {
-  it("always writes the summary and holds back similar observations", async () => {
-    await write("qc thresholds: 200 genes", { scope: "project", project_dir: "-p", type: "project" });
+  it("always writes the run claim and holds back similar experiences", async () => {
+    // Experience bodies start with "Task:", which the stub embeds on axis 0.
+    await write("Task: qc thresholds", { type: "reference", dir: "user/experience" });
 
     const out = await writeDistillation(pool, {
       sessionMeta: { username: "alice", project_dir: "-p", source_session_id: null },
-      result: {
-        summary: { name: "s", description: "d", body: "summary of the session" },
-        observations: [
-          { type: "finding", name: "qc", description: "d", body: "qc thresholds: 200 genes, 5% mt", facets: {} },
-          { type: "finding", name: "tabs", description: "d", body: "tabs are used in configs", facets: {} },
-        ],
-      },
-      promptVersion: 1,
+      result: DistillationResult.parse({
+        run: { subject: "s", statement: "summary of the session" },
+        experiences: [{ task: "qc thresholds", solution: "200 genes, 5% mt", applicability: ["pbmc"], failure_modes: ["neurons"] }],
+      }),
+      promptVersion: 2,
       merge,
     });
 
-    expect(out.similar.map((s) => s.name)).toEqual(["qc"]);
+    expect(out.similar.map((s) => s.name)).toEqual(["qc thresholds"]);
+    expect(out.run_id).not.toBeNull();
     const names = await pool.query(`SELECT name FROM memories WHERE source = 'distilled' ORDER BY name`);
-    expect(names.rows.map((r) => r.name)).toEqual(["s", "tabs"]);
+    expect(names.rows.map((r) => r.name)).toEqual(["s"]);
   });
 });
 
@@ -122,11 +122,11 @@ describe("updateMemory merge", () => {
   async function distilledId(): Promise<string> {
     await writeDistillation(pool, {
       sessionMeta: { username: "alice", project_dir: null, source_session_id: null },
-      result: {
-        summary: { name: "s", description: "d", body: "summary" },
-        observations: [{ type: "user-preference", name: "p", description: "d", body: "tabs", facets: {} }],
-      },
-      promptVersion: 1,
+      result: DistillationResult.parse({
+        run: { subject: "s", statement: "summary" },
+        claims: [{ claim_kind: "feedback", subject: "p", statement: "tabs" }],
+      }),
+      promptVersion: 2,
     });
     const r = await pool.query(`SELECT memory_id FROM memories WHERE name = 'p'`);
     return r.rows[0].memory_id;

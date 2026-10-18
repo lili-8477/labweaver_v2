@@ -28,6 +28,9 @@ import {
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { proposeExperiences } from "./experience-promotion.js";
+import { linkMemories } from "./lineage-repo.js";
+import { buildBundle } from "./context-bundle.js";
+import { consolidate } from "./consolidate.js";
 import { shareRoutesPlugin } from "./share-api.js";
 import { cleanupOldSnapshots, autoCloseIdleRequests } from "./share-cleanup.js";
 import {
@@ -150,6 +153,7 @@ async function main(): Promise<void> {
     },
     mergeSimilarity: cfg.memoryMergeSimilarity,
     managers:        cfg.memoryOrgManagers,
+    clearance:       cfg.memoryClearance,
     repo: {
       searchMemories,
       getMemory,
@@ -168,6 +172,9 @@ async function main(): Promise<void> {
       recordFeedback,
       proposeExperiences,
       writeDistillation,
+      linkMemories,
+      buildBundle,
+      consolidate,
     },
   });
   await app.register(shareRoutesPlugin({

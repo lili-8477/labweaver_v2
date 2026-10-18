@@ -10,6 +10,8 @@ import {
   callMemoryFeedback,
   callMemoryForget,
   callMemoryDistillSession,
+  callMemoryContext,
+  callMemoryLink,
   toolDefinitions,
 } from "../src/index.js";
 
@@ -42,14 +44,16 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the ten memory tools", () => {
+  it("exposes exactly the twelve memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
+      "memory_context",
       "memory_dir",
       "memory_distill_session",
       "memory_feedback",
       "memory_forget",
       "memory_get",
+      "memory_link",
       "memory_merge",
       "memory_search",
       "memory_timeline",
@@ -362,96 +366,89 @@ describe("callMemoryWrite", () => {
 });
 
 describe("callMemoryDistillSession", () => {
-  const validSummary = { name: "n", description: "d", body: "b" };
-  const validObs = [{
-    type: "decision", name: "n", description: "d", body: "b", facets: { tool: ["seqkit"] },
-  }];
+  const run = {
+    subject: "PBMC3k clustering", statement: "Leiden res 0.8 gives 9 clusters",
+    conditions: { dataset: ["pbmc3k"], pipeline_version: ["v1.4"] },
+    evidence: [{ uri: "file:///workspace/pbmc3k/results/umap.png" }],
+  };
+  const json200 = (payload: unknown) =>
+    new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
 
   it("POSTs /memory/distill with username from deps and payload from caller", async () => {
-    const { stub, calls } = makeFetchStub(
-      new Response(JSON.stringify({ ok: true, written: 2 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    const { stub, calls } = makeFetchStub(json200({ ok: true, run_id: "r1" }));
     const result = await callMemoryDistillSession(
-      {
-        project_dir: "-home-alice-proj",
-        source_session_id: "abc-123",
-        summary: validSummary,
-        observations: validObs,
-      },
+      { project_dir: "-home-alice-proj", run, claims: [], experiences: [] },
       baseDeps(stub),
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("http://stub:8400/memory/distill");
     expect(calls[0]!.init.method).toBe("POST");
-    const body = JSON.parse(calls[0]!.init.body as string);
-    expect(body).toEqual({
-      username: "alice",
-      project_dir: "-home-alice-proj",
-      source_session_id: "abc-123",
-      summary: validSummary,
-      observations: validObs,
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+      username: "alice", project_dir: "-home-alice-proj", run, claims: [], experiences: [],
     });
     expect(result.isError).toBeFalsy();
-    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, written: 2 });
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, run_id: "r1" });
   });
 
-  it("omits project_dir/source_session_id when not supplied", async () => {
-    const { stub, calls } = makeFetchStub(
-      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
-    );
-    await callMemoryDistillSession(
-      { summary: validSummary, observations: [] },
-      baseDeps(stub),
-    );
-    const body = JSON.parse(calls[0]!.init.body as string);
-    expect(body.username).toBe("alice");
-    expect(body.observations).toEqual([]);
-    expect("project_dir" in body).toBe(false);
-    expect("source_session_id" in body).toBe(false);
+  it("the agent cannot override the username", async () => {
+    const { stub, calls } = makeFetchStub(json200({}));
+    await callMemoryDistillSession({ run, username: "mallory" }, baseDeps(stub));
+    expect(JSON.parse(calls[0]!.init.body as string).username).toBe("alice");
   });
 
-  it("rejects missing summary WITHOUT making an HTTP call", async () => {
-    const { stub, calls } = makeFetchStub(
-      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
-    );
-    const result = await callMemoryDistillSession(
-      { observations: [] },
-      baseDeps(stub),
-    );
+  it("rejects a missing run WITHOUT making an HTTP call", async () => {
+    const { stub, calls } = makeFetchStub(json200({}));
+    const result = await callMemoryDistillSession({ claims: [] }, baseDeps(stub));
     expect(calls).toHaveLength(0);
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toMatch(/'summary' object is required/);
-  });
-
-  it("rejects non-array observations WITHOUT making an HTTP call", async () => {
-    const { stub, calls } = makeFetchStub(
-      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
-    );
-    const result = await callMemoryDistillSession(
-      { summary: validSummary, observations: "nope" },
-      baseDeps(stub),
-    );
-    expect(calls).toHaveLength(0);
-    expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toMatch(/'observations' array is required/);
+    expect(result.content[0]!.text).toMatch(/'run' object is required/);
   });
 
   it("surfaces 400 validation errors from memory-api", async () => {
     const { stub } = makeFetchStub(
       new Response(
-        JSON.stringify({ error: "validation failed", issues: [{ path: ["summary", "body"] }] }),
+        JSON.stringify({ error: "validation failed", issues: [{ path: ["run", "statement"] }] }),
         { status: 400, headers: { "content-type": "application/json" } },
       ),
     );
-    const result = await callMemoryDistillSession(
-      { summary: validSummary, observations: [] },
-      baseDeps(stub),
-    );
+    const result = await callMemoryDistillSession({ run }, baseDeps(stub));
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain("validation failed");
+  });
+});
+
+describe("callMemoryContext", () => {
+  it("POSTs /memory/bundle with username from deps", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response(JSON.stringify({ text: "# Memory context" }), { status: 200 }),
+    );
+    const result = await callMemoryContext(
+      { query: "TP53 knockdown in A549", conditions: { cell_line: ["a549"] } },
+      baseDeps(stub),
+    );
+    expect(calls[0]!.url).toBe("http://stub:8400/memory/bundle");
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+      query: "TP53 knockdown in A549", conditions: { cell_line: ["a549"] }, username: "alice",
+    });
+    expect(result.isError).toBeFalsy();
+  });
+});
+
+describe("callMemoryLink", () => {
+  it("POSTs /memory/link with the actor from deps", async () => {
+    const { stub, calls } = makeFetchStub(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await callMemoryLink({ src_id: "a", dst_id: "b", rel: "SUPPORTS", actor: "mallory" }, baseDeps(stub));
+    expect(calls[0]!.url).toBe("http://stub:8400/memory/link");
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+      src_id: "a", dst_id: "b", rel: "SUPPORTS", actor: "alice",
+    });
+  });
+
+  it("surfaces network errors as tool errors", async () => {
+    const { stub } = makeFetchStub(new Error("ECONNREFUSED"));
+    const result = await callMemoryLink({ src_id: "a", dst_id: "b", rel: "SUPPORTS" }, baseDeps(stub));
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/memory_link network error: ECONNREFUSED/);
   });
 });
 

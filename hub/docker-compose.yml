@@ -111,6 +111,9 @@ services:
       EMBEDDER_BATCH_SIZE: "64"
       EMBEDDER_INTERVAL_MS: "5000"
       MEMORY_ORG_MANAGER: li86
+      # Per-user read clearance for restricted/IRB memories, e.g. "li86=irb".
+      # Users not listed read up to 'internal'.
+      MEMORY_CLEARANCE: ""
       SHARE_MAX_FOLDER_BYTES: "104857600"
       SHARE_SNAPSHOT_TTL_DAYS: "30"
       SHARE_CLEANUP_INTERVAL_HOURS: "24"

@@ -22,7 +22,11 @@ import { InvalidDirError } from "./memory-dirs.js";
 import { encodeProjectDir } from "./path-decode.js";
 import type { proposeExperiences } from "./experience-promotion.js";
 import type { writeDistillation } from "./distiller-repo.js";
-import { PROMPT_VERSION } from "./distiller-prompts.js";
+import { EDGE_RELS, type linkMemories } from "./lineage-repo.js";
+import type { buildBundle } from "./context-bundle.js";
+import type { consolidate } from "./consolidate.js";
+import { FACET_KEYS } from "./facets.js";
+import { DistillationResult, PROMPT_VERSION } from "./distiller-prompts.js";
 
 // DI seam: production wires real repo functions; tests pass vi.fn stubs. Pool
 // and embedderClient travel as a bag so the same `repo.searchMemories` shape
@@ -34,6 +38,8 @@ export interface MemoryApiDeps {
   mergeSimilarity: number;
   // Org managers (MEMORY_ORG_MANAGER); auto-promotion requests go to them.
   managers:        string[];
+  // Per-user read clearance (MEMORY_CLEARANCE); default 'internal'.
+  clearance?:      Record<string, string>;
   repo: {
     searchMemories:   typeof searchMemories;
     getMemory:        typeof getMemory;
@@ -52,6 +58,9 @@ export interface MemoryApiDeps {
     recordFeedback:   typeof recordFeedback;
     proposeExperiences: typeof proposeExperiences;
     writeDistillation: typeof writeDistillation;
+    linkMemories:     typeof linkMemories;
+    buildBundle:      typeof buildBundle;
+    consolidate:      typeof consolidate;
   };
 }
 
@@ -69,6 +78,9 @@ const SearchBody = z.object({
   types:       z.array(z.string()).optional(),
   since:       z.string().datetime().optional(),
   dirs:        z.array(z.string()).optional(),
+  // Condition filters (spec §6.1): drop rows with a different value for a key.
+  conditions:  z.record(z.enum(FACET_KEYS), z.array(z.string()).min(1)).optional(),
+  strict:      z.boolean().optional(),
 });
 
 const TimelineQuery = z.object({
@@ -163,40 +175,43 @@ const AuditQuery = z.object({
   limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
-// /memory/distill payload mirrors distiller-prompts.ts `DistillationResult` so
-// agent-side and (formerly) server-side distill paths share dedup semantics
-// via the same content_hash construction in distiller-repo.ts.
-const DistillSummary = z.object({
-  name:        z.string().min(1).max(80),
-  description: z.string().max(200),
-  body:        z.string().max(1500),
-});
-
-const DistillObservation = z.object({
-  type: z.enum(["decision", "finding", "file-touched", "command-result", "user-preference"]),
-  name:        z.string().min(1).max(80),
-  description: z.string().max(200),
-  body:        z.string().max(800),
-  facets: z.object({
-    gene:     z.array(z.string()).optional(),
-    dataset:  z.array(z.string()).optional(),
-    tool:     z.array(z.string()).optional(),
-    pipeline: z.array(z.string()).optional(),
-    file:     z.array(z.string()).optional(),
-  }).strict(),
-});
-
-const DistillBody = z.object({
+// /memory/distill payload: the v2 distillation result (distiller-prompts.ts)
+// plus the caller's identity.
+const DistillBody = DistillationResult.and(z.object({
   username:          z.string().min(1),
   project_dir:       z.string().nullable().optional(),
-  source_session_id: z.string().nullable().optional(),
-  summary:           DistillSummary,
-  observations:      z.array(DistillObservation).max(8),
+  source_session_id: z.string().uuid().nullable().optional(),
+}));
+
+const BundleBody = z.object({
+  username:     z.string().min(1),
+  project_dir:  z.string().nullable().optional(),
+  project_path: z.string().min(1).optional(),
+  query:        z.string().min(1),
+  conditions:   z.record(z.enum(FACET_KEYS), z.array(z.string()).min(1)).optional(),
+  strict:       z.boolean().optional(),
+  limit:        z.number().int().positive().max(30).optional(),
+  budget_tokens: z.number().int().positive().max(8000).optional(),
+});
+
+const ConsolidateBody = z.object({
+  actor:    z.string().min(1),
+  username: z.string().min(1).optional(),
+});
+
+const LinkBody = z.object({
+  actor:  z.string().min(1),
+  src_id: z.string().uuid(),
+  dst_id: z.string().uuid(),
+  rel:    z.enum(EDGE_RELS),
+  status: z.enum(["accepted", "rejected"]).optional(),
+  note:   z.string().max(500).optional(),
 });
 
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
   const mergeCheck = { embedderClient: deps.embedderClient, similarity: deps.mergeSimilarity };
+  const clearanceOf = (username: string) => deps.clearance?.[username] ?? "internal";
 
   // A write/update naming a directory outside the memory's scope is a client
   // error, not a 500.
@@ -233,6 +248,9 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       types:          b.types,
       since:          b.since ? new Date(b.since) : undefined,
       dirs:           b.dirs,
+      conditions:     b.conditions as Record<string, string[]> | undefined,
+      strict:         b.strict,
+      clearance:      clearanceOf(b.username),
     });
     return hits;
   });
@@ -393,10 +411,11 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     });
   });
 
-  // POST /memory/distill — agent-driven on-demand distill. Caller (the
-  // labweaver-memory MCP server) supplies a {summary, observations} payload
-  // produced by the in-session agent itself; we just write rows. Auto-distill
-  // (the polled cron-style loop) is disabled; this is the only path now.
+  // POST /memory/distill — agent-driven on-demand distill (the only distill
+  // path; auto-distill is off). The in-session agent supplies a v2 payload:
+  // one run claim, 0..5 claims, 0..3 experiences. The response reports what
+  // reconcile did, and lists `related` claims for the agent to label with
+  // memory_link and `similar` experiences to fold in with memory_merge.
   app.post("/memory/distill", async (req, reply) => {
     const parsed = DistillBody.safeParse(req.body);
     if (!parsed.success) {
@@ -404,21 +423,77 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       return { error: "validation failed", issues: parsed.error.issues };
     }
     const b = parsed.data;
-    const { similar } = await deps.repo.writeDistillation(deps.pool, {
+    const outcome = await deps.repo.writeDistillation(deps.pool, {
       sessionMeta: {
         username:          b.username,
         project_dir:       b.project_dir ?? null,
         source_session_id: b.source_session_id ?? null,
       },
-      result: { summary: b.summary, observations: b.observations },
+      result: { run: b.run, claims: b.claims, experiences: b.experiences },
       promptVersion: PROMPT_VERSION,
       merge:         mergeCheck,
     });
-    // Counts (1 summary + N observations) are best-effort; the underlying
-    // insert is idempotent so dedup may suppress some rows. Returning the
-    // attempted count keeps the surface honest without an extra SELECT.
-    // `similar` lists observations held back as near-duplicates.
-    return { ok: true, attempted: 1 + b.observations.length, similar };
+    return { ok: true, ...outcome };
+  });
+
+  // POST /memory/bundle — the context bundle for one task (MCP
+  // memory_context, spec §6): filtered search plus conditions, evidence,
+  // lineage, current versions and warnings, rendered as cited text. (GET
+  // /memory/context stays the SessionStart directory index.)
+  app.post("/memory/bundle", async (req, reply) => {
+    const parsed = BundleBody.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const b = parsed.data;
+    return await deps.repo.buildBundle({
+      pool:           deps.pool,
+      embedderClient: deps.embedderClient,
+      username:       b.username,
+      project_dir:    b.project_path ? encodeProjectDir(b.project_path) : (b.project_dir ?? null),
+      query:          b.query,
+      conditions:     b.conditions as Record<string, string[]> | undefined,
+      strict:         b.strict,
+      clearance:      clearanceOf(b.username),
+      limit:          b.limit,
+      budget_tokens:  b.budget_tokens,
+    });
+  });
+
+  // POST /memory/consolidate — manager-only "System 2" pass (spec §7):
+  // proposes SUPPORTS for replications, reports unlabeled same-condition
+  // pairs and experiences built on superseded or retracted claims.
+  app.post("/memory/consolidate", async (req, reply) => {
+    const parsed = ConsolidateBody.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    if (!deps.managers.includes(parsed.data.actor)) {
+      reply.code(403);
+      return { error: "consolidation is manager-only" };
+    }
+    return await deps.repo.consolidate({
+      pool: deps.pool, actor: parsed.data.actor, username: parsed.data.username,
+      similarity: deps.mergeSimilarity,
+    });
+  });
+
+  // POST /memory/link — write or reject a typed edge `src rel dst` (spec
+  // §4.3). The agent labels `related` claims from /memory/distill with it;
+  // RETRACTS / VALIDATED_BY / FAILED_TO_REPLICATE are for explicit user asks.
+  app.post("/memory/link", async (req, reply) => {
+    const parsed = LinkBody.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const r = await deps.repo.linkMemories({ pool: deps.pool, ...parsed.data });
+    if (!r.ok && r.reason === "not_found") { reply.code(404); return { error: "memory not found" }; }
+    if (!r.ok && r.reason === "forbidden") { reply.code(403); return { error: "src must be yours; dst must be yours (or org, for non-status edges)" }; }
+    if (!r.ok && r.reason === "self")      { reply.code(400); return { error: "src and dst must differ" }; }
+    return { ok: true };
   });
 
   // POST /memory/forget — soft-delete with username scoping; idempotent
@@ -459,6 +534,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     if (!r.ok && r.reason === 'not_found') { reply.code(404); return { error: 'memory not found' }; }
     if (!r.ok && r.reason === 'forbidden')  { reply.code(403); return { error: 'not the owner' }; }
     if (!r.ok && r.reason === 'distilled')  { reply.code(403); return { error: 'distilled memories are read-only' }; }
+    if (!r.ok && r.reason === 'immutable')  { reply.code(409); return { error: 'claims are immutable; write a new claim and link it with SUPERSEDES or RETRACTS' }; }
     return { ok: true };
   });
 

@@ -5,11 +5,12 @@ import { insertMemoryRow } from "./distiller-repo.js";
 import { encodeProjectDir } from "./path-decode.js";
 import { InvalidDirError, isDirFkViolation, resolveDir } from "./memory-dirs.js";
 import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from "./memory-merge.js";
+import { normalizeFacets } from "./facets.js";
 
 export interface AuditEntry {
   memory_id: string;
   actor:     string;
-  action:    'write' | 'update' | 'forget' | 'restore' | 'merge';
+  action:    'write' | 'update' | 'forget' | 'restore' | 'merge' | 'status';
   before:    Record<string, unknown> | null;
   after:     Record<string, unknown> | null;
 }
@@ -41,6 +42,10 @@ export interface SearchMemoriesArgs {
   types?:         string[];
   since?:         Date;
   dirs?:          string[];
+  // Scientific filters (spec §6.1). Clearance defaults to 'internal'.
+  clearance?:     string;
+  conditions?:    Record<string, string[]>;
+  strict?:        boolean;
 }
 
 export interface SearchHit {
@@ -62,6 +67,8 @@ export interface SearchHit {
   hit_count:   number;
   last_hit_at: string | null;
   deleted_at:  string | null;
+  // True when a facet equals an ID-like token of the query.
+  exact:       boolean;
 }
 
 // Name of the sentinel row distiller.ts writes on permanent failure; never
@@ -79,26 +86,46 @@ const PRIOR_SCORE_SQL = `
 
 // Hybrid search. Params: $1 query vector (NULL when the embedder is down),
 // $2 query text, $3 username, $4 project_dir, $5 types[], $6 since,
-// $7 dirs[], $8 limit.
+// $7 dirs[], $8 limit, $9 caller clearance, $10 condition filters (jsonb
+// {key: [values]}), $11 strict conditions, $12 exact-ID tokens[].
 //
-// Candidates come from two arms, each capped at 200 chunks AFTER the
-// visibility filter (so other users' chunks can't crowd the caller out):
-// nearest vectors, and best full-text matches. Both arms compute both
-// signals, the union is scored, and each memory keeps only its best chunk.
-// Without a vector (embedder down) the vector arm is dropped and vec_sim is
-// NULL → 0, leaving score = 0.3 · fts · prior.
+// Hard filters (spec §6.1) run inside VISIBLE_SQL, i.e. before each arm's
+// LIMIT 200: status, validity, access class, and conditions. A condition
+// excludes rows that carry the key with other values; rows without the key
+// stay (flagged unconditioned by the bundle) unless strict.
+//
+// Candidates come from three arms: nearest vectors, best full-text matches,
+// and exact facet matches on ID-like query tokens (gene symbols, sample IDs,
+// lots, versions), which embeddings and English stemming both mangle. The
+// union is scored 0.55·vec + 0.25·fts + 0.20·exact, times the prior; an
+// exact match ranks first. Without a vector the vector arm is dropped.
 const VISIBLE_SQL = `
       m.deleted_at IS NULL
+  AND m.status = 'active'
+  AND (m.valid_to IS NULL OR m.valid_to > now())
   AND (m.username = $3 OR m.username = '__org__')
   AND (m.project_dir IS NULL OR m.project_dir = $4)
   AND ($5::text[] IS NULL OR m.type = ANY($5))
   AND ($6::timestamptz IS NULL OR m.created_at >= $6)
-  AND ($7::text[] IS NULL OR m.dir_key = ANY($7))`;
+  AND ($7::text[] IS NULL OR m.dir_key = ANY($7))
+  AND array_position(ARRAY['public','internal','restricted','irb'], m.access_class)
+      <= array_position(ARRAY['public','internal','restricted','irb'], $9::text)
+  AND ($10::jsonb IS NULL OR NOT EXISTS (
+        SELECT 1 FROM jsonb_each($10::jsonb) c(key, vals)
+         WHERE CASE WHEN EXISTS (SELECT 1 FROM memory_facets f
+                                  WHERE f.memory_id = m.memory_id AND f.key = c.key)
+                    THEN NOT EXISTS (SELECT 1 FROM memory_facets f
+                                      WHERE f.memory_id = m.memory_id AND f.key = c.key
+                                        AND lower(f.value) IN (SELECT lower(v) FROM jsonb_array_elements_text(c.vals) v))
+                    ELSE $11 END))`;
 
 const CHUNK_SIGNALS_SQL = `
   mc.chunk_id, mc.memory_id,
   1 - (mc.embedding <=> q.qv) AS vec_sim,
   CASE WHEN mc.tsv @@ q.qt THEN ts_rank(mc.tsv, q.qt) ELSE 0 END AS fts_score`;
+
+const EXACT_SQL = `EXISTS (SELECT 1 FROM memory_facets f
+  WHERE f.memory_id = m.memory_id AND lower(f.value) = ANY($12::text[]))`;
 
 function searchSql(withVector: boolean): string {
   const vecArm = `
@@ -119,12 +146,20 @@ fts AS (
   ORDER BY fts_score DESC
   LIMIT 200
 ),
+ex AS (
+  SELECT ${CHUNK_SIGNALS_SQL}
+  FROM memory_chunks mc JOIN memories m USING (memory_id), q
+  WHERE mc.chunk_idx = 0 AND cardinality($12::text[]) > 0 AND ${EXACT_SQL} AND ${VISIBLE_SQL}
+  LIMIT 200
+),
 cand AS (
-  ${withVector ? "SELECT * FROM vec UNION" : ""} SELECT * FROM fts
+  ${withVector ? "SELECT * FROM vec UNION" : ""} SELECT * FROM fts UNION SELECT * FROM ex
 ),
 best AS (
   SELECT DISTINCT ON (c.memory_id) c.memory_id, c.chunk_id,
-         (COALESCE(c.vec_sim, 0) * 0.7 + LEAST(c.fts_score, 1.0) * 0.3)
+         ${EXACT_SQL} AS exact,
+         (COALESCE(c.vec_sim, 0) * 0.55 + LEAST(c.fts_score, 1.0) * 0.25
+          + CASE WHEN ${EXACT_SQL} THEN 0.20 ELSE 0 END)
            * ${PRIOR_SCORE_SQL} AS score
   FROM cand c JOIN memories m USING (memory_id)
   ORDER BY c.memory_id, score DESC
@@ -133,14 +168,24 @@ SELECT m.memory_id, m.name, m.description, m.dir_key,
        m.type, m.source, m.created_at, m.updated_at,
        m.hit_count, m.last_hit_at, m.deleted_at,
        LEFT(mc.content, 200) AS snippet,
-       b.score,
+       b.score, b.exact,
        m.scope AS scope_tier
 FROM best b
 JOIN memories m USING (memory_id)
 JOIN memory_chunks mc ON mc.chunk_id = b.chunk_id
-ORDER BY b.score DESC, m.memory_id
+ORDER BY b.exact DESC, b.score DESC, m.memory_id
 LIMIT $8
 `;
+}
+
+// ID-like query tokens for the exact arm: anything with a digit (sample
+// IDs, lots, versions, TP53) or an all-caps symbol of 2+ letters (GAPDH).
+// Lower-cased to match normalized facet values.
+export function exactTokens(query: string): string[] {
+  const toks = query.split(/[\s,;:()\[\]{}"'`]+/).map((t) => t.replace(/^[.\-]+|[.\-]+$/g, ""));
+  return [...new Set(
+    toks.filter((t) => t.length >= 2 && (/\d/.test(t) || /^[A-Z][A-Z0-9-]+$/.test(t))).map((t) => t.toLowerCase()),
+  )];
 }
 
 export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHit[]> {
@@ -179,12 +224,16 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     hit_count:   number;
     last_hit_at: Date | null;
     deleted_at:  Date | null;
+    exact:       boolean;
   };
 
   const dirs = args.dirs && args.dirs.length > 0 ? args.dirs : null;
+  const conditions = args.conditions && Object.keys(args.conditions).length > 0
+    ? JSON.stringify(normalizeFacets(args.conditions)) : null;
   const params = [
     qVec === null ? null : "[" + qVec.join(",") + "]",
     args.query, args.username, args.project_dir, types, since, dirs, limit,
+    args.clearance ?? "internal", conditions, args.strict ?? false, exactTokens(args.query),
   ];
 
   // The vector arm filters by visibility after the HNSW scan; iterative scan
@@ -220,6 +269,7 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     hit_count:   r.hit_count,
     last_hit_at: r.last_hit_at ? r.last_hit_at.toISOString() : null,
     deleted_at:  r.deleted_at  ? r.deleted_at.toISOString()  : null,
+    exact:       r.exact,
   }));
 
   // Retrieval alone is not a signal (phase 3): hit_count moves only when a
@@ -633,7 +683,7 @@ export async function updateMemory(args: {
   // Fold a near-duplicate into this memory (merge-on-write). Unlike a plain
   // edit it may rewrite distilled rows; audited as 'merge'.
   merge?:      boolean;
-}): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> {
+}): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' | 'immutable' }> {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
@@ -647,8 +697,9 @@ export async function updateMemory(args: {
       body:        string;
       scope:       "user" | "project" | "org";
       dir_key:     string;
+      type:        string;
     }>(
-      `SELECT username, source, name, description, body, scope, dir_key
+      `SELECT username, source, name, description, body, scope, dir_key, type
          FROM memories
         WHERE memory_id = $1
         FOR UPDATE`,
@@ -670,6 +721,13 @@ export async function updateMemory(args: {
     if (row.source !== 'user' && !args.merge) {
       await client.query("ROLLBACK");
       return { ok: false, reason: 'distilled' };
+    }
+
+    // Claims are immutable, even for merges: a correction is a new claim
+    // linked with SUPERSEDES or RETRACTS (spec §4.1).
+    if (row.type === 'claim') {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: 'immutable' };
     }
 
     // Match writeUserMemory's hash recipe exactly: promptVersion=0, body=`${name}\n${body}`.
@@ -1030,7 +1088,8 @@ const CONTEXT_HEADER =
   "# Memory index\n\n" +
   "Your long-term memory, by directory: each line is a directory's summary and entry count, " +
   "followed by its top entries. Read a directory's full overview with memory_dir, " +
-  "an entry's full text with memory_get(id), or search with memory_search.\n" +
+  "an entry's full text with memory_get(id), or search with memory_search " +
+  "(memory_context for a cited bundle).\n" +
   "After a task where a memory informed your work, call memory_feedback with those " +
   "memory ids and whether the task succeeded.\n\n";
 
@@ -1370,7 +1429,11 @@ export async function recordFeedback(args: {
         SET hit_count     = hit_count + 1,
             last_hit_at   = now(),
             success_count = success_count + CASE WHEN $3 = 'success' THEN 1 ELSE 0 END,
-            failure_count = failure_count + CASE WHEN $3 = 'failure' THEN 1 ELSE 0 END
+            failure_count = failure_count + CASE WHEN $3 = 'failure' THEN 1 ELSE 0 END,
+            -- An anecdotal experience that worked twice is 'repeated'.
+            validation_level = CASE
+              WHEN validation_level = 'anecdotal' AND $3 = 'success' AND success_count + 1 >= 2
+              THEN 'repeated' ELSE validation_level END
       WHERE memory_id = ANY($1::uuid[])
         AND deleted_at IS NULL
         AND (username = $2 OR username = '__org__')`,

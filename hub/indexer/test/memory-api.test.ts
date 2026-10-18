@@ -10,6 +10,12 @@ import type {
   ListItem,
 } from "../src/memory-repo.js";
 
+const EMPTY_OUTCOME = {
+  run_id: "r-1" as string | null, claim_ids: [] as Array<string | null>, experience_ids: [] as Array<string | null>,
+  duplicates: [] as never[], superseded: [] as never[], qualified: [] as never[], related: [] as never[],
+  similar: [] as Array<{ name: string; matches: never[] }>,
+};
+
 // Tiny test-double factory: every repo function is a vi.fn() with a sensible
 // default return. Tests override on a per-case basis with mockResolvedValueOnce.
 function makeDeps(): { deps: MemoryApiDeps; repo: {
@@ -30,6 +36,9 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   recordFeedback:   ReturnType<typeof vi.fn>;
   proposeExperiences: ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
+  linkMemories:     ReturnType<typeof vi.fn>;
+  buildBundle:      ReturnType<typeof vi.fn>;
+  consolidate:      ReturnType<typeof vi.fn>;
 } } {
   const repo = {
     searchMemories:   vi.fn(async (): Promise<SearchHit[]>     => []),
@@ -38,7 +47,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     writeUserMemory:  vi.fn(async (): Promise<{ memory_id: string | null }> => ({ memory_id: "m-1" })),
     forgetMemory:     vi.fn(async (): Promise<{ ok: boolean }> => ({ ok: true })),
     getContext:       vi.fn(async (): Promise<MemoryContext>   => ({ system_prompt: "", memory_ids: [] })),
-    updateMemory:     vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> => ({ ok: true })),
+    updateMemory:     vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' | 'immutable' }> => ({ ok: true })),
     restoreMemory:    vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> => ({ ok: true })),
     listMemories:     vi.fn(async (): Promise<{ items: ListItem[]; next_cursor: string | null }> => ({ items: [], next_cursor: null })),
     getAuditTrail:    vi.fn(async (): Promise<{ rows: never[] } | { error: 'not_found' | 'forbidden' }> => ({ rows: [] })),
@@ -57,7 +66,12 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     memoryTree:       vi.fn(async () => ({ dirs: [], memories: [], topics: [], thresholds: { memories: 3, successes: 3 } })),
     recordFeedback:   vi.fn(async () => ({ updated: 0 })),
     proposeExperiences: vi.fn(async () => ({ proposed: [] as string[] })),
-    writeDistillation: vi.fn(async () => ({ similar: [] as never[] })),
+    writeDistillation: vi.fn(async () => ({ ...EMPTY_OUTCOME })),
+    linkMemories:     vi.fn(async (): Promise<{ ok: boolean; reason?: "not_found" | "forbidden" | "self" }> => ({ ok: true })),
+    buildBundle:      vi.fn(async () => ({
+      query: "q", filters: {}, current_versions: [], facts: [], experiences: [], warnings: [], text: "",
+    })),
+    consolidate:      vi.fn(async () => ({ proposed_supports: [], unlabeled_pairs: [], stale_experiences: [] })),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
@@ -94,7 +108,7 @@ describe("memory-api", () => {
           memory_id: "a", name: "n", description: "d", dir_key: "user/notes", snippet: "s", score: 0.9,
           scope_tier: "user", type: "user", source: "user",
           created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
-          hit_count: 0, last_hit_at: null, deleted_at: null,
+          hit_count: 0, last_hit_at: null, deleted_at: null, exact: false,
         },
       ];
       depsBag.repo.searchMemories.mockResolvedValueOnce(hits);
@@ -653,79 +667,120 @@ describe("memory-api", () => {
     const validBody = {
       username:    "alice",
       project_dir: "-home-alice-proj",
-      summary: { name: "n", description: "d", body: "b" },
-      observations: [
-        { type: "decision", name: "n", description: "d", body: "b", facets: { tool: ["seqkit"] } },
-      ],
+      run: { subject: "PBMC3k QC", statement: "filtered to 2638 cells", conditions: { dataset: ["pbmc3k"] } },
+      claims: [{ claim_kind: "result", subject: "clusters", statement: "9 clusters at res 0.8" }],
     };
 
-    it("happy path: forwards summary+observations to writeDistillation, returns attempted count", async () => {
+    it("happy path: forwards the parsed v2 payload and returns the outcome", async () => {
       const res = await app.inject({ method: "POST", url: "/memory/distill", payload: validBody });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, attempted: 2, similar: [] });
-      expect(depsBag.repo.writeDistillation).toHaveBeenCalledTimes(1);
+      expect(res.json()).toEqual({ ok: true, ...EMPTY_OUTCOME });
       const arg = depsBag.repo.writeDistillation.mock.calls[0]![1];
-      expect(arg.sessionMeta.username).toBe("alice");
-      expect(arg.sessionMeta.project_dir).toBe("-home-alice-proj");
-      expect(arg.sessionMeta.source_session_id).toBeNull();
-      expect(arg.result.summary).toEqual(validBody.summary);
-      expect(arg.result.observations).toEqual(validBody.observations);
+      expect(arg.sessionMeta).toEqual({ username: "alice", project_dir: "-home-alice-proj", source_session_id: null });
+      expect(arg.promptVersion).toBe(2);
+      // zod defaults are applied before the repo sees the payload.
+      expect(arg.result.run).toMatchObject({ subject: "PBMC3k QC", inputs: [], evidence: [] });
+      expect(arg.result.claims[0]).toMatchObject({ claim_kind: "result", conditions: {} });
+      expect(arg.result.experiences).toEqual([]);
     });
 
-    it("empty observations array is valid; attempted=1", async () => {
-      const res = await app.inject({
-        method: "POST",
-        url: "/memory/distill",
-        payload: { ...validBody, observations: [] },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, attempted: 1, similar: [] });
+    it("source_session_id must be a UUID", async () => {
+      const bad = await app.inject({ method: "POST", url: "/memory/distill", payload: { ...validBody, source_session_id: "abc" } });
+      expect(bad.statusCode).toBe(400);
+      const sid = "00000000-0000-4000-8000-000000000001";
+      const ok = await app.inject({ method: "POST", url: "/memory/distill", payload: { ...validBody, source_session_id: sid } });
+      expect(ok.statusCode).toBe(200);
+      expect(depsBag.repo.writeDistillation.mock.calls[0]![1].sessionMeta.source_session_id).toBe(sid);
     });
 
-    it("source_session_id is forwarded when provided", async () => {
-      const res = await app.inject({
-        method: "POST",
-        url: "/memory/distill",
-        payload: { ...validBody, source_session_id: "abc-123" },
-      });
-      expect(res.statusCode).toBe(200);
-      const arg = depsBag.repo.writeDistillation.mock.calls[0]![1];
-      expect(arg.sessionMeta.source_session_id).toBe("abc-123");
-    });
-
-    it("rejects payload missing summary with 400", async () => {
-      const res = await app.inject({
-        method: "POST",
-        url: "/memory/distill",
-        payload: { username: "alice", observations: [] },
-      });
+    it("rejects a payload without a run claim", async () => {
+      const res = await app.inject({ method: "POST", url: "/memory/distill", payload: { username: "alice", claims: [] } });
       expect(res.statusCode).toBe(400);
       expect(depsBag.repo.writeDistillation).not.toHaveBeenCalled();
     });
 
-    it("rejects observation with invalid type with 400", async () => {
-      const res = await app.inject({
-        method: "POST",
-        url: "/memory/distill",
-        payload: {
-          ...validBody,
-          observations: [{ type: "speculation", name: "n", description: "d", body: "b", facets: {} }],
-        },
-      });
-      expect(res.statusCode).toBe(400);
-      expect(depsBag.repo.writeDistillation).not.toHaveBeenCalled();
+    it("rejects unknown condition keys and bad evidence URIs", async () => {
+      for (const run of [
+        { ...validBody.run, conditions: { favourite_colour: ["blue"] } },
+        { ...validBody.run, evidence: [{ uri: "results/umap.png" }] },
+      ]) {
+        const res = await app.inject({ method: "POST", url: "/memory/distill", payload: { ...validBody, run } });
+        expect(res.statusCode).toBe(400);
+      }
     });
 
-    it("rejects more than 8 observations with 400", async () => {
-      const obs = Array.from({ length: 9 }, () => ({
-        type: "finding", name: "n", description: "d", body: "b", facets: {},
+    it("rejects an experience below the value bar", async () => {
+      const exp = { task: "t", solution: "s", applicability: ["always"] };
+      const res = await app.inject({
+        method: "POST", url: "/memory/distill", payload: { ...validBody, experiences: [exp] },
+      });
+      expect(res.statusCode).toBe(400);
+      const res2 = await app.inject({
+        method: "POST", url: "/memory/distill",
+        payload: { ...validBody, experiences: [{ ...exp, failure_modes: ["fails on 10x v2"], source: 5 }] },
+      });
+      expect(res2.statusCode).toBe(400); // source index out of range
+    });
+
+    it("rejects more than 5 claims or 3 experiences", async () => {
+      const claims = Array.from({ length: 6 }, () => validBody.claims[0]);
+      const res = await app.inject({ method: "POST", url: "/memory/distill", payload: { ...validBody, claims } });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe("scientific routes", () => {
+    const A = "00000000-0000-4000-8000-00000000000a";
+    const B = "00000000-0000-4000-8000-00000000000b";
+
+    it("POST /memory/search forwards conditions and the caller's clearance", async () => {
+      app = buildApp({ ...depsBag.deps, clearance: { alice: "irb" } });
+      await app.inject({
+        method: "POST", url: "/memory/search",
+        payload: { username: "alice", query: "q", conditions: { cell_line: ["A549"] }, strict: true },
+      });
+      expect(depsBag.repo.searchMemories).toHaveBeenCalledWith(expect.objectContaining({
+        conditions: { cell_line: ["A549"] }, strict: true, clearance: "irb",
       }));
+    });
+
+    it("POST /memory/bundle encodes project_path and defaults clearance to internal", async () => {
       const res = await app.inject({
-        method: "POST",
-        url: "/memory/distill",
-        payload: { ...validBody, observations: obs },
+        method: "POST", url: "/memory/bundle",
+        payload: { username: "bob", project_path: "/workspace/pbmc3k", query: "q" },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(200);
+      expect(depsBag.repo.buildBundle).toHaveBeenCalledWith(expect.objectContaining({
+        username: "bob", project_dir: "-workspace-pbmc3k", clearance: "internal",
+      }));
+    });
+
+    it("POST /memory/link maps repo reasons to status codes", async () => {
+      const body = { actor: "alice", src_id: A, dst_id: B, rel: "SUPPORTS" };
+      expect((await app.inject({ method: "POST", url: "/memory/link", payload: body })).statusCode).toBe(200);
+      depsBag.repo.linkMemories.mockResolvedValueOnce({ ok: false, reason: "forbidden" });
+      expect((await app.inject({ method: "POST", url: "/memory/link", payload: body })).statusCode).toBe(403);
+      depsBag.repo.linkMemories.mockResolvedValueOnce({ ok: false, reason: "not_found" });
+      expect((await app.inject({ method: "POST", url: "/memory/link", payload: body })).statusCode).toBe(404);
+      const bad = await app.inject({ method: "POST", url: "/memory/link", payload: { ...body, rel: "LIKES" } });
+      expect(bad.statusCode).toBe(400);
+    });
+
+    it("POST /memory/consolidate is manager-only", async () => {
+      const no = await app.inject({ method: "POST", url: "/memory/consolidate", payload: { actor: "alice" } });
+      expect(no.statusCode).toBe(403);
+      const yes = await app.inject({ method: "POST", url: "/memory/consolidate", payload: { actor: "pi" } });
+      expect(yes.statusCode).toBe(200);
+      expect(depsBag.repo.consolidate).toHaveBeenCalledWith(expect.objectContaining({ actor: "pi", similarity: 0.9 }));
+    });
+
+    it("PUT /memory/:id returns 409 for an immutable claim", async () => {
+      depsBag.repo.updateMemory.mockResolvedValueOnce({ ok: false, reason: "immutable" });
+      const res = await app.inject({
+        method: "PUT", url: "/memory/m-1",
+        payload: { actor: "alice", name: "n", description: "d", body: "b", merge: true },
+      });
+      expect(res.statusCode).toBe(409);
     });
   });
 
@@ -785,13 +840,13 @@ describe("memory-api", () => {
       }));
     });
 
-    it("POST /memory/distill returns held-back observations", async () => {
-      depsBag.repo.writeDistillation.mockResolvedValueOnce({ similar: [{ name: "qc", matches: [] }] });
+    it("POST /memory/distill returns held-back experiences", async () => {
+      depsBag.repo.writeDistillation.mockResolvedValueOnce({ ...EMPTY_OUTCOME, similar: [{ name: "qc", matches: [] }] });
       const res = await app.inject({
         method: "POST", url: "/memory/distill",
-        payload: { username: "alice", summary: { name: "s", description: "d", body: "b" }, observations: [] },
+        payload: { username: "alice", run: { subject: "s", statement: "b" } },
       });
-      expect(res.json()).toEqual({ ok: true, attempted: 1, similar: [{ name: "qc", matches: [] }] });
+      expect(res.json()).toMatchObject({ ok: true, similar: [{ name: "qc", matches: [] }] });
     });
 
     it("PUT /memory/:id forwards merge", async () => {

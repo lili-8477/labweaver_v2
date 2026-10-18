@@ -16,6 +16,9 @@ export interface Config {
   memoryApiPort:        number;
   memoryOrgManagers:    string[];
   memoryMergeSimilarity: number;
+  // Per-user access clearance for memory reads (MEMORY_CLEARANCE, e.g.
+  // "alice=irb,bob=restricted"); users not listed read up to 'internal'.
+  memoryClearance:      Record<string, string>;
   shareSnapshotsDir:          string;
   shareMaxFolderBytes:        number;
   shareSnapshotTtlDays:       number;
@@ -54,6 +57,20 @@ function parseUnitVar(env: Record<string, string | undefined>, name: string, fal
   return n;
 }
 
+const CLEARANCES = ["public", "internal", "restricted", "irb"];
+
+function parseClearance(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const [user, level] = pair.split("=").map((s) => s.trim());
+    if (!user || !level || !CLEARANCES.includes(level)) {
+      throw new Error(`MEMORY_CLEARANCE entries must be user=${CLEARANCES.join("|")}; got ${JSON.stringify(pair)}`);
+    }
+    out[user] = level;
+  }
+  return out;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const pgUrl = env.PG_URL;
   if (!pgUrl) throw new Error("PG_URL is required");
@@ -84,6 +101,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
     memoryOrgManagers,
     memoryMergeSimilarity: parseUnitVar(env, "MEMORY_MERGE_SIMILARITY", 0.9),
+    memoryClearance:      parseClearance(env.MEMORY_CLEARANCE ?? ""),
     shareSnapshotsDir,
     shareMaxFolderBytes,
     shareSnapshotTtlDays,

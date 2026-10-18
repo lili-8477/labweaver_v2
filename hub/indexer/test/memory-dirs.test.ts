@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { fileURLToPath } from "node:url";
+import { DistillationResult } from "../src/distiller-prompts.js";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow, writeDistillation } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
@@ -218,16 +219,16 @@ describe("writes and directories", () => {
   it("files distilled rows by default mapping", async () => {
     await writeDistillation(pool, {
       sessionMeta: { username: "alice", project_dir: "-w-p", source_session_id: null },
-      result: {
-        summary: { name: "s", description: "d", body: "summary" },
-        observations: [{ type: "finding", name: "o", description: "d", body: "obs", facets: {} }],
-      },
-      promptVersion: 1,
+      result: DistillationResult.parse({
+        run: { subject: "s", statement: "summary" },
+        claims: [{ claim_kind: "observation", subject: "o", statement: "obs" }],
+      }),
+      promptVersion: 2,
     });
     const { items } = await listMemories({ pool, username: "alice", project_dir: "-w-p" });
-    expect(new Map(items.map((i) => [i.type, i.dir_key]))).toEqual(new Map([
-      ["session_summary", "project/trajectories"],
-      ["observation", "project/decisions"],
+    expect(new Map(items.map((i) => [i.name, i.dir_key]))).toEqual(new Map([
+      ["s", "project/trajectories"],
+      ["o", "project/decisions"],
     ]));
   });
 

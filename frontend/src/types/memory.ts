@@ -1,6 +1,6 @@
 // LabWeaver Memory Types — MIT License
 
-export type MemoryType = 'user' | 'feedback' | 'project' | 'reference' | 'session_summary' | 'observation'
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference' | 'session_summary' | 'observation' | 'claim' | 'experience'
 export type MemorySource = 'user' | 'distilled'
 export type ScopeTier = 'org' | 'user' | 'project'
 
@@ -27,7 +27,7 @@ export interface MemoryDetail extends MemoryListItem {
 
 export interface MemoryAuditEntry {
   audit_id: number
-  action: 'write' | 'update' | 'forget' | 'restore'
+  action: 'write' | 'update' | 'forget' | 'restore' | 'merge' | 'status'
   actor: string
   before: unknown
   after: unknown
