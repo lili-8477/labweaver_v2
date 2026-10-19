@@ -1,8 +1,9 @@
 // file_manager.* RPCs — implement directly on the local filesystem.
-// Scoped to the workspace root so a misbehaving frontend can't escape.
+// Paths resolve through workspace-path.ts (containment + access policy).
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { isListed, workspacePath, type Access } from "./workspace-path.js";
 
 // Extensions that are always binary. Everything else is read as UTF-8 text;
 // if that decode produces replacement chars, we fall back to base64.
@@ -22,29 +23,6 @@ const BINARY_EXTS = new Set([
   // fonts
   "ttf", "otf", "woff", "woff2", "eot",
 ]);
-
-/** Names that must never appear in list_files or be readable via the API.
- * Covers secrets and host-leakage surfaces. Matched by full basename only;
- * .env-prefixed variants are handled with a prefix check. */
-const HIDDEN_NAMES = new Set([
-  ".env",
-  ".ssh",
-  ".aws",
-  ".netrc",
-  ".credentials",
-  ".npmrc",
-  ".pypirc",
-  ".docker",
-  ".executor",
-  ".git",
-]);
-
-function isHidden(name: string): boolean {
-  if (HIDDEN_NAMES.has(name)) return true;
-  // Any .env.* (e.g. .env.local, .env.production)
-  if (name.startsWith(".env.")) return true;
-  return false;
-}
 
 const MIME_BY_EXT: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
@@ -71,19 +49,16 @@ function mimeForExt(ext: string): string {
 export class FileManager {
   constructor(private root: string) {}
 
-  private resolve(relPath: string): string {
-    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
-    const abs = path.resolve(this.root, normalized);
-    if (!abs.startsWith(this.root)) throw new Error("path escapes workspace");
-    return abs;
+  private resolve(relPath: string, access: Access): string {
+    return workspacePath(this.root, relPath, access);
   }
 
   async listFiles(relPath = ""): Promise<unknown> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "read");
     const entries = await fs.readdir(abs, { withFileTypes: true });
     const out = [];
     for (const e of entries) {
-      if (isHidden(e.name)) continue;
+      if (!isListed(e.name)) continue;
       const entryPath = path.join(relPath, e.name);
       const full = path.join(abs, e.name);
       try {
@@ -103,12 +78,7 @@ export class FileManager {
   }
 
   async readFile(relPath: string, opts: { encoding?: "utf8" | "base64" } = {}): Promise<unknown> {
-    // Refuse to read secrets even if the path is known.
-    const segs = relPath.split("/").filter(Boolean);
-    if (segs.some((s) => isHidden(s))) {
-      throw new Error(`read_file: access denied for hidden/secret path: ${relPath}`);
-    }
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "read");
     const ext = (relPath.split(".").pop() ?? "").toLowerCase();
     const mime = mimeForExt(ext);
     const wantBase64 = opts.encoding === "base64" || BINARY_EXTS.has(ext);
@@ -157,7 +127,7 @@ export class FileManager {
     content: string,
     opts: { encoding?: "utf8" | "base64" } = {},
   ): Promise<unknown> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "write");
     await fs.mkdir(path.dirname(abs), { recursive: true });
     if (opts.encoding === "base64") {
       await fs.writeFile(abs, Buffer.from(content, "base64"));
@@ -168,7 +138,7 @@ export class FileManager {
   }
 
   async deleteFile(relPath: string): Promise<unknown> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "write");
     const st = await fs.stat(abs);
     if (st.isDirectory()) await fs.rm(abs, { recursive: true, force: true });
     else await fs.unlink(abs);
@@ -183,12 +153,12 @@ export class FileManager {
     extra: { from?: string; to?: string } = {},
   ): Promise<unknown> {
     if (op === "create_dir") {
-      const abs = this.resolve(relPath);
+      const abs = this.resolve(relPath, "write");
       await fs.mkdir(abs, { recursive: true });
       return { success: true };
     }
     if (op === "delete") {
-      const abs = this.resolve(relPath);
+      const abs = this.resolve(relPath, "write");
       try {
         const st = await fs.stat(abs);
         if (st.isDirectory()) await fs.rm(abs, { recursive, force: true });
@@ -203,20 +173,8 @@ export class FileManager {
       const to = extra.to ?? "";
       if (!from || !to) throw new Error("manage_path move: missing from/to");
 
-      // Hidden-name + traversal guard on every segment of both paths. The
-      // shared resolve() silently strips leading `../`, which is fine for
-      // single-path ops but unsafe for move (target gets rewritten to root).
-      for (const seg of from.split("/").filter(Boolean)) {
-        if (seg === "..") throw new Error(`manage_path move: traversal in from`);
-        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in from: ${seg}`);
-      }
-      for (const seg of to.split("/").filter(Boolean)) {
-        if (seg === "..") throw new Error(`manage_path move: traversal in to`);
-        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in to: ${seg}`);
-      }
-
-      const absFrom = this.resolve(from);
-      const absTo = this.resolve(to);
+      const absFrom = this.resolve(from, "write");
+      const absTo = this.resolve(to, "write");
 
       // Refuse if target already exists. No overwrite.
       try {

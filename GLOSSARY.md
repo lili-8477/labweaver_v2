@@ -11,3 +11,5 @@ Domain terms for labweaver. Architecture reviews and code use these names.
 **Chat turn**: one user message sent to a chat, run on the agent engine until it ends or is stopped. Owns per-chat exclusion, stop, first-turn context, mode routing, the Auto marker, engine-session capture and post-turn project binding. Chat CRUD is not part of it.
 
 **Session**: the agent engine's (dsh) session for a chat, identified by its session UUID; a chat resumes it on later turns.
+
+**Workspace path**: a path the UI sends, relative to `/workspace`, resolved for `read` or `write` access by `workspace-path.ts`. It is never absolute and never contains `..`. Secrets (`.env*`, `.ssh`, `.git`, …) are refused at any depth for both access kinds. Writes are also refused to top-level harness files (`.claude` except `.claude/skills/`, `CLAUDE.md`, `.labweaver`, `.mcp.json`) and to the root itself. This guards against bugs rather than the UI's user: chat can already ask the agent to do anything in the container.

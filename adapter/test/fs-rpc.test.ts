@@ -85,6 +85,13 @@ describe("FileManager", () => {
     await expect(fm.readFile("../etc/passwd")).rejects.toThrow();
   });
 
+  it("refuses to write harness files but writes skills", async () => {
+    await expect(fm.writeFile(".claude/settings.json", "{}")).rejects.toThrow(/harness/);
+    await expect(fm.dispatch("manage_path", { operation: "delete", path: "CLAUDE.md" })).rejects.toThrow(/harness/);
+    await fm.writeFile(".claude/skills/s/SKILL.md", "# s");
+    expect(await fs.readFile(path.join(root, ".claude/skills/s/SKILL.md"), "utf8")).toBe("# s");
+  });
+
   it("filters .executor and .git from listings", async () => {
     await fs.mkdir(path.join(root, ".executor"));
     await fs.mkdir(path.join(root, ".git"));

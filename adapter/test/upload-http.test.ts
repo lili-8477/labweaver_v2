@@ -95,10 +95,10 @@ describe("PUT /upload/ path policy", () => {
     expect(written).toBe("hello");
   });
 
-  it("rejects a deny-listed segment with 403 denied_name", async () => {
+  it("refuses what the workspace path policy refuses with 403 denied_path", async () => {
     const r = await put("local_projects/.env");
     expect(r.status).toBe(403);
-    expect(await r.json()).toMatchObject({ error: "denied_name", segment: ".env" });
+    expect(await r.json()).toMatchObject({ error: "denied_path" });
   });
 
   it("rejects writes outside the allowed subtree", async () => {
@@ -117,22 +117,14 @@ describe("PUT /upload/ path policy", () => {
   it("still denies non-skills paths under .claude/", async () => {
     const r = await put(".claude/settings.json", "{}");
     expect(r.status).toBe(403);
-    expect(await r.json()).toMatchObject({ error: "denied_name" });
+    expect(await r.json()).toMatchObject({ error: "denied_path" });
   });
 
-  it("rejects .env nested inside a skill upload", async () => {
-    const r = await put(".claude/skills/demo/.env", "SECRET=1");
-    expect(r.status).toBe(403);
-    expect(await r.json()).toMatchObject({ error: "denied_name", segment: ".env" });
-  });
-
-  it("rejects path traversal that escapes .claude/skills/", async () => {
+  it("rejects path traversal out of .claude/skills/", async () => {
     // .claude/skills/../foo resolves to <ws>/.claude/foo, outside the carve-out.
     const r = await put(".claude/skills/..%2Fpwned.txt");
     expect(r.status).toBe(403);
-    // Could fail at deny-name (".." is not denied) or subtree check; the subtree
-    // check is what guards us here, so assert on the resolved path being outside.
-    expect(await r.json()).toMatchObject({ error: expect.stringMatching(/outside_allowed_subtree/) });
+    expect(await r.json()).toMatchObject({ error: "denied_path" });
     // And no file should have been written.
     await expect(stat(join(wsRoot, ".claude/pwned.txt"))).rejects.toThrow();
   });

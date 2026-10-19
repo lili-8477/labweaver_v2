@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { workspacePath, type Access } from "./workspace-path.js";
 import type { KernelBridge, IOPubEvent } from "./kernel.js";
 
 /**
@@ -113,11 +114,8 @@ export class NotebookManager {
     return this.kernels.size;
   }
 
-  private resolve(relPath: string): string {
-    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
-    const abs = path.resolve(this.root, normalized);
-    if (!abs.startsWith(this.root)) throw new Error("path escapes workspace");
-    return abs;
+  private resolve(relPath: string, access: Access = "read"): string {
+    return workspacePath(this.root, relPath, access);
   }
 
   private bumpVersion(p: string): number {
@@ -152,7 +150,7 @@ export class NotebookManager {
   }
 
   private async writeFile(relPath: string, nb: NotebookFile): Promise<void> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "write");
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, JSON.stringify(nb, null, 1), "utf8");
   }
@@ -217,7 +215,7 @@ export class NotebookManager {
   }
 
   async createNotebook(relPath: string, language: string): Promise<unknown> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "write");
     try {
       await fs.access(abs);
       throw new Error(`notebook already exists: ${relPath}`);

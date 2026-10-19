@@ -18,6 +18,7 @@ import { KernelBridge, type IOPubEvent } from "./kernel.js";
 import { MemoryRpcClient } from "./memory-rpc.js";
 import { NotebookManager } from "./notebook-rpc.js";
 import { ShareRpcClient } from "./share-rpc.js";
+import { workspacePath } from "./workspace-path.js";
 import { listOrgSkills } from "./org-skills-rpc.js";
 import { listUserSkills, readUserSkillManifest } from "./skills-rpc.js";
 import { listUserCommands } from "./commands-rpc.js";
@@ -341,23 +342,11 @@ export class RpcRouter {
           catch { return null; }
         };
 
-        const isSafeProjectDir = (d: string): boolean => {
-          // Workspace-relative, no traversal, no leading slash. We don't
-          // require the local_projects/ prefix — a binding outside that root
-          // is unusual but not invalid (e.g. a shared folder), and the
-          // workspace-root check below catches escapes.
-          if (!d || d.startsWith("/")) return false;
-          if (d.includes("..")) return false;
-          if (d.startsWith(".")) return false;
-          return true;
-        };
-
-        const resolveInWorkspace = (rel: string): string | null => {
-          const abs = path.resolve(this.deps.workspaceRoot, rel);
-          if (!abs.startsWith(this.deps.workspaceRoot + path.sep) && abs !== this.deps.workspaceRoot) {
-            return null;
-          }
-          return abs;
+        // A project binding follows the write rule (workspace-path.ts):
+        // no traversal, no harness or secret dirs.
+        const projectAbs = (rel: string): string | null => {
+          try { return workspacePath(this.deps.workspaceRoot, rel, "write"); }
+          catch { return null; }
         };
 
         const chatIdParam = (params.chat_id as string | undefined)?.trim();
@@ -369,8 +358,8 @@ export class RpcRouter {
 
         // Path #1: explicit binding.
         let chatRow = chatIdParam ? await this.chats.read(chatIdParam) : null;
-        if (chatRow?.project_dir && isSafeProjectDir(chatRow.project_dir)) {
-          const abs = resolveInWorkspace(chatRow.project_dir);
+        if (chatRow?.project_dir) {
+          const abs = projectAbs(chatRow.project_dir);
           if (abs) {
             raw = await tryPath(path.join(abs, "progress.md"));
             if (raw != null) {
@@ -386,7 +375,7 @@ export class RpcRouter {
           const name = chatRow.name?.trim();
           if (name && !name.includes("/") && !name.startsWith(".") && name !== "New chat") {
             const rel = `local_projects/${name}`;
-            const abs = resolveInWorkspace(rel);
+            const abs = projectAbs(rel);
             if (abs) {
               raw = await tryPath(path.join(abs, "progress.md"));
               if (raw != null) {
@@ -437,7 +426,7 @@ export class RpcRouter {
         if (raw == null && projectNameParam &&
             !projectNameParam.includes("/") && !projectNameParam.startsWith(".")) {
           const rel = `local_projects/${projectNameParam}`;
-          const abs = resolveInWorkspace(rel);
+          const abs = projectAbs(rel);
           if (abs) {
             raw = await tryPath(path.join(abs, "progress.md"));
             if (raw != null) {
@@ -697,13 +686,7 @@ export class RpcRouter {
   private projectDirParam(value: unknown): string | null {
     const raw = typeof value === "string" ? value.trim() : "";
     if (raw === "") return null;
-    if (raw.startsWith("/") || raw.includes("..") || raw.startsWith(".")) {
-      throw new Error("project_dir must be a safe workspace-relative path");
-    }
-    const abs = path.resolve(this.deps.workspaceRoot, raw);
-    if (!abs.startsWith(this.deps.workspaceRoot + path.sep)) {
-      throw new Error("project_dir escapes workspace");
-    }
+    workspacePath(this.deps.workspaceRoot, raw, "write"); // throws on traversal, harness or secret dirs
     return raw.replace(/\/+$/, "");
   }
 }

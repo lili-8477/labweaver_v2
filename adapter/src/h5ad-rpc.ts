@@ -14,6 +14,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { workspacePath } from "./workspace-path.js";
 import type { KernelBridge } from "./kernel.js";
 
 export type H5adKernelFactory = (sessionId: string) => KernelBridge;
@@ -213,12 +214,7 @@ export class H5adService {
   }
 
   private resolve(relPath: string): string {
-    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
-    const abs = path.resolve(this.deps.workspaceRoot, normalized);
-    if (!abs.startsWith(this.deps.workspaceRoot)) {
-      throw new Error("path escapes workspace");
-    }
-    return abs;
+    return workspacePath(this.deps.workspaceRoot, relPath, "read");
   }
 
   private async installHelpers(): Promise<void> {
