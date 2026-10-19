@@ -52,7 +52,9 @@ describe("startWatcher", () => {
       logger,
     });
     try {
-      // Create file after watcher starts.
+      // Create the file once the watcher's initial scan is done, so it
+      // arrives as a live add rather than racing the scan.
+      await handle.ready;
       const dir = path.join(root, "frank", ".labweaver", "projects", "-w");
       await mkdir(dir, { recursive: true });
       const full = path.join(dir, `${SID}.jsonl`);

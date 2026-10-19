@@ -6,6 +6,14 @@ import { encodeProjectDir } from "./path-decode.js";
 import { InvalidDirError, isDirFkViolation, resolveDir } from "./memory-dirs.js";
 import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from "./memory-merge.js";
 import { normalizeFacets } from "./facets.js";
+import type {
+  AuditRow, DirDetail, DirSummary, ListItem, MemoryDetail, MemoryTree, SearchHit, TimelineEntry, TreeMemory, TreeTopic,
+} from "./memory-contract.js";
+
+// Result shapes live in the memory contract; re-exported for existing importers.
+export type {
+  DirDetail, DirSummary, ListItem, MemoryDetail, MemoryTree, SearchHit, TimelineEntry, TreeMemory, TreeTopic,
+} from "./memory-contract.js";
 
 export interface AuditEntry {
   memory_id: string;
@@ -46,29 +54,6 @@ export interface SearchMemoriesArgs {
   clearance?:     string;
   conditions?:    Record<string, string[]>;
   strict?:        boolean;
-}
-
-export interface SearchHit {
-  memory_id:   string;
-  name:        string;
-  description: string;
-  dir_key:     string;
-  snippet:     string;
-  score:       number;
-  scope_tier:  "org" | "user" | "project";
-  // List-row parity: the frontend memory panel renders search hits with the
-  // same component as list rows, so SearchHit must carry every field
-  // MemoryListItem expects. Without these, the panel sees `deleted_at`
-  // === undefined and rendered every search hit with the [deleted] badge.
-  type:        string;
-  source:      "user" | "distilled";
-  created_at:  string;
-  updated_at:  string;
-  hit_count:   number;
-  last_hit_at: string | null;
-  deleted_at:  string | null;
-  // True when a facet equals an ID-like token of the query.
-  exact:       boolean;
 }
 
 // Name of the sentinel row distiller.ts writes on permanent failure; never
@@ -277,30 +262,6 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
   return hits;
 }
 
-export interface MemoryDetail {
-  memory_id:          string;
-  username:           string;
-  project_dir:        string | null;
-  type:               string;
-  source:             "distilled" | "user";
-  scope_tier:         "org" | "user" | "project";
-  dir_key:            string;
-  name:               string;
-  description:        string;
-  body:               string;
-  source_session_id:  string | null;
-  facets:             Record<string, string[]>;
-  hit_count:          number;
-  last_hit_at:        Date | null;
-  created_at:         Date;
-  updated_at:         Date;
-  // Populated for soft-deleted rows so the frontend can render the [deleted]
-  // badge and pick Forget vs Restore. Agents looking up a row by id see the
-  // deleted state too — that's intentional: the targeted lookup path was
-  // never the soft-delete enforcement boundary (search/list/timeline are).
-  deleted_at:         Date | null;
-}
-
 // Fetch a single memory by id with its facets grouped by key. Returns
 // soft-deleted rows too (with deleted_at populated) so the frontend can
 // render Forget/Restore correctly — the soft-delete visibility boundary is
@@ -366,10 +327,10 @@ export async function getMemory(
     source_session_id: row.source_session_id,
     facets:            row.facets,
     hit_count:         row.hit_count,
-    last_hit_at:       row.last_hit_at,
-    created_at:        row.created_at,
-    updated_at:        row.updated_at,
-    deleted_at:        row.deleted_at,
+    last_hit_at:       row.last_hit_at?.toISOString() ?? null,
+    created_at:        row.created_at.toISOString(),
+    updated_at:        row.updated_at.toISOString(),
+    deleted_at:        row.deleted_at?.toISOString() ?? null,
   };
 }
 
@@ -380,14 +341,7 @@ export async function getAuditTrail(args: {
   limit?:   number;
 }): Promise<
   | {
-      rows: Array<{
-        audit_id: number;
-        action:   string;
-        actor:    string;
-        before:   unknown;
-        after:    unknown;
-        created_at: string;
-      }>;
+      rows: AuditRow[];
     }
   | { error: 'not_found' | 'forbidden' }
 > {
@@ -408,15 +362,15 @@ export async function getAuditTrail(args: {
 
   // Fetch audit trail capped at limit (default/max 100)
   const limit = Math.min(args.limit ?? 100, 100);
-  type AuditRow = {
+  type AuditDbRow = {
     audit_id:  number;
-    action:    string;
+    action:    AuditRow["action"];
     actor:     string;
     before:    unknown;
     after:     unknown;
     created_at: Date;
   };
-  const auditRes = await args.pool.query<AuditRow>(
+  const auditRes = await args.pool.query<AuditDbRow>(
     `SELECT audit_id, action, actor, before, after, created_at
        FROM memory_audit_log
       WHERE memory_id = $1
@@ -435,14 +389,6 @@ export async function getAuditTrail(args: {
       created_at: r.created_at.toISOString(),
     })),
   };
-}
-
-export interface TimelineEntry {
-  memory_id:    string;
-  name:         string;
-  type:         string;
-  dir_key:      string;
-  created_at:   Date;
 }
 
 export interface TimelineMemoriesArgs {
@@ -494,7 +440,7 @@ export async function timelineMemories(args: TimelineMemoriesArgs): Promise<Time
     name:       row.name,
     type:       row.type,
     dir_key:    row.dir_key,
-    created_at: row.created_at,
+    created_at: row.created_at.toISOString(),
   }));
 }
 
@@ -861,21 +807,6 @@ export interface ListFilter {
   cursor?:          string;                       // ISO timestamp from prev page's tail
 }
 
-export interface ListItem {
-  memory_id:   string;
-  type:        string;
-  source:      'user' | 'distilled';
-  scope_tier:  'org' | 'user' | 'project';
-  dir_key:     string;
-  name:        string;
-  description: string;
-  created_at:  string;
-  updated_at:  string;
-  hit_count:   number;
-  last_hit_at: string | null;
-  deleted_at:  string | null;
-}
-
 // Paginated browser-friendly listing. Filterable by scope_tier, type, source,
 // include_deleted. Sortable by created_at DESC (default) or last_hit_at DESC.
 // Cursor pagination: the cursor is the ISO timestamp of the last item's sort
@@ -1213,14 +1144,6 @@ const DIR_VISIBLE_SQL = `(d.scope <> 'project' OR $2::text IS NOT NULL)`;
 const DIR_OWNED_SQL = `
   (m.scope = 'org' OR (m.username = $1 AND (m.scope = 'user' OR m.project_dir = $2)))`;
 
-export interface DirSummary {
-  dir_key:     string;
-  scope:       "user" | "project" | "org";
-  l0:          string;
-  entry_count: number;
-  updated_at:  string | null;   // newest entry; null when empty
-}
-
 // all_projects (UI tree): show project directories even without a
 // project_dir, counting entries across all of the caller's projects.
 export async function listDirs(args: {
@@ -1260,42 +1183,6 @@ export async function listDirs(args: {
 const TOPIC_FACETS = ["pipeline", "tool", "dataset"];
 export const SKILL_MIN_MEMORIES  = 3;
 export const SKILL_MIN_SUCCESSES = 3;
-
-export interface TreeMemory {
-  memory_id:     string;
-  name:          string;
-  description:   string;
-  dir_key:       string;
-  scope:         "user" | "project" | "org";
-  project_dir:   string | null;
-  created_at:    string;
-  updated_at:    string;
-  hit_count:     number;
-  success_count: number;
-  failure_count: number;
-  topics:        string[];        // "pipeline:toy-stats", "tool:pandas", …
-}
-
-export interface TreeTopic {
-  topic:         string;
-  key:           string;
-  value:         string;
-  memory_ids:    string[];
-  dirs:          string[];
-  memory_count:  number;
-  hit_count:     number;
-  success_count: number;
-  failure_count: number;
-  readiness:     number;          // 0..1; 1 = both thresholds met
-  ready:         boolean;
-}
-
-export interface MemoryTree {
-  dirs:       DirSummary[];
-  memories:   TreeMemory[];
-  topics:     TreeTopic[];        // ≥2 memories, most ready first
-  thresholds: { memories: number; successes: number };
-}
 
 export async function memoryTree(args: {
   pool:     Pool;
@@ -1361,15 +1248,6 @@ function groupTopics(memories: TreeMemory[]): TreeTopic[] {
     });
   }
   return topics.sort((a, b) => b.readiness - a.readiness || b.memory_count - a.memory_count);
-}
-
-export interface DirDetail extends DirSummary {
-  entries: Array<{
-    memory_id:   string;
-    name:        string;
-    description: string;          // the entry's L0
-    updated_at:  string;
-  }>;
 }
 
 // Directory L1: the directory's L0 plus its top `limit` entries ranked by the

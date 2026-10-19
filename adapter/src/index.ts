@@ -42,7 +42,7 @@ import { buildProviders, DEFAULT_MODEL_REF, ollamaBaseURL, type ProviderSpec } f
 import { discoverOllamaModels } from "./providers/ollama-discovery.js";
 import { loadDbConfig } from "./db-config.js";
 import { labweaverPath } from "./labweaver-dir.js";
-import { MemoryRpcClient } from "./memory-rpc.js";
+import { MemoryForwarder } from "./memory-rpc.js";
 import { NatsBus } from "./nats-bus.js";
 import { ShareRpcClient } from "./share-rpc.js";
 import { RpcRouter, type RpcDeps } from "./rpc.js";
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
 
   const memoryApiUrl = process.env.MEMORY_API_URL;
   const memoryClient = memoryApiUrl
-    ? new MemoryRpcClient(memoryApiUrl, dbCfg.username)
+    ? new MemoryForwarder({ baseUrl: memoryApiUrl, user: dbCfg.username })
     : null;
   if (!memoryClient) {
     console.warn("[adapter] MEMORY_API_URL not set — memory_* RPCs will be unavailable");

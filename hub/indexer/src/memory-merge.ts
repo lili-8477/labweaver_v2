@@ -4,19 +4,14 @@
 // them (PUT /memory/:id with merge=true) or re-sends with force_new.
 import type { PoolClient } from "pg";
 import { logger } from "./config.js";
+import type { SimilarMemory } from "./memory-contract.js";
 
 export interface MergeCheck {
   embedderClient: { embedTexts: (texts: string[]) => Promise<number[][]> };
   similarity:     number;   // cosine similarity at or above which a match is "similar"
 }
 
-export interface SimilarMemory {
-  memory_id:   string;
-  name:        string;
-  description: string;
-  body:        string;
-  sim:         number;
-}
+export type { SimilarMemory } from "./memory-contract.js";
 
 // Embed texts for the similarity check. Returns null when the embedder is
 // unavailable: the caller then writes without a check rather than failing.

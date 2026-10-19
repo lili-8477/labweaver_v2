@@ -271,8 +271,8 @@ describe("getMemory", () => {
     expect(got!.source_session_id).toBeNull();
     expect(got!.hit_count).toBe(0);
     expect(got!.last_hit_at).toBeNull();
-    expect(got!.created_at).toBeInstanceOf(Date);
-    expect(got!.updated_at).toBeInstanceOf(Date);
+    expect(got!.created_at).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(got!.updated_at).toMatch(/^\d{4}-\d\d-\d\dT/);
     // facets grouped by key; values returned in sorted order.
     expect(got!.facets).toEqual({
       tool: ["STAR", "fastp"],
@@ -301,7 +301,7 @@ describe("getMemory", () => {
     await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [id]);
     const got = await getMemory(pool, id);
     expect(got).not.toBeNull();
-    expect(got!.deleted_at).toBeInstanceOf(Date);
+    expect(got!.deleted_at).toMatch(/^\d{4}-\d\d-\d\dT/);
   });
 
   it("returns scope_tier='project' for project-scoped rows and 'user' for user-scoped rows", async () => {
@@ -338,7 +338,7 @@ describe("timelineMemories", () => {
 
     const rows = await timelineMemories({ pool, username: "alice" });
     expect(rows.map((r) => r.memory_id)).toEqual([newId, midId, oldId]);
-    expect(rows.every((r) => r.created_at instanceof Date)).toBe(true);
+    expect(rows.every((r) => !Number.isNaN(Date.parse(r.created_at)))).toBe(true);
     expect(rows[0]!.name).toBe("seed-302");
     expect(rows[0]!.type).toBe("observation");
   });
@@ -598,7 +598,7 @@ describe("forgetMemory", () => {
 
     const after = await getMemory(pool, id);
     expect(after).not.toBeNull();
-    expect(after!.deleted_at).toBeInstanceOf(Date);
+    expect(after!.deleted_at).toMatch(/^\d{4}-\d\d-\d\dT/);
 
     // Confirm deleted_at was set (and updated_at advanced) without nuking
     // chunks / facets / queue rows.

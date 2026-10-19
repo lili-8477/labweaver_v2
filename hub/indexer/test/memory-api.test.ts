@@ -184,8 +184,8 @@ describe("memory-api", () => {
         facets:            {},
         hit_count:         0,
         last_hit_at:       null,
-        created_at:        new Date("2026-01-01T00:00:00Z"),
-        updated_at:        new Date("2026-01-01T00:00:00Z"),
+        created_at:        "2026-01-01T00:00:00.000Z",
+        updated_at:        "2026-01-01T00:00:00.000Z",
         deleted_at:        null,
       };
       depsBag.repo.getMemory.mockResolvedValueOnce(detail);
@@ -210,7 +210,7 @@ describe("memory-api", () => {
   describe("GET /memory/timeline", () => {
     it("happy path: forwards query params and converts since/until to Date", async () => {
       const entries: TimelineEntry[] = [
-        { memory_id: "x", name: "n", type: "user", dir_key: "user/notes", created_at: new Date("2026-01-01T00:00:00Z") },
+        { memory_id: "x", name: "n", type: "user", dir_key: "user/notes", created_at: "2026-01-01T00:00:00.000Z" },
       ];
       depsBag.repo.timelineMemories.mockResolvedValueOnce(entries);
 

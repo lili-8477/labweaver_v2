@@ -99,10 +99,15 @@ See `image/README.md` for Dockerfile details.
 Prerequisites: Docker, Node 20.
 
 ```bash
+# 0. The memory contract (hub/indexer/src/memory-contract.ts) is bundled into
+#    the adapter and mcp-memory and type-checked by the frontend, so the
+#    indexer's dependencies come first.
+(cd hub/indexer && npm ci)
+
 # 1. Build the adapter bundle.
 cd adapter
 npm ci
-npm test          # contract tests against the frontend event shape
+npm test
 npm run build
 cd ..
 
@@ -143,8 +148,9 @@ also uses it (as a cookie) for file uploads and downloads.
 ## Quick start (single-user local dev)
 
 ```bash
-# The image copies the prebuilt adapter and memory MCP bundles.
-(cd adapter && npm ci && npm run build) && (cd mcp-memory && npm ci && npm run build)
+# The image copies the prebuilt adapter and memory MCP bundles; both bundle
+# the memory contract from hub/indexer, so install its dependencies first.
+(cd hub/indexer && npm ci) && (cd adapter && npm ci && npm run build) && (cd mcp-memory && npm ci && npm run build)
 docker build -f image/Dockerfile -t labweaver:dev .
 
 # hub/.env needs POSTGRES_PASSWORD (add-user.sh generates it on a real hub).

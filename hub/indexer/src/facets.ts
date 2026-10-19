@@ -2,16 +2,9 @@
 // holds these; retrieval uses them as hard filters and as the exact-ID arm.
 import { createHash } from "node:crypto";
 
-export const BIOLOGY_KEYS  = ["species", "model", "cell_line", "tissue", "sample", "cohort"] as const;
-export const METHOD_KEYS   = [
-  "assay", "protocol", "protocol_version", "reagent_lot", "instrument", "run_id", "dose", "timepoint",
-] as const;
-export const ANALYSIS_KEYS = [
-  "dataset", "dataset_version", "reference", "pipeline", "pipeline_version", "code_version",
-] as const;
-export const LEGACY_KEYS   = ["gene", "tool", "file"] as const;
+import { ANALYSIS_KEYS, BIOLOGY_KEYS, FACET_KEYS, LEGACY_KEYS, METHOD_KEYS } from "./facet-keys.js";
 
-export const FACET_KEYS = [...BIOLOGY_KEYS, ...METHOD_KEYS, ...ANALYSIS_KEYS, ...LEGACY_KEYS] as const;
+export { ANALYSIS_KEYS, BIOLOGY_KEYS, FACET_KEYS, LEGACY_KEYS, METHOD_KEYS };
 
 // The keys that describe the conditions of an experiment. Two claims about the
 // same subject with different values here are not comparable (§5.3).
