@@ -9,11 +9,12 @@ import {
   extractSkillTarball,
   atomicReplaceSkillDir,    // NEW
 } from "./share-fs.js";
+import { LABWEAVER_DIR } from "./labweaver-dir.js";
 import type { SubmitArgs, SubmitResult, ShareRow, DecideResult } from "./share-repo.js";
 
 export async function submitSkillShareRequest(args: SubmitArgs): Promise<SubmitResult> {
-  // Resolve <workspaces>/<requester>/.claude/skills/<ref>; reject traversal.
-  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, ".claude", "skills");
+  // Resolve <workspaces>/<requester>/.labweaver/skills/<ref>; reject traversal.
+  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, LABWEAVER_DIR, "skills");
   const resolved = safeJoin(userSkillsRoot, args.ref);
   if (resolved === null) {
     return { ok: false, reason: "invalid_ref" };
@@ -68,7 +69,7 @@ export async function submitSkillShareRequest(args: SubmitArgs): Promise<SubmitR
 
 export async function submitSkillUpdateShareRequest(args: SubmitArgs): Promise<SubmitResult> {
   // Same source validation as submitSkillShareRequest.
-  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, ".claude", "skills");
+  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, LABWEAVER_DIR, "skills");
   const resolved = safeJoin(userSkillsRoot, args.ref);
   if (resolved === null) {
     return { ok: false, reason: "invalid_ref" };

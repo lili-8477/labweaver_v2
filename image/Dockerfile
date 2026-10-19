@@ -109,12 +109,8 @@ ARG UID=1001
 ARG GID=1001
 RUN groupadd --gid "${GID}" node \
     && useradd  --uid "${UID}" --gid node --create-home --shell /bin/bash node \
-    && mkdir -p /home/node/.claude/skills \
-                /home/node/.dsh \
-                /home/node/.claude/agents \
-                /home/node/.claude/projects \
-                /home/node/.ssh \
-    && chown -R node:node /home/node/.claude /home/node/.dsh /home/node/.ssh /opt/adapter /opt/mcp-memory \
+    && mkdir -p /home/node/.dsh /home/node/.ssh \
+    && chown -R node:node /home/node/.dsh /home/node/.ssh /opt/adapter /opt/mcp-memory \
     && chmod 700 /home/node/.ssh \
     && chmod +x /opt/adapter/kernel-bridge.py
 # NOTE: `/venv` is inherited from the base image owned by root. We intentionally

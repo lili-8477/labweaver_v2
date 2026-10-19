@@ -10,19 +10,19 @@ beforeEach(async () => {
 });
 
 describe("listUserSkills", () => {
-  it("returns [] when ~/.claude/skills does not exist", async () => {
+  it("returns [] when ~/.labweaver/skills does not exist", async () => {
     expect(await listUserSkills(home)).toEqual([]);
   });
 
   it("lists each subdir that contains SKILL.md", async () => {
     const make = async (n: string, body: string) => {
-      const d = path.join(home, ".claude", "skills", n);
+      const d = path.join(home, ".labweaver", "skills", n);
       await mkdir(d, { recursive: true });
       await writeFile(path.join(d, "SKILL.md"), body);
     };
     await make("alpha", `---\ndescription: alpha skill\n---\nbody`);
     await make("beta",  `---\ndescription: "beta with quotes"\n---\nbody`);
-    await mkdir(path.join(home, ".claude", "skills", "no-manifest"), { recursive: true });
+    await mkdir(path.join(home, ".labweaver", "skills", "no-manifest"), { recursive: true });
 
     const r = await listUserSkills(home);
     expect(r).toEqual([
@@ -32,7 +32,7 @@ describe("listUserSkills", () => {
   });
 
   it("returns empty description when frontmatter is missing or has no description", async () => {
-    const d = path.join(home, ".claude", "skills", "x");
+    const d = path.join(home, ".labweaver", "skills", "x");
     await mkdir(d, { recursive: true });
     await writeFile(path.join(d, "SKILL.md"), "no frontmatter here\n");
     expect(await listUserSkills(home)).toEqual([{ name: "x", description: "" }]);
@@ -41,32 +41,22 @@ describe("listUserSkills", () => {
 
 describe("readUserSkillManifest", () => {
   it("returns the SKILL.md body for a personal skill", async () => {
-    const d = path.join(home, ".claude", "skills", "alpha");
+    const d = path.join(home, ".labweaver", "skills", "alpha");
     await mkdir(d, { recursive: true });
     await writeFile(path.join(d, "SKILL.md"), "---\ndescription: a\n---\nbody\n");
     expect(await readUserSkillManifest(home, "alpha"))
       .toBe("---\ndescription: a\n---\nbody\n");
   });
 
-  it("follows symlinks that point into ~/.claude/skills-user", async () => {
-    const tier = path.join(home, ".claude", "skills-user", "beta");
-    await mkdir(tier, { recursive: true });
-    await writeFile(path.join(tier, "SKILL.md"), "from tier\n");
-    const link = path.join(home, ".claude", "skills", "beta");
+  it("refuses a symlink, even one that points at a skill", async () => {
+    const elsewhere = path.join(home, "elsewhere", "gamma");
+    await mkdir(elsewhere, { recursive: true });
+    await writeFile(path.join(elsewhere, "SKILL.md"), "org body\n");
+    const link = path.join(home, ".labweaver", "skills", "gamma");
     await mkdir(path.dirname(link), { recursive: true });
-    await symlink(tier, link);
-    expect(await readUserSkillManifest(home, "beta")).toBe("from tier\n");
-  });
-
-  it("refuses symlinks that point outside the personal tier", async () => {
-    const orgTier = path.join(home, ".claude", "skills-shared", "gamma");
-    await mkdir(orgTier, { recursive: true });
-    await writeFile(path.join(orgTier, "SKILL.md"), "org body\n");
-    const link = path.join(home, ".claude", "skills", "gamma");
-    await mkdir(path.dirname(link), { recursive: true });
-    await symlink(orgTier, link);
-    await expect(readUserSkillManifest(home, "gamma"))
-      .rejects.toThrow(/not a personal skill/);
+    await symlink(elsewhere, link);
+    await expect(readUserSkillManifest(home, "gamma")).rejects.toThrow(/not a personal skill/);
+    expect(await listUserSkills(home)).toEqual([]);
   });
 
   it.each([
@@ -80,7 +70,7 @@ describe("readUserSkillManifest", () => {
   });
 
   it("throws when the skill does not exist", async () => {
-    await mkdir(path.join(home, ".claude", "skills"), { recursive: true });
+    await mkdir(path.join(home, ".labweaver", "skills"), { recursive: true });
     await expect(readUserSkillManifest(home, "missing"))
       .rejects.toThrow(/skill not found/);
   });

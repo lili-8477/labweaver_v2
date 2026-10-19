@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { LABWEAVER_DIR } from "./labweaver-dir.js";
 
 export interface ResolvedJsonlPath {
   username: string;
@@ -10,8 +11,8 @@ export interface ResolvedJsonlPath {
 /**
  * Resolve a watched JSONL path into its trust-critical components.
  *
- * Expected layout (matches existing add-user.sh bind-mount):
- *   <watchRoot>/<username>/.claude/claude-projects/<encoded>/<sessionId>.jsonl
+ * Expected layout (the labweaver folder add-user.sh bind-mounts):
+ *   <watchRoot>/<username>/.labweaver/projects/<encoded>/<sessionId>.jsonl
  *
  * Username is taken from the watch-root-relative path prefix — never from the
  * encoded project directory name. The decoded project path is lossy (real
@@ -27,14 +28,14 @@ export function resolveJsonlPath(
 
   const rel = normFull.slice(normRoot.length + 1);
   const parts = rel.split(path.sep);
-  // username / .claude / claude-projects / encoded / sessionId.jsonl
+  // username / .labweaver / projects / encoded / sessionId.jsonl
   if (parts.length !== 5) return null;
   if (parts.some((p) => p === "" || p === "..")) return null;
-  const [username, dotClaude, cp, encodedProjectDir, file] = parts as [
+  const [username, dir, sub, encodedProjectDir, file] = parts as [
     string, string, string, string, string,
   ];
-  if (dotClaude !== ".claude") return null;
-  if (cp !== "claude-projects") return null;
+  if (dir !== LABWEAVER_DIR) return null;
+  if (sub !== "projects") return null;
   if (!file.endsWith(".jsonl")) return null;
   const sessionId = file.slice(0, -".jsonl".length);
   if (sessionId.length === 0) return null;

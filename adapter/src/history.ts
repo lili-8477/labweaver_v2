@@ -6,6 +6,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { labweaverPath } from "./labweaver-dir.js";
 import { stripSessionContext } from "./session-context.js";
 
 export interface LegacyMessage {
@@ -22,14 +23,14 @@ export interface LegacyMessage {
 
 /** Canonical transcript path: Claude Code encodes cwd as "-absolute-path-with-dashes". */
 export function transcriptPath(home: string, cwd: string, sessionId: string): string {
-  return path.join(home, ".claude", "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
+  return labweaverPath(home, "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
 }
 
 function sessionPathCandidates(home: string, cwd: string, chatId: string): string[] {
   const encoded = cwd.replace(/\//g, "-");
   return [
     transcriptPath(home, cwd, chatId),
-    path.join(home, ".claude", "projects", encoded.replace(/^-/, ""), `${chatId}.jsonl`),
+    labweaverPath(home, "projects", encoded.replace(/^-/, ""), `${chatId}.jsonl`),
   ];
 }
 
@@ -78,9 +79,9 @@ export async function readSessionMessages(
 
 /** Recognises the skill-payload text Claude Code injects after a Skill tool call.
  *  The anchor is stable across skills: every injection starts with the literal
- *  "Base directory for this skill:" line pointing at ~/.claude/skills/<name>/. */
+ *  "Base directory for this skill:" line pointing at ~/.labweaver/skills/<name>/. */
 function isSkillInjection(text: string): boolean {
-  return /^Base directory for this skill:\s*\S+\.claude\/skills\//.test(text.trimStart());
+  return /^Base directory for this skill:\s*\S+(?:\.claude|\.labweaver|shared)\/skills\//.test(text.trimStart());
 }
 
 function projectEntry(entry: Record<string, unknown>): LegacyMessage[] {

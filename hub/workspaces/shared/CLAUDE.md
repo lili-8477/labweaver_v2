@@ -21,17 +21,7 @@ The shared skills source files live at `/workspace/shared/skills/<name>/SKILL.md
 
 ## Installing a personal skill
 
-Personal skills live in `~/.claude/skills-user/<name>/SKILL.md` with a symlink at `~/.claude/skills/<name>` so Claude Code auto-discovers them on the next session. `~/.claude/` is a sensitive path, so the Write tool there triggers a permission prompt every time — but a single Bash command does the whole install with **one** Allow click.
-
-The reliable recipe is exactly this:
-
-1. **Write the skill body** to `/workspace/<name>-SKILL.md` using the Write tool. `/workspace/` is freely writable — no prompt.
-2. **Install** with one Bash call (the user clicks Allow once):
-   ```
-   NAME=<name> && mkdir -p ~/.claude/skills-user/$NAME && mv /workspace/$NAME-SKILL.md ~/.claude/skills-user/$NAME/SKILL.md && ln -sfn ~/.claude/skills-user/$NAME ~/.claude/skills/$NAME
-   ```
-
-Use `<name>` in kebab-case (e.g. `ss-mouse-celltype`, not `SS Mouse Celltype`). Don't try Write-tool-direct to `~/.claude/skills/...` — the sensitive-path check rejects it regardless of `permissions.allow` rules in settings.json. Don't split the install into three Bash calls — that's three Allow clicks instead of one.
+Personal skills live in `~/.labweaver/skills/<name>/SKILL.md`. Write the file there directly; the agent picks it up on the next session. Use `<name>` in kebab-case (e.g. `ss-mouse-celltype`, not `SS Mouse Celltype`).
 
 After install, the skill shows up in the Skills tab on next page refresh and is invokable as `/<name>`.
 
@@ -96,7 +86,7 @@ Rules:
 
 ## After submitting a SLURM job (sbatch on CHPC)
 
-Once `sbatch` returns a jobid, **end the turn cleanly**. The `posttool_jobid.sh` hook auto-spawns a background `chpc_job_watcher.sh` for that jobid; it polls `sacct` via the SSH bridge every 10 minutes and, on terminal state (COMPLETED/FAILED/TIMEOUT/OOM/etc.), writes one NDJSON record to `~/.claude/.chpc_pending`. The `userprompt_route.sh` hook drains that inbox at the top of the next user prompt, so the agent sees the result as additional context the next time the user types anything.
+Once `sbatch` returns a jobid, **end the turn cleanly**. The `posttool_jobid.sh` hook auto-spawns a background `chpc_job_watcher.sh` for that jobid; it polls `sacct` via the SSH bridge every 10 minutes and, on terminal state (COMPLETED/FAILED/TIMEOUT/OOM/etc.), writes one NDJSON record to `~/.labweaver/.chpc_pending`. The `userprompt_route.sh` hook drains that inbox at the top of the next user prompt, so the agent sees the result as additional context the next time the user types anything.
 
 **This is passive notification, not autonomous wake-up.** The chat does not resume on its own when the job finishes — the user still has to send a message for the agent to learn the outcome. Do NOT say "I'll be notified when it finishes" or "I'll let you know when it's done" — those phrases imply the chat will resume by itself, which it won't.
 

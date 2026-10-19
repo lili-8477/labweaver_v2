@@ -28,8 +28,8 @@ afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
 
 describe("runTurn", () => {
   it("streams the frontend contract, records the transcript and expands commands", async () => {
-    await fs.mkdir(path.join(home, ".claude", "commands"), { recursive: true });
-    await fs.writeFile(path.join(home, ".claude", "commands", "recall.md"), "Search memory for $ARGUMENTS.");
+    await fs.mkdir(path.join(home, ".labweaver", "commands"), { recursive: true });
+    await fs.writeFile(path.join(home, ".labweaver", "commands", "recall.md"), "Search memory for $ARGUMENTS.");
     const engine = new FakeEngine();
     const events: StreamEvent[] = [];
     const sessions: string[] = [];

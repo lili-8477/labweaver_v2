@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function writeCmd(name: string, body: string) {
-  const dir = join(home, ".claude", "commands");
+  const dir = join(home, ".labweaver", "commands");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${name}.md`), body);
 }
@@ -45,7 +45,7 @@ describe("listUserCommands", () => {
 
   it("ignores non-.md files and subdirectories", async () => {
     writeCmd("real", "---\ndescription: Real\n---\n");
-    const dir = join(home, ".claude", "commands");
+    const dir = join(home, ".labweaver", "commands");
     writeFileSync(join(dir, "notes.txt"), "x");
     mkdirSync(join(dir, "subdir"));
     const out = await listUserCommands(home);

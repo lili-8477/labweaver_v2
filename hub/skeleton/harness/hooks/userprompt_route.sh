@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook. Two independent responsibilities:
 #
-#   1. Drain ~/.claude/.chpc_pending if non-empty — emit any CHPC job
+#   1. Drain ~/.labweaver/.chpc_pending if non-empty — emit any CHPC job
 #      terminal-state notifications as additional context so the agent
 #      sees them prepended to the user's prompt this turn. Always runs,
 #      regardless of harness state or whether the prompt is a slash command:
@@ -19,10 +19,10 @@ set -uo pipefail
 # Code accepts both forms. The body below stays unindented inside route()
 # because its heredoc terminators must start at column 0.
 
-LOG="$HOME/.claude/.harness_active.log"
+LOG="$HOME/.labweaver/.harness_active.log"
 log() { printf '%s userprompt_route %s\n' "$(date -Iseconds)" "$*" >> "$LOG"; }
 
-INBOX="${CHPC_INBOX:-$HOME/.claude/.chpc_pending}"
+INBOX="${CHPC_INBOX:-$HOME/.labweaver/.chpc_pending}"
 
 # Read the JSON envelope from stdin once; extract the prompt field.
 INPUT="$(cat)"
@@ -32,7 +32,7 @@ try:
     print(d.get("prompt",""), end="")
 except Exception:
     pass' 2>/dev/null || true)"
-# Auto-mode sessions are marked by ~/.claude/auto/<session id> (adapter/src/harness.ts).
+# Auto-mode sessions are marked by ~/.labweaver/auto/<session id> (adapter/src/harness.ts).
 SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("session_id",""), end="")
 except Exception: pass' 2>/dev/null || true)"
@@ -83,7 +83,7 @@ fi
 # memory_get. Never blocks or fails the prompt. Skipped in auto mode, where
 # the prompt is the expanded tick orchestrator, not the user's words.
 if [[ "${MEMORY_ENABLED:-1}" = "1" && -n "${MEMORY_API_URL:-}" && "$PROMPT" != /* \
-      && ! ( -n "$SID" && -f "$HOME/.claude/auto/$SID" ) ]]; then
+      && ! ( -n "$SID" && -f "$HOME/.labweaver/auto/$SID" ) ]]; then
   python3 - "$PROMPT" <<'PY' || true
 import json, os, sys, urllib.request
 prompt = sys.argv[1].strip()

@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-// dsh-plugins/tick.js resolves ~/.claude at import, so HOME is set first.
+// dsh-plugins/tick.js resolves ~/.labweaver at import, so HOME is set first.
 const home = mkdtempSync(path.join(tmpdir(), "tick-home-"));
-const claude = path.join(home, ".claude");
+const lw = path.join(home, ".labweaver");
 const project = path.join(home, "proj");
 const progress = path.join(project, "progress.md");
 
@@ -15,7 +15,7 @@ interface FakeAgent { id: string; session: { header: { delegationDepth?: number 
 let stopping: Listener;
 let nextStep: (md: string | null) => { agent?: string; work?: string; complete?: boolean };
 const SID = "sess-1";
-const sessionFile = path.join(claude, "auto", SID);
+const sessionFile = path.join(lw, "auto", SID);
 const agent = (depth?: number): FakeAgent => ({
   id: SID,
   session: { header: { delegationDepth: depth } },
@@ -38,9 +38,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  rmSync(claude, { recursive: true, force: true });
+  rmSync(lw, { recursive: true, force: true });
   rmSync(project, { recursive: true, force: true });
-  mkdirSync(path.join(claude, "auto"), { recursive: true });
+  mkdirSync(path.join(lw, "auto"), { recursive: true });
   mkdirSync(project);
   writeFileSync(sessionFile, `${project}\n`);
 });
@@ -78,9 +78,9 @@ describe("tick plugin loop", () => {
     const a = agent();
     stopping({ agent: a });
     expect(a.steered).toEqual([
-      `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${claude}/agents/tick-executor.md\n` +
+      `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${lw}/agents/tick-executor.md\n` +
       `Project directory: ${project}\nProject file: ${sessionFile}\nWork item: ☐ qc — filter cells\n` +
-      `Follow the Do procedure in ${claude}/commands/tick.md.`,
+      `Follow the Do procedure in ${lw}/commands/tick.md.`,
     ]);
   });
 
@@ -105,12 +105,12 @@ describe("tick plugin loop", () => {
     stopping({ agent: sub });
     expect(sub.steered).toHaveLength(0);
 
-    writeFileSync(path.join(claude, ".tick_paused"), "");
+    writeFileSync(path.join(lw, ".tick_paused"), "");
     const paused = agent();
     stopping({ agent: paused });
     expect(paused.steered).toHaveLength(0);
 
-    rmSync(path.join(claude, ".tick_paused"));
+    rmSync(path.join(lw, ".tick_paused"));
     rmSync(sessionFile);
     const off = agent();
     stopping({ agent: off });

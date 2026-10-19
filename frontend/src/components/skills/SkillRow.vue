@@ -81,7 +81,7 @@ async function onSubmit(name: string) {
       <div v-else-if="manifestErr" class="manifest-status error">{{ manifestErr }}</div>
       <pre v-else-if="manifest" class="manifest-body">{{ manifest }}</pre>
       <p class="manifest-hint">
-        Read-only preview of <code>~/.claude/skills/{{ skill.name }}/SKILL.md</code>.
+        Read-only preview of <code>~/.labweaver/skills/{{ skill.name }}/SKILL.md</code>.
         Edit the file in your workspace, then click <strong>{{ isUpdate ? 'Submit update' : 'Share' }}</strong>.
       </p>
     </div>

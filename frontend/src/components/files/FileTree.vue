@@ -30,7 +30,6 @@ const INTERNAL_PATH_MIME = 'application/x-labweaver-path'
 // rename / move / delete with a friendly message so users don't see the
 // raw EBUSY in the tree-error strip.
 const PROTECTED_MOUNT_POINTS = new Set<string>([
-  '.claude',
   '.labweaver',
   '.env',
   'CLAUDE.md',

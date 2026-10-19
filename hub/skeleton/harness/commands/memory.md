@@ -61,7 +61,7 @@ Pin the *current chat* to long-term memory. Auto-distillation is off. This comma
 - **Conditions.** Put every condition you know in `conditions`. Keys: `species`, `model`, `cell_line`, `tissue`, `sample`, `cohort`, `assay`, `protocol`, `protocol_version`, `reagent_lot`, `instrument`, `run_id`, `dose`, `timepoint`, `dataset`, `dataset_version`, `reference`, `pipeline`, `pipeline_version`, `code_version`, `gene`, `tool`, `file`. Conditions decide whether a new result supersedes an old one or only qualifies it. A missing condition makes that decision weaker.
 - **Evidence.** Cite only URIs you saw in this session: absolute file paths as `file:///…`, CHPC jobs as `chpc://job/<id>`, links as `https://…`. Never invent a URI. Mark controlled data with `"access_class": "restricted"` or `"irb"`.
 - **Claims are immutable.** Do not try to edit an old claim. Write the new claim. A re-run under the same conditions with a newer version supersedes the old claim automatically.
-- **Experience → skill.** Memory never changes a skill. If the user wants a reviewed experience to become a skill, write the draft `SKILL.md` under `~/.claude/skills/<name>/`, cite the experience id in it, and ask the user to submit it from the share panel for manager review.
+- **Experience → skill.** Memory never changes a skill. If the user wants a reviewed experience to become a skill, write the draft `SKILL.md` under `~/.labweaver/skills/<name>/`, cite the experience id in it, and ask the user to submit it from the share panel for manager review.
 - Do not write any other memory rows in this turn (no `memory_write` to "supplement").
 
 ## Optional fields

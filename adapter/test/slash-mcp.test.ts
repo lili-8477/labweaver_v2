@@ -11,10 +11,10 @@ afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("slash commands", () => {
   beforeEach(async () => {
-    await fs.mkdir(path.join(dir, ".claude", "commands"), { recursive: true });
-    await fs.writeFile(path.join(dir, ".claude", "commands", "recall.md"),
+    await fs.mkdir(path.join(dir, ".labweaver", "commands"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".labweaver", "commands", "recall.md"),
       "---\ndescription: search memory\n---\n# /recall\nCall memory_search with query = $ARGUMENTS.\n");
-    await fs.writeFile(path.join(dir, ".claude", "commands", "memory.md"), "# /memory\nDistill this session.\n");
+    await fs.writeFile(path.join(dir, ".labweaver", "commands", "memory.md"), "# /memory\nDistill this session.\n");
   });
 
   it("substitutes $ARGUMENTS and strips frontmatter", async () => {

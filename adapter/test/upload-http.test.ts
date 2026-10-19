@@ -107,25 +107,25 @@ describe("PUT /upload/ path policy", () => {
     expect(await r.json()).toMatchObject({ error: "path_outside_allowed_subtree" });
   });
 
-  it("accepts a skill upload under .claude/skills/", async () => {
-    const r = await put(".claude/skills/demo/SKILL.md", "# demo");
+  it("accepts a skill upload under .labweaver/skills/", async () => {
+    const r = await put(".labweaver/skills/demo/SKILL.md", "# demo");
     expect(r.status).toBe(201);
-    const written = await readFile(join(wsRoot, ".claude/skills/demo/SKILL.md"), "utf8");
+    const written = await readFile(join(wsRoot, ".labweaver/skills/demo/SKILL.md"), "utf8");
     expect(written).toBe("# demo");
   });
 
-  it("still denies non-skills paths under .claude/", async () => {
-    const r = await put(".claude/settings.json", "{}");
+  it("still denies non-skills paths under .labweaver/", async () => {
+    const r = await put(".labweaver/settings.json", "{}");
     expect(r.status).toBe(403);
     expect(await r.json()).toMatchObject({ error: "denied_path" });
   });
 
-  it("rejects path traversal out of .claude/skills/", async () => {
-    // .claude/skills/../foo resolves to <ws>/.claude/foo, outside the carve-out.
-    const r = await put(".claude/skills/..%2Fpwned.txt");
+  it("rejects path traversal out of .labweaver/skills/", async () => {
+    // .labweaver/skills/../foo resolves to <ws>/.labweaver/foo, outside the carve-out.
+    const r = await put(".labweaver/skills/..%2Fpwned.txt");
     expect(r.status).toBe(403);
     expect(await r.json()).toMatchObject({ error: "denied_path" });
     // And no file should have been written.
-    await expect(stat(join(wsRoot, ".claude/pwned.txt"))).rejects.toThrow();
+    await expect(stat(join(wsRoot, ".labweaver/pwned.txt"))).rejects.toThrow();
   });
 });

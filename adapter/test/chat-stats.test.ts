@@ -17,7 +17,7 @@ describe("readChatStats", () => {
 
   beforeEach(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "labweaver-stats-"));
-    dir = path.join(home, ".claude", "projects", "-workspace");
+    dir = path.join(home, ".labweaver", "projects", "-workspace");
     await fs.mkdir(dir, { recursive: true });
   });
   afterEach(async () => {

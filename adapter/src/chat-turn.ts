@@ -110,7 +110,7 @@ export class ChatTurns {
       if (!chat.session_id) prompt = await this.firstTurnContext(chat, prompt);
       prompt = modePrompt(chat.mode, prompt);
       // cwd stays at defaultProjectCwd even when the chat is bound to a
-      // project. Transcripts live under ~/.claude/projects/<encoded-cwd>/ and
+      // project. Transcripts live under ~/.labweaver/projects/<encoded-cwd>/ and
       // DSH resume requires the session's original cwd — switching cwd
       // mid-chat would fragment history and break resume. Auto mode hands the
       // agent its project through the session's file instead (harness.ts).

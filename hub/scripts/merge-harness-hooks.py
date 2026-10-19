@@ -14,7 +14,7 @@ import json
 import pathlib
 import sys
 
-HOOKS_DIR = "$HOME/.claude/hooks"
+HOOKS_DIR = "$HOME/.labweaver/hooks"
 
 
 def command(script):

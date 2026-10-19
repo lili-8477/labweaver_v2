@@ -4,6 +4,7 @@
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { labweaverPath } from "./labweaver-dir.js";
 import { ChatsRepo } from "./chats-repo.js";
 import { ChatTurns } from "./chat-turn.js";
 import { CHAT_MODES, MODE_COMMANDS, type ChatMode } from "./modes.js";
@@ -120,7 +121,7 @@ export class RpcRouter {
   }
 
   private settingsPath(): string {
-    return path.join(this.deps.home, ".claude", "settings.json");
+    return labweaverPath(this.deps.home, "settings.json");
   }
 
   private async readSettings(): Promise<Record<string, unknown>> {
@@ -301,7 +302,7 @@ export class RpcRouter {
         const modes: ChatMode[] = [];
         for (const mode of CHAT_MODES) {
           const cmd = MODE_COMMANDS[mode];
-          const file = cmd && path.join(this.deps.home, ".claude", "commands", `${cmd}.md`);
+          const file = cmd && labweaverPath(this.deps.home, "commands", `${cmd}.md`);
           if (!file || await fs.stat(file).then(() => true, () => false)) modes.push(mode);
         }
         return { success: true, modes };

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
-// dsh-plugins/sidechain.js resolves ~/.claude per write via homedir().
+// dsh-plugins/sidechain.js resolves ~/.labweaver at import via homedir().
 const home = mkdtempSync(path.join(tmpdir(), "sidechain-home-"));
 
 type Listener = (session: unknown, event: unknown) => void;
@@ -39,7 +39,7 @@ describe("sidechain plugin", () => {
     onEvent(child, { type: "turn/end", data: {} }); // not a transcript entry
     onEvent(root, { type: "user/message", data: { content: text("parent") } }); // the adapter owns the parent
 
-    const file = path.join(home, ".claude", "projects", "-workspace", "child-1.jsonl");
+    const file = path.join(home, ".labweaver", "projects", "-workspace", "child-1.jsonl");
     const lines = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(lines.map((l) => l.type)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(lines.every((l) => l.isSidechain && l.sessionId === "child-1" && l.parentSessionId === "root-1")).toBe(true);

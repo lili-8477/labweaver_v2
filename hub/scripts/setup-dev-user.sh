@@ -11,12 +11,11 @@ set -euo pipefail
 HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="${HUB_DIR}/workspaces/devuser"
 
-mkdir -p "${WORKSPACE}/.claude/skills" "${WORKSPACE}/.claude/chats" \
-         "${WORKSPACE}/.claude/claude-projects" "${WORKSPACE}/.dsh" \
+mkdir -p "${WORKSPACE}/.labweaver/skills" "${WORKSPACE}/.labweaver/projects" "${WORKSPACE}/.dsh" \
          "${WORKSPACE}/projects" "${WORKSPACE}/local_projects"
 
-[[ -f "${WORKSPACE}/.claude/settings.json" ]] || echo '{}' > "${WORKSPACE}/.claude/settings.json"
-python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.claude/settings.json"
+[[ -f "${WORKSPACE}/.labweaver/settings.json" ]] || echo '{}' > "${WORKSPACE}/.labweaver/settings.json"
+python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.labweaver/settings.json"
 
 # The dev compose names the indexer service `indexer`, not labweaver-indexer.
 python3 "${HUB_DIR}/scripts/merge-mcp-config.py" "${WORKSPACE}/.mcp.json" devuser "http://indexer:8400"

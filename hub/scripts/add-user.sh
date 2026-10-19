@@ -74,7 +74,7 @@ Examples:
 The script creates:
   hub/workspaces/<user>/               workspace root, bind-mounted at /workspace
   hub/workspaces/<user>/.env           DEEPSEEK_API_KEY / OLLAMA_API_KEY for this user
-  hub/workspaces/<user>/.claude/       user-level bind sources (skills, agents, chats, claude-projects)
+  hub/workspaces/<user>/.labweaver/    the labweaver folder (skills, commands, agents, hooks, settings.json, transcripts)
   hub/workspaces/<user>/projects/      project folders
 
 And spins a container named "labweaver-<user>" on the labweaver-net network.
@@ -138,13 +138,12 @@ echo "=== Adding user: ${USERNAME} ==="
 
 # --- 1. Workspace + config scaffolding --------------------------------------
 echo "[1/3] Creating workspace at ${WORKSPACE}"
-mkdir -p "${WORKSPACE}/.claude/skills" \
-         "${WORKSPACE}/.claude/agents" \
-         "${WORKSPACE}/.claude/chats" \
-         "${WORKSPACE}/.claude/claude-projects" \
-         "${WORKSPACE}/.claude/commands" \
+mkdir -p "${WORKSPACE}/.labweaver/skills" \
+         "${WORKSPACE}/.labweaver/agents" \
+         "${WORKSPACE}/.labweaver/projects" \
+         "${WORKSPACE}/.labweaver/commands" \
+         "${WORKSPACE}/.labweaver/hooks" \
          "${WORKSPACE}/.dsh" \
-         "${WORKSPACE}/.claude/hooks" \
          "${WORKSPACE}/local_projects" \
          "${WORKSPACE}/.latch" \
          "${WORKSPACE}/.ssh"
@@ -211,9 +210,9 @@ SSHCFG
     chmod 600 "${WORKSPACE}/.ssh/config"
 fi
 
-# Seed a minimal Claude Code settings file so the CLI has sensible defaults.
-if [[ ! -f "${WORKSPACE}/.claude/settings.json" ]]; then
-    cat > "${WORKSPACE}/.claude/settings.json" <<'JSON'
+# Seed settings.json; the harness hooks are merged into it below.
+if [[ ! -f "${WORKSPACE}/.labweaver/settings.json" ]]; then
+    cat > "${WORKSPACE}/.labweaver/settings.json" <<'JSON'
 {
   "$schema": "https://claude.ai/schemas/settings.json",
   "model": "deepseek-official/deepseek-v4-pro"
@@ -227,17 +226,17 @@ fi
 # harness-managed code that must track the skeleton (e.g. the CHPC job
 # watcher needs the matching posttool_jobid.sh — drift breaks the chain).
 # The harness itself is dormant unless a chat is switched to Auto in the
-# composer's mode menu (the adapter then marks that session in ~/.claude/auto/).
+# composer's mode menu (the adapter then marks that session in ~/.labweaver/auto/).
 SKELETON_DIR="${HUB_DIR}/skeleton/harness"
 if [[ -d "${SKELETON_DIR}" ]]; then
-    cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.claude/commands/" 2>/dev/null || true
-    cp -n "${SKELETON_DIR}/agents/"tick-*.md "${WORKSPACE}/.claude/agents/" 2>/dev/null || true
-    cp -f "${SKELETON_DIR}/hooks/"*.sh "${WORKSPACE}/.claude/hooks/" 2>/dev/null || true
-    chmod +x "${WORKSPACE}/.claude/hooks/"*.sh 2>/dev/null || true
+    cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.labweaver/commands/" 2>/dev/null || true
+    cp -n "${SKELETON_DIR}/agents/"tick-*.md "${WORKSPACE}/.labweaver/agents/" 2>/dev/null || true
+    cp -f "${SKELETON_DIR}/hooks/"*.sh "${WORKSPACE}/.labweaver/hooks/" 2>/dev/null || true
+    chmod +x "${WORKSPACE}/.labweaver/hooks/"*.sh 2>/dev/null || true
 
     # Merge harness hook entries into settings.json, preserving inode (the
     # file is bind-mounted into the container; atomic-rename would break it).
-    python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.claude/settings.json"
+    python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.labweaver/settings.json"
 fi
 
 # Shared dirs — created on demand by the first user provisioning.
@@ -297,11 +296,10 @@ MOUNTS=(
     # the nginx /download/ endpoint (which serves directly from the host dir)
     # maps the UI path 1:1 without special rewrites.
     -v "${WORKSPACE}/local_projects:/workspace/local_projects"
-    # Expose the user's whole .claude tree so the file explorer can browse and
-    # edit agents/, chats/, claude-projects/, skills/, and settings.json. The
-    # /home/node/.claude/* mounts below are still required (Claude Code reads
-    # from there); this just adds a second view at /workspace/.claude/.
-    -v "${WORKSPACE}/.claude:/workspace/.claude"
+    # The labweaver folder, whole: skills, commands, agents, hooks,
+    # settings.json, Auto markers and session transcripts (the indexer watches
+    # <user>/.labweaver/projects). ~/.labweaver links here (entrypoint.sh).
+    -v "${WORKSPACE}/.labweaver:/workspace/.labweaver"
     -v "${WORKSPACE}/.env:/workspace/.env:ro"
     # Workspace-level instructions Claude Code auto-loads from cwd.
     -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro"
@@ -312,16 +310,6 @@ MOUNTS=(
     # Shared CLAUDE.md, mounted live so org-wide edits propagate without
     # touching per-user files. The user CLAUDE.md @-imports this path.
     -v "${SHARED_DIR}/CLAUDE.md:/workspace/.labweaver/shared.md:ro"
-    # Skills are split: per-user skills at skills-user, org-wide at skills-shared.
-    # The entrypoint symlinks both into ~/.claude/skills/ so Claude Code
-    # auto-discovers them. User skills win on name collisions.
-    -v "${WORKSPACE}/.claude/skills:/home/node/.claude/skills-user"
-    -v "${WORKSPACE}/.claude/agents:/home/node/.claude/agents"
-    -v "${WORKSPACE}/.claude/commands:/home/node/.claude/commands"
-    -v "${WORKSPACE}/.claude/hooks:/home/node/.claude/hooks"
-    -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json"
-    # Persist Claude Code session JSONLs across container recreations.
-    -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects"
     # DeepSeek Harness state (session logs needed for resume, cordis patch).
     -v "${WORKSPACE}/.dsh:/home/node/.dsh"
     -v "${WORKSPACE}/.latch:/home/node/.latch"
@@ -329,10 +317,8 @@ MOUNTS=(
     -v "${WORKSPACE}/.ssh:/home/node/.ssh"
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro"
     -v "${SHARED_DIR}/projects:/workspace/shared/projects"
-    -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro"
-    # Also expose the shared skills tree under /workspace so the file
-    # explorer can render it for browsing. Read-only; users edit personal
-    # skills under their per-user .claude/skills mount above.
+    # Org skills: a skill root for the agent (after personal skills, so those
+    # win on a name clash) and browsable in the file explorer. Read-only.
     -v "${SHARED_DIR}/skills:/workspace/shared/skills:ro"
 )
 
@@ -407,5 +393,5 @@ Frontend connection:
   ${CHPC_LINE}
 
 Drop skills into:
-  ${WORKSPACE}/.claude/skills/<name>/SKILL.md
+  ${WORKSPACE}/.labweaver/skills/<name>/SKILL.md
 SUMMARY

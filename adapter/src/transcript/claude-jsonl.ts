@@ -1,5 +1,5 @@
 // Writes each turn as a Claude Code–format JSONL transcript at
-// ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl.
+// ~/.labweaver/projects/<encoded-cwd>/<sessionId>.jsonl.
 //
 // The memory pipeline (hub/indexer watcher, session projector, /memory
 // distill) and get_chat_messages (history.ts) all read that format. DSH keeps

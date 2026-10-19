@@ -7,6 +7,7 @@
 // reading secrets or clobbering the harness files the agent runs on.
 
 import * as path from "node:path";
+import { LABWEAVER_DIR } from "./labweaver-dir.js";
 
 export type Access = "read" | "write";
 
@@ -16,10 +17,10 @@ const SECRET_NAMES = new Set([
 ]);
 
 /** Top-level harness files the agent runs on: readable, never written by the UI. */
-const HARNESS_NAMES = new Set([".claude", "CLAUDE.md", ".labweaver", ".mcp.json"]);
+const HARNESS_NAMES = new Set([LABWEAVER_DIR, "CLAUDE.md", ".mcp.json"]);
 
 /** Skills are the one harness subtree the UI writes (skill uploads). */
-const WRITABLE_HARNESS_SUBTREE = [".claude", "skills"];
+const WRITABLE_HARNESS_SUBTREE = [LABWEAVER_DIR, "skills"];
 
 function isSecret(name: string): boolean {
   return SECRET_NAMES.has(name) || name.startsWith(".env.");

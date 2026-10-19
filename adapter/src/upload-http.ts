@@ -15,6 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { createWriteStream } from "node:fs";
 import { mkdir, realpath, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { LABWEAVER_DIR } from "./labweaver-dir.js";
 import { workspacePath } from "./workspace-path.js";
 
 export interface UploadServerOptions {
@@ -27,9 +28,9 @@ export interface UploadServerOptions {
   memoryApiUrl?:   string;       // omitted → /share-snapshot/ returns 503
 }
 
-// Skill folder uploads land under .claude/skills/ (workspace-path.ts lets
+// Skill folder uploads land under .labweaver/skills/ (workspace-path.ts lets
 // writes through there); everything else lands under the allowed subtree.
-const SKILLS_PREFIX = ".claude/skills/";
+const SKILLS_PREFIX = `${LABWEAVER_DIR}/skills/`;
 
 export function startUploadServer(opts: UploadServerOptions): Server {
   const { workspaceRoot, port } = opts;
@@ -103,7 +104,7 @@ async function handle(
 
   const isSkillUpload = relPath.startsWith(SKILLS_PREFIX);
   const allowedPrefix = isSkillUpload
-    ? resolve(ctx.workspaceRoot, ".claude/skills") + "/"
+    ? resolve(ctx.workspaceRoot, SKILLS_PREFIX) + "/"
     : ctx.allowedPrefix;
 
   let abs: string;

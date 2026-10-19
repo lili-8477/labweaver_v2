@@ -2,7 +2,7 @@
 # PostToolUse(Bash) — when the agent runs `sbatch` (typically via the CHPC
 # bridge), capture the returned jobid and spawn a background watcher that
 # polls SLURM until the job hits a terminal state. The watcher writes one
-# NDJSON record to ~/.claude/.chpc_pending; userprompt_route.sh drains that
+# NDJSON record to ~/.labweaver/.chpc_pending; userprompt_route.sh drains that
 # inbox on the next user prompt so the agent learns the outcome.
 #
 # Runs in any mode (harness on or off). CHPC submissions can happen in
@@ -17,11 +17,11 @@ set -uo pipefail
 INPUT="$(cat)"
 
 # Log into the session's auto-mode project when it has one: the adapter marks
-# auto sessions with ~/.claude/auto/<session id> (see adapter/src/harness.ts).
+# auto sessions with ~/.labweaver/auto/<session id> (see adapter/src/harness.ts).
 SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("session_id",""), end="")
 except Exception: pass' 2>/dev/null || true)"
-HARNESS="$([[ -n "$SID" ]] && cat "$HOME/.claude/auto/$SID" 2>/dev/null || true)"
+HARNESS="$([[ -n "$SID" ]] && cat "$HOME/.labweaver/auto/$SID" 2>/dev/null || true)"
 HARNESS="${HARNESS:-$PWD}"
 LOG="$HARNESS/.jobs.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
@@ -85,7 +85,7 @@ printf '%s | %s | %s\n' "$step_id" "$jobid" "$ts" >> "$LOG"
 # setsid + nohup + closed FDs so the watcher outlives this hook process and
 # the parent Bash tool call. Best-effort: if the script is missing or not
 # executable, just leave the jobid logged and move on.
-WATCHER="${CHPC_WATCHER:-$HOME/.claude/hooks/chpc_job_watcher.sh}"
+WATCHER="${CHPC_WATCHER:-$HOME/.labweaver/hooks/chpc_job_watcher.sh}"
 if [[ -x "$WATCHER" ]]; then
   setsid nohup "$WATCHER" "$jobid" "$step_id" >/dev/null 2>&1 < /dev/null &
   disown 2>/dev/null || true

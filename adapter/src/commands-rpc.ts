@@ -1,8 +1,9 @@
-// Lists the user's slash commands under <home>/.claude/commands/<name>.md.
+// Lists the user's slash commands under <home>/.labweaver/commands/<name>.md.
 // Pure read-only file walk. Returns [] when the directory does not exist.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { labweaverPath } from "./labweaver-dir.js";
 import { extractDescription } from "./frontmatter.js";
 
 export interface CommandSummary {
@@ -11,7 +12,7 @@ export interface CommandSummary {
 }
 
 export async function listUserCommands(home: string): Promise<CommandSummary[]> {
-  const dir = join(home, ".claude", "commands");
+  const dir = labweaverPath(home, "commands");
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });

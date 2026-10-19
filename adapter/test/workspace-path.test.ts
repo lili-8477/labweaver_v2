@@ -28,12 +28,12 @@ describe("workspacePath", () => {
   });
 
   it("lets the UI read harness files but not write them, except skills", () => {
-    for (const rel of [".claude/settings.json", ".claude/hooks/x.sh", ".claude", "CLAUDE.md", ".labweaver/shared.md", ".mcp.json"]) {
+    for (const rel of [".labweaver/settings.json", ".labweaver/hooks/x.sh", ".labweaver", "CLAUDE.md", ".labweaver/shared.md", ".mcp.json"]) {
       expect(workspacePath(ROOT, rel, "read")).toBe(`/workspace/${rel}`);
       expect(() => workspacePath(ROOT, rel, "write")).toThrow(/harness/);
     }
-    expect(workspacePath(ROOT, ".claude/skills/s/SKILL.md", "write")).toBe("/workspace/.claude/skills/s/SKILL.md");
-    expect(() => workspacePath(ROOT, ".claude/skills", "write")).toThrow(/harness/);
+    expect(workspacePath(ROOT, ".labweaver/skills/s/SKILL.md", "write")).toBe("/workspace/.labweaver/skills/s/SKILL.md");
+    expect(() => workspacePath(ROOT, ".labweaver/skills", "write")).toThrow(/harness/);
     // Harness names only matter at the top level; a project may have its own.
     expect(workspacePath(ROOT, "local_projects/p/CLAUDE.md", "write")).toBe("/workspace/local_projects/p/CLAUDE.md");
   });
@@ -49,7 +49,7 @@ describe("isListed", () => {
     expect(isListed(".env")).toBe(false);
     expect(isListed(".env.production")).toBe(false);
     expect(isListed(".git")).toBe(false);
-    expect(isListed(".claude")).toBe(true);
+    expect(isListed(".labweaver")).toBe(true);
     expect(isListed("data.csv")).toBe(true);
   });
 });

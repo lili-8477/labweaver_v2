@@ -3,7 +3,7 @@
 // Mounted by the adapter's cordis patch: see src/dsh/patch.ts.
 //
 // The adapter starts an auto-mode turn as `/tick <message>` and marks the
-// session with ~/.claude/auto/<session id>, which holds the project directory
+// session with ~/.labweaver/auto/<session id>, which holds the project directory
 // (empty until tick-bootstrap writes it; see src/harness.ts). Each time that
 // turn is about to stop, this plugin reads the project's progress.md, decides
 // the next step in code (nextStep below — routing is a pure function of
@@ -14,15 +14,14 @@
 // MAX_REPEATS rounds in a row (the subagent is not advancing progress.md).
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { LABWEAVER_HOME } from "./labweaver-dir.js";
 
 export const name = "tick";
 
-const CLAUDE_DIR = join(homedir(), ".claude");
-const AUTO_DIR = join(CLAUDE_DIR, "auto");
-const PAUSE = join(CLAUDE_DIR, ".tick_paused");
+const AUTO_DIR = join(LABWEAVER_HOME, "auto");
+const PAUSE = join(LABWEAVER_HOME, ".tick_paused");
 const MAX_ROUNDS = 40;
 const MAX_REPEATS = 3;
 // Steps that run as a subagent; the main agent does every other step itself.
@@ -62,11 +61,11 @@ function instruction(round, file, dir, step) {
   const sub = SUBAGENTS.has(step.agent);
   return [
     `[auto mode · round ${round}] ${sub ? "Dispatch" : "Do"} \`${step.agent}\` now${sub ? "" : ", yourself"}.`,
-    `Agent file: ${join(CLAUDE_DIR, "agents", `${step.agent}.md`)}`,
+    `Agent file: ${join(LABWEAVER_HOME, "agents", `${step.agent}.md`)}`,
     `Project directory: ${dir ?? "none yet"}`,
     `Project file: ${file}`,
     `Work item: ${step.work}`,
-    `Follow the ${sub ? "Dispatch" : "Do"} procedure in ${join(CLAUDE_DIR, "commands", "tick.md")}.`,
+    `Follow the ${sub ? "Dispatch" : "Do"} procedure in ${join(LABWEAVER_HOME, "commands", "tick.md")}.`,
   ].join("\n");
 }
 

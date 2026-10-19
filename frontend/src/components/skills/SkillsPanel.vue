@@ -18,7 +18,7 @@ onMounted(() => skills.load())
     </header>
     <div v-if="skills.error" class="error">{{ skills.error }}</div>
     <div v-else-if="skills.skills.length === 0 && !skills.loading" class="empty">
-      No skills under <code>~/.claude/skills/</code>.
+      No skills under <code>~/.labweaver/skills/</code>.
     </div>
     <div v-else class="list">
       <SkillRow v-for="s in skills.skills" :key="s.name" :skill="s" />

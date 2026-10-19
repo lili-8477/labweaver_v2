@@ -10,9 +10,9 @@ export interface PatchOptions {
   providers: ProviderSpec[];
   /** Default "provider/model" for new sessions. */
   defaultModel: string;
-  /** Extra skill roots, e.g. ~/.claude/skills (DSH does not scan .claude by default). */
+  /** Extra skill roots, e.g. ~/.labweaver/skills (DSH does not scan it by default). */
   skillDirs: string[];
-  /** Claude Code settings.json whose `hooks` DSH should run; omit to skip hooks. */
+  /** settings.json (Claude Code hooks format) whose `hooks` DSH should run; omit to skip hooks. */
   hooksConfigPath?: string;
   /** file: URL of the adapter's dsh-plugins/ directory (ending in "/"); omit to skip its plugins. */
   pluginsDirUrl?: string;

@@ -18,7 +18,7 @@ describe("readSessionMessages", () => {
   beforeEach(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "labweaver-hist-"));
     const encoded = cwd.replace(/\//g, "-");
-    await fs.mkdir(path.join(home, ".claude", "projects", encoded), { recursive: true });
+    await fs.mkdir(path.join(home, ".labweaver", "projects", encoded), { recursive: true });
   });
   afterEach(async () => {
     await fs.rm(home, { recursive: true, force: true });
@@ -27,7 +27,7 @@ describe("readSessionMessages", () => {
   async function writeSession(lines: object[]): Promise<void> {
     const encoded = cwd.replace(/\//g, "-");
     await fs.writeFile(
-      path.join(home, ".claude", "projects", encoded, `${chatId}.jsonl`),
+      path.join(home, ".labweaver", "projects", encoded, `${chatId}.jsonl`),
       jsonl(lines),
       "utf8",
     );
@@ -124,7 +124,7 @@ describe("readSessionMessages", () => {
           role: "user",
           content: [{
             type: "text",
-            text: "Base directory for this skill: /home/node/.claude/skills/sc-preprocessing\n\n# SC Best Practices: Preprocessing\n\n...",
+            text: "Base directory for this skill: /home/node/.labweaver/skills/sc-preprocessing\n\n# SC Best Practices: Preprocessing\n\n...",
           }],
         },
       },
@@ -149,7 +149,7 @@ describe("readSessionMessages", () => {
   it("tolerates a truncated last JSONL line", async () => {
     const encoded = cwd.replace(/\//g, "-");
     await fs.writeFile(
-      path.join(home, ".claude", "projects", encoded, `${chatId}.jsonl`),
+      path.join(home, ".labweaver", "projects", encoded, `${chatId}.jsonl`),
       JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) +
         "\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\"",
       "utf8",

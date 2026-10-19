@@ -77,19 +77,19 @@ SSHCFG
 fi
 
 if [[ -d "${SKELETON_DIR}" ]]; then
-    mkdir -p "${WORKSPACE}/.claude/commands" \
-             "${WORKSPACE}/.claude/agents" \
-             "${WORKSPACE}/.claude/hooks"
-    cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.claude/commands/" 2>/dev/null || true
-    cp -n "${SKELETON_DIR}/agents/"tick-*.md "${WORKSPACE}/.claude/agents/" 2>/dev/null || true
+    mkdir -p "${WORKSPACE}/.labweaver/commands" \
+             "${WORKSPACE}/.labweaver/agents" \
+             "${WORKSPACE}/.labweaver/hooks"
+    cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.labweaver/commands/" 2>/dev/null || true
+    cp -n "${SKELETON_DIR}/agents/"tick-*.md "${WORKSPACE}/.labweaver/agents/" 2>/dev/null || true
     # Hooks are harness-managed — force-refresh on every recreate.
-    cp -f "${SKELETON_DIR}/hooks/"*.sh "${WORKSPACE}/.claude/hooks/" 2>/dev/null || true
-    chmod +x "${WORKSPACE}/.claude/hooks/"*.sh 2>/dev/null || true
+    cp -f "${SKELETON_DIR}/hooks/"*.sh "${WORKSPACE}/.labweaver/hooks/" 2>/dev/null || true
+    chmod +x "${WORKSPACE}/.labweaver/hooks/"*.sh 2>/dev/null || true
 
     # Merge harness hook entries into settings.json (idempotent overwrite of
-    # the harness-managed keys). Preserves inode for the bind mount.
-    if [[ -f "${WORKSPACE}/.claude/settings.json" ]]; then
-        python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.claude/settings.json"
+    # the harness-managed keys).
+    if [[ -f "${WORKSPACE}/.labweaver/settings.json" ]]; then
+        python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.labweaver/settings.json"
     fi
 fi
 
@@ -126,23 +126,16 @@ docker run -d \
     -e "MEMORY_API_URL=http://labweaver-indexer:8400" \
     -e "MEMORY_ENABLED=1" \
     -v "${WORKSPACE}/local_projects:/workspace/local_projects" \
-    -v "${WORKSPACE}/.claude:/workspace/.claude" \
+    -v "${WORKSPACE}/.labweaver:/workspace/.labweaver" \
     -v "${WORKSPACE}/.env:/workspace/.env:ro" \
     -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro" \
     -v "${WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro" \
     -v "${SHARED_DIR}/CLAUDE.md:/workspace/.labweaver/shared.md:ro" \
-    -v "${WORKSPACE}/.claude/skills:/home/node/.claude/skills-user" \
-    -v "${WORKSPACE}/.claude/agents:/home/node/.claude/agents" \
-    -v "${WORKSPACE}/.claude/commands:/home/node/.claude/commands" \
-    -v "${WORKSPACE}/.claude/hooks:/home/node/.claude/hooks" \
-    -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json" \
-    -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects" \
     -v "${WORKSPACE}/.dsh:/home/node/.dsh" \
     -v "${WORKSPACE}/.latch:/home/node/.latch" \
     -v "${WORKSPACE}/.ssh:/home/node/.ssh" \
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro" \
     -v "${SHARED_DIR}/projects:/workspace/shared/projects" \
-    -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro" \
     -v "${SHARED_DIR}/skills:/workspace/shared/skills:ro" \
     -w /workspace \
     "${IMAGE}"

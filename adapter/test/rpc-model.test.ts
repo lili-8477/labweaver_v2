@@ -24,8 +24,8 @@ describe("model RPCs", () => {
   }
 
   beforeEach(async () => {
-    await fs.mkdir(path.join(home, ".claude"), { recursive: true });
-    await fs.writeFile(path.join(home, ".claude", "settings.json"), JSON.stringify({ model: "claude-sonnet-4-6", hooks: {} }));
+    await fs.mkdir(path.join(home, ".labweaver"), { recursive: true });
+    await fs.writeFile(path.join(home, ".labweaver", "settings.json"), JSON.stringify({ model: "claude-sonnet-4-6", hooks: {} }));
   });
 
   it("maps a legacy Claude model to the default and lists both providers", async () => {
@@ -39,7 +39,7 @@ describe("model RPCs", () => {
     const r = router();
     await r.dispatch("set_model", { model: "ollama-cloud/gpt-oss:120b" });
     expect(await r.dispatch("get_model", {})).toEqual({ success: true, model: "ollama-cloud/gpt-oss:120b" });
-    const saved = JSON.parse(await fs.readFile(path.join(home, ".claude", "settings.json"), "utf8"));
+    const saved = JSON.parse(await fs.readFile(path.join(home, ".labweaver", "settings.json"), "utf8"));
     expect(saved.hooks).toEqual({});
     await expect(r.dispatch("set_model", { model: "claude-opus-4-8" })).rejects.toThrow(/unknown model/);
   });
