@@ -1,4 +1,5 @@
 import pino from "pino";
+import { ACCESS_ORDER, type AccessClass } from "./access-classes.js";
 
 export const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
@@ -18,7 +19,7 @@ export interface Config {
   memoryMergeSimilarity: number;
   // Per-user access clearance for memory reads (MEMORY_CLEARANCE, e.g.
   // "alice=irb,bob=restricted"); users not listed read up to 'internal'.
-  memoryClearance:      Record<string, string>;
+  memoryClearance:      Record<string, AccessClass>;
   shareSnapshotsDir:          string;
   shareMaxFolderBytes:        number;
   shareSnapshotTtlDays:       number;
@@ -57,14 +58,14 @@ function parseUnitVar(env: Record<string, string | undefined>, name: string, fal
   return n;
 }
 
-const CLEARANCES = ["public", "internal", "restricted", "irb"];
+const isAccessClass = (v: string): v is AccessClass => (ACCESS_ORDER as readonly string[]).includes(v);
 
-function parseClearance(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
+function parseClearance(raw: string): Record<string, AccessClass> {
+  const out: Record<string, AccessClass> = {};
   for (const pair of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
     const [user, level] = pair.split("=").map((s) => s.trim());
-    if (!user || !level || !CLEARANCES.includes(level)) {
-      throw new Error(`MEMORY_CLEARANCE entries must be user=${CLEARANCES.join("|")}; got ${JSON.stringify(pair)}`);
+    if (!user || !level || !isAccessClass(level)) {
+      throw new Error(`MEMORY_CLEARANCE entries must be user=${ACCESS_ORDER.join("|")}; got ${JSON.stringify(pair)}`);
     }
     out[user] = level;
   }

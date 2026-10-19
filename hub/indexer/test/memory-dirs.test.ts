@@ -202,13 +202,13 @@ describe("writes and directories", () => {
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "reference", name: "n1", description: "d", body: "b1",
     });
-    expect((await getMemory(pool, dflt.memory_id!))!.dir_key).toBe("project/entities");
+    expect((await getMemory({ pool, memoryId: dflt.memory_id!, username: "alice" }))!.dir_key).toBe("project/entities");
 
     const explicit = await writeUserMemory({
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "project", name: "n2", description: "d", body: "b2", dir: "project/trajectories",
     });
-    expect((await getMemory(pool, explicit.memory_id!))!.dir_key).toBe("project/trajectories");
+    expect((await getMemory({ pool, memoryId: explicit.memory_id!, username: "alice" }))!.dir_key).toBe("project/trajectories");
 
     await expect(writeUserMemory({
       pool, username: "alice", scope: "user", project_dir: null,
@@ -241,7 +241,7 @@ describe("writes and directories", () => {
     const base = { pool, actor: "alice", memoryId: id, name: "n", description: "d", body: "b" };
 
     expect(await updateMemory({ ...base, dir: "user/notes" })).toEqual({ ok: true });
-    expect((await getMemory(pool, id))!.dir_key).toBe("user/notes");
+    expect((await getMemory({ pool, memoryId: id, username: "alice" }))!.dir_key).toBe("user/notes");
     const trail = await getAuditTrail({ pool, actor: "alice", memoryId: id });
     if ("error" in trail) throw new Error(trail.error);
     expect(trail.rows[0]).toMatchObject({
@@ -251,7 +251,7 @@ describe("writes and directories", () => {
     });
 
     await expect(updateMemory({ ...base, dir: "org/experience" })).rejects.toBeInstanceOf(InvalidDirError);
-    expect((await getMemory(pool, id))!.dir_key).toBe("user/notes");
+    expect((await getMemory({ pool, memoryId: id, username: "alice" }))!.dir_key).toBe("user/notes");
   });
 
   it("listMemories filters by dir", async () => {

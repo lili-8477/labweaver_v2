@@ -72,7 +72,7 @@ export const MEMORY_OPS = {
     conditions:   conditions.optional(),
     strict:       z.boolean().optional().describe("Also exclude memories that do not state a requested condition."),
   })),
-  memory_get: op("GET", "/memory/:memory_id", null, z.object({
+  memory_get: op("GET", "/memory/:memory_id", "username", z.object({
     memory_id: z.string().min(1),
   })),
   memory_timeline: op("GET", "/memory/timeline", "username", z.object({

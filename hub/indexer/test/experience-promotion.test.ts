@@ -79,7 +79,7 @@ describe("proposeExperiences", () => {
     });
     expect(r.ok).toBe(true);
     const promoted = await pool.query(`SELECT memory_id FROM memories WHERE username = '__org__'`);
-    expect((await getMemory(pool, promoted.rows[0].memory_id))!.dir_key).toBe("org/experience");
+    expect((await getMemory({ pool, memoryId: promoted.rows[0].memory_id, username: "alice" }))!.dir_key).toBe("org/experience");
   });
 });
 

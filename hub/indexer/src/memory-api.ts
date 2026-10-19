@@ -25,6 +25,8 @@ import type { linkMemories } from "./lineage-repo.js";
 import type { buildBundle } from "./context-bundle.js";
 import type { consolidate } from "./consolidate.js";
 import { PROMPT_VERSION } from "./distiller-prompts.js";
+import type { AccessClass } from "./access-classes.js";
+import { DEFAULT_CLEARANCE } from "./memory-access.js";
 import { apiSchema, type MemoryResults } from "./memory-contract.js";
 
 // DI seam: production wires real repo functions; tests pass vi.fn stubs. Pool
@@ -38,7 +40,7 @@ export interface MemoryApiDeps {
   // Org managers (MEMORY_ORG_MANAGER); auto-promotion requests go to them.
   managers:        string[];
   // Per-user read clearance (MEMORY_CLEARANCE); default 'internal'.
-  clearance?:      Record<string, string>;
+  clearance?:      Record<string, AccessClass>;
   repo: {
     searchMemories:   typeof searchMemories;
     getMemory:        typeof getMemory;
@@ -71,7 +73,7 @@ const result = <O extends keyof MemoryResults>(_op: O, value: MemoryResults[O]):
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
   const mergeCheck = { embedderClient: deps.embedderClient, similarity: deps.mergeSimilarity };
-  const clearanceOf = (username: string) => deps.clearance?.[username] ?? "internal";
+  const clearanceOf = (username: string): AccessClass => deps.clearance?.[username] ?? DEFAULT_CLEARANCE;
 
   // A write/update naming a directory outside the memory's scope is a client
   // error, not a 500.
@@ -132,6 +134,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       since:       q.since ? new Date(q.since) : undefined,
       until:       q.until ? new Date(q.until) : undefined,
       limit:       q.limit,
+      clearance:   clearanceOf(q.username),
     });
     return result("memory_timeline", entries);
   });
@@ -150,6 +153,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       username:      q.username,
       project_path:  q.project_path,
       budget_tokens: q.budget_tokens ?? 800,
+      clearance:     clearanceOf(q.username),
     });
     return ctx;
   });
@@ -176,6 +180,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       sort:            q.sort,
       limit:           q.limit,
       cursor:          q.cursor,
+      clearance:       clearanceOf(q.username),
     }));
   });
 
@@ -194,6 +199,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       username:     q.username,
       project_dir:  q.project_dir ?? null,
       all_projects: q.all_projects,
+      clearance:    clearanceOf(q.username),
     }));
   });
 
@@ -210,6 +216,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       project_dir: q.project_dir ?? null,
       dir_key:     req.params.dir_key,
       limit:       q.limit,
+      clearance:   clearanceOf(q.username),
     });
     if (dir === null) {
       reply.code(404);
@@ -226,7 +233,10 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       reply.code(400);
       return { error: "validation failed", issues: parsed.error.issues };
     }
-    return result("memory_tree", await deps.repo.memoryTree({ pool: deps.pool, limit: parsed.data.limit, username: parsed.data.username }));
+    const q = parsed.data;
+    return result("memory_tree", await deps.repo.memoryTree({
+      pool: deps.pool, limit: q.limit, username: q.username, clearance: clearanceOf(q.username),
+    }));
   });
 
   // POST /memory/feedback — outcome of a task that used these memories.
@@ -236,7 +246,9 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       reply.code(400);
       return { error: "validation failed", issues: parsed.error.issues };
     }
-    const { updated } = await deps.repo.recordFeedback({ pool: deps.pool, ...parsed.data });
+    const { updated } = await deps.repo.recordFeedback({
+      pool: deps.pool, ...parsed.data, clearance: clearanceOf(parsed.data.username),
+    });
     // A success may carry personal experience over the promotion threshold.
     const { proposed } = parsed.data.outcome === "success"
       ? await deps.repo.proposeExperiences({
@@ -436,8 +448,17 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
 
   // GET /memory/:id — must be registered AFTER literal /memory/* routes
   // so fastify's radix tree prefers static segments over the wildcard.
+  // A memory the caller can't see is reported as not found (memory-access.ts).
   app.get<{ Params: { id: string } }>("/memory/:id", async (req, reply) => {
-    const detail = await deps.repo.getMemory(deps.pool, req.params.id);
+    const parsed = apiSchema("memory_get").safeParse({ ...(req.query as object), memory_id: req.params.id });
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const q = parsed.data;
+    const detail = await deps.repo.getMemory({
+      pool: deps.pool, memoryId: q.memory_id, username: q.username, clearance: clearanceOf(q.username),
+    });
     if (detail === null) {
       reply.code(404);
       return { error: "memory not found" };

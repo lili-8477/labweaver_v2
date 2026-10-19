@@ -1,11 +1,11 @@
 // Evidence and lineage storage (spec §4.3, §4.4). Evidence rows are
 // immutable pointers; edges are typed relations between memory rows.
 import type { Pool, PoolClient } from "pg";
+import { ACCESS_ORDER, type AccessClass } from "./access-classes.js";
 import { EDGE_RELS } from "./memory-contract.js";
 import { appendAudit } from "./memory-repo.js";
 
-export const ACCESS_ORDER = ["public", "internal", "restricted", "irb"] as const;
-export type AccessClass = (typeof ACCESS_ORDER)[number];
+export { ACCESS_ORDER, type AccessClass };
 
 export function strictest(classes: AccessClass[], floor: AccessClass = "internal"): AccessClass {
   return classes.reduce<AccessClass>(

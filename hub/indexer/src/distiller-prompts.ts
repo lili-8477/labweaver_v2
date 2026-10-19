@@ -3,6 +3,7 @@
 // server validates and writes it. One run claim per session always; claims
 // and experiences only when they earn their place.
 import { z } from "zod/v4";
+import { ACCESS_ORDER } from "./access-classes.js";
 import { FACET_KEYS } from "./facet-keys.js";
 
 export const PROMPT_VERSION = 2;
@@ -10,7 +11,7 @@ export const PROMPT_VERSION = 2;
 export const CONDITIONS_HELP = `Condition facets, key → values. Keys: ${FACET_KEYS.join(", ")}.`;
 const Conditions = z.partialRecord(z.enum(FACET_KEYS), z.array(z.string().max(200)).max(20)).describe(CONDITIONS_HELP);
 
-const AccessClass = z.enum(["public", "internal", "restricted", "irb"]);
+const AccessClass = z.enum(ACCESS_ORDER);
 
 // Evidence is cited by URI (file://, s3://, chpc://, https://, transcript://).
 // The agent never invents URIs: it cites paths, job IDs and links it saw.

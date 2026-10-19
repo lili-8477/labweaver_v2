@@ -258,7 +258,7 @@ describe("getMemory", () => {
       gene: ["TP53"],
     });
 
-    const got = await getMemory(pool, id);
+    const got = await getMemory({ pool, memoryId: id, username: "alice" });
     expect(got).not.toBeNull();
     expect(got!.memory_id).toBe(id);
     expect(got!.username).toBe("alice");
@@ -284,13 +284,13 @@ describe("getMemory", () => {
     const id = await seedMemory({
       username: "alice", project_dir: null, body: "no facets here", seed: 201,
     });
-    const got = await getMemory(pool, id);
+    const got = await getMemory({ pool, memoryId: id, username: "alice" });
     expect(got).not.toBeNull();
     expect(got!.facets).toEqual({});
   });
 
   it("returns null for a nonexistent id", async () => {
-    const got = await getMemory(pool, "00000000-0000-0000-0000-000000000000");
+    const got = await getMemory({ pool, memoryId: "00000000-0000-0000-0000-000000000000", username: "alice" });
     expect(got).toBeNull();
   });
 
@@ -299,7 +299,7 @@ describe("getMemory", () => {
       username: "alice", project_dir: "-w-p", body: "soon deleted", seed: 202,
     });
     await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [id]);
-    const got = await getMemory(pool, id);
+    const got = await getMemory({ pool, memoryId: id, username: "alice" });
     expect(got).not.toBeNull();
     expect(got!.deleted_at).toMatch(/^\d{4}-\d\d-\d\dT/);
   });
@@ -311,8 +311,8 @@ describe("getMemory", () => {
     const userId = await seedMemory({
       username: "alice", project_dir: null, body: "user body", seed: 204,
     });
-    expect((await getMemory(pool, projectId))!.scope_tier).toBe("project");
-    expect((await getMemory(pool, userId))!.scope_tier).toBe("user");
+    expect((await getMemory({ pool, memoryId: projectId, username: "alice" }))!.scope_tier).toBe("project");
+    expect((await getMemory({ pool, memoryId: userId, username: "alice" }))!.scope_tier).toBe("user");
   });
 });
 
@@ -589,14 +589,14 @@ describe("forgetMemory", () => {
     const id = await seedMemory({
       username: "alice", project_dir: "-w-p", body: "to be forgotten", seed: 500,
     });
-    const before = await getMemory(pool, id);
+    const before = await getMemory({ pool, memoryId: id, username: "alice" });
     expect(before).not.toBeNull();
     expect(before!.deleted_at).toBeNull();
 
     const res = await forgetMemory({ pool, username: "alice", memoryId: id });
     expect(res).toEqual({ ok: true });
 
-    const after = await getMemory(pool, id);
+    const after = await getMemory({ pool, memoryId: id, username: "alice" });
     expect(after).not.toBeNull();
     expect(after!.deleted_at).toMatch(/^\d{4}-\d\d-\d\dT/);
 
@@ -631,7 +631,7 @@ describe("forgetMemory", () => {
     expect(res).toEqual({ ok: false });
 
     // bob's row is still alive
-    const got = await getMemory(pool, bobId);
+    const got = await getMemory({ pool, memoryId: bobId, username: "bob" });
     expect(got).not.toBeNull();
   });
 

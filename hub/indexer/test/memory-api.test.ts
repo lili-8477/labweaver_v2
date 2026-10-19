@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Pool } from "pg";
 import { buildApp, type MemoryApiDeps } from "../src/memory-api.js";
 import { InvalidDirError } from "../src/memory-dirs.js";
+import type { Changed } from "../src/memory-access.js";
 import type {
   SearchHit,
   MemoryDetail,
@@ -47,8 +48,8 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     writeUserMemory:  vi.fn(async (): Promise<{ memory_id: string | null }> => ({ memory_id: "m-1" })),
     forgetMemory:     vi.fn(async (): Promise<{ ok: boolean }> => ({ ok: true })),
     getContext:       vi.fn(async (): Promise<MemoryContext>   => ({ system_prompt: "", memory_ids: [] })),
-    updateMemory:     vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' | 'immutable' }> => ({ ok: true })),
-    restoreMemory:    vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> => ({ ok: true })),
+    updateMemory:     vi.fn(async (): Promise<Changed<'not_found' | 'forbidden' | 'distilled' | 'immutable'>> => ({ ok: true })),
+    restoreMemory:    vi.fn(async (): Promise<Changed<'not_found' | 'forbidden' | 'not_deleted'>> => ({ ok: true })),
     listMemories:     vi.fn(async (): Promise<{ items: ListItem[]; next_cursor: string | null }> => ({ items: [], next_cursor: null })),
     getAuditTrail:    vi.fn(async (): Promise<{ rows: never[] } | { error: 'not_found' | 'forbidden' }> => ({ rows: [] })),
     getMetrics:       vi.fn(async (): Promise<{ memories_total: number; memories_by_type: Record<string, number>; memories_by_source: { user: number; distilled: number }; memories_soft_deleted: number; embedder_queue_depth: number; embedder_queue_oldest: string | null; distill_cursor_lag_seconds_max: number; audit_log_size: number }> => ({
@@ -190,17 +191,25 @@ describe("memory-api", () => {
       };
       depsBag.repo.getMemory.mockResolvedValueOnce(detail);
 
-      const res = await app.inject({ method: "GET", url: "/memory/abc" });
+      const res = await app.inject({ method: "GET", url: "/memory/abc?username=alice" });
       expect(res.statusCode).toBe(200);
       const json = res.json();
       expect(json.memory_id).toBe("abc");
       expect(json.username).toBe("alice");
-      expect(depsBag.repo.getMemory).toHaveBeenCalledWith(depsBag.deps.pool, "abc");
+      expect(depsBag.repo.getMemory).toHaveBeenCalledWith({
+        pool: depsBag.deps.pool, memoryId: "abc", username: "alice", clearance: "internal",
+      });
+    });
+
+    it("needs the caller: there is no anonymous lookup by id", async () => {
+      const res = await app.inject({ method: "GET", url: "/memory/abc" });
+      expect(res.statusCode).toBe(400);
+      expect(depsBag.repo.getMemory).not.toHaveBeenCalled();
     });
 
     it("returns 404 when getMemory returns null", async () => {
       depsBag.repo.getMemory.mockResolvedValueOnce(null);
-      const res = await app.inject({ method: "GET", url: "/memory/missing" });
+      const res = await app.inject({ method: "GET", url: "/memory/missing?username=alice" });
       expect(res.statusCode).toBe(404);
     });
   });

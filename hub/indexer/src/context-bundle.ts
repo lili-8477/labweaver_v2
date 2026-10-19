@@ -3,9 +3,11 @@
 // and current versions. Zero LLM calls. Lineage and graph rerank are
 // fail-open: an error there returns the plain search result.
 import type { Pool } from "pg";
+import type { AccessClass } from "./access-classes.js";
 import { logger } from "./config.js";
 import { CONDITION_KEYS, compareVersions } from "./facets.js";
 import { lineageOf, type EdgeRel, type LineageEdge } from "./lineage-repo.js";
+import { DEFAULT_CLEARANCE, visibleSql } from "./memory-access.js";
 import { searchMemories, type SearchHit } from "./memory-repo.js";
 import { truncate } from "./claims.js";
 
@@ -46,7 +48,7 @@ export interface BuildBundleArgs {
   query:          string;
   conditions?:    Record<string, string[]>;
   strict?:        boolean;
-  clearance?:     string;
+  clearance?:     AccessClass;
   limit?:         number;
   budget_tokens?: number;
 }
@@ -118,7 +120,7 @@ export async function buildBundle(a: BuildBundleArgs): Promise<ContextBundle> {
     logger.warn({ err: e instanceof Error ? e.message : String(e) }, "bundle lineage failed; returning without lineage");
   }
 
-  const current_versions = await currentVersions(a.pool, a.username, a.project_dir, items);
+  const current_versions = await currentVersions(a.pool, a.username, a.clearance ?? DEFAULT_CLEARANCE, a.project_dir, items);
   for (const it of items) {
     for (const cv of current_versions) {
       const v = it.conditions[cv.key]?.[0];
@@ -208,7 +210,7 @@ function sharesSubject(it: BundleItem, cv: { subject: string }): boolean {
 // recorded on any active claim for that pipeline/protocol. Deterministic,
 // from recorded run claims, never from model memory.
 async function currentVersions(
-  pool: Pool, username: string, project_dir: string | null, items: BundleItem[],
+  pool: Pool, username: string, clearance: AccessClass, project_dir: string | null, items: BundleItem[],
 ): Promise<ContextBundle["current_versions"]> {
   const out: ContextBundle["current_versions"] = [];
   for (const [nameKey, versionKey] of VERSIONED) {
@@ -220,9 +222,9 @@ async function currentVersions(
            JOIN memory_facets n ON n.memory_id = m.memory_id AND n.key = $1 AND n.value = $2
            JOIN memory_facets v ON v.memory_id = m.memory_id AND v.key = $3
           WHERE m.type = 'claim' AND m.status = 'active' AND m.deleted_at IS NULL
-            AND (m.username = $4 OR m.username = '__org__')
+            AND ${visibleSql("m", "$4", "$6")}
             AND (m.project_dir IS NULL OR m.project_dir = $5)`,
-        [nameKey, name, versionKey, username, project_dir],
+        [nameKey, name, versionKey, username, project_dir, clearance],
       );
       const best = r.rows.sort((x, y) => compareVersions(y.value, x.value))[0];
       if (best) out.push({ key: versionKey, subject: `${nameKey}=${name}`, value: best.value, memory_id: best.memory_id });

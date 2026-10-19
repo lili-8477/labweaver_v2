@@ -138,7 +138,7 @@ describe("updateMemory merge", () => {
 
     expect(await updateMemory(base)).toEqual({ ok: false, reason: "distilled" });
     expect(await updateMemory({ ...base, merge: true })).toEqual({ ok: true });
-    expect((await getMemory(pool, id))!.body).toBe("tabs, 4 wide");
+    expect((await getMemory({ pool, memoryId: id, username: "alice" }))!.body).toBe("tabs, 4 wide");
 
     const trail = await getAuditTrail({ pool, actor: "alice", memoryId: id });
     if ("error" in trail) throw new Error(trail.error);

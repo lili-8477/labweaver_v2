@@ -6,6 +6,8 @@ import { encodeProjectDir } from "./path-decode.js";
 import { InvalidDirError, isDirFkViolation, resolveDir } from "./memory-dirs.js";
 import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from "./memory-merge.js";
 import { normalizeFacets } from "./facets.js";
+import type { AccessClass } from "./access-classes.js";
+import { DEFAULT_CLEARANCE, visibleSql, withOwnedRow, type Changed } from "./memory-access.js";
 import type {
   AuditRow, DirDetail, DirSummary, ListItem, MemoryDetail, MemoryTree, SearchHit, TimelineEntry, TreeMemory, TreeTopic,
 } from "./memory-contract.js";
@@ -51,7 +53,7 @@ export interface SearchMemoriesArgs {
   since?:         Date;
   dirs?:          string[];
   // Scientific filters (spec §6.1). Clearance defaults to 'internal'.
-  clearance?:     string;
+  clearance?:     AccessClass;
   conditions?:    Record<string, string[]>;
   strict?:        boolean;
 }
@@ -74,7 +76,7 @@ const PRIOR_SCORE_SQL = `
 // $7 dirs[], $8 limit, $9 caller clearance, $10 condition filters (jsonb
 // {key: [values]}), $11 strict conditions, $12 exact-ID tokens[].
 //
-// Hard filters (spec §6.1) run inside VISIBLE_SQL, i.e. before each arm's
+// Hard filters (spec §6.1) run inside SEARCH_WHERE_SQL, i.e. before each arm's
 // LIMIT 200: status, validity, access class, and conditions. A condition
 // excludes rows that carry the key with other values; rows without the key
 // stay (flagged unconditioned by the bundle) unless strict.
@@ -84,17 +86,15 @@ const PRIOR_SCORE_SQL = `
 // lots, versions), which embeddings and English stemming both mangle. The
 // union is scored 0.55·vec + 0.25·fts + 0.20·exact, times the prior; an
 // exact match ranks first. Without a vector the vector arm is dropped.
-const VISIBLE_SQL = `
+const SEARCH_WHERE_SQL = `
       m.deleted_at IS NULL
   AND m.status = 'active'
   AND (m.valid_to IS NULL OR m.valid_to > now())
-  AND (m.username = $3 OR m.username = '__org__')
+  AND ${visibleSql("m", "$3", "$9")}
   AND (m.project_dir IS NULL OR m.project_dir = $4)
   AND ($5::text[] IS NULL OR m.type = ANY($5))
   AND ($6::timestamptz IS NULL OR m.created_at >= $6)
   AND ($7::text[] IS NULL OR m.dir_key = ANY($7))
-  AND array_position(ARRAY['public','internal','restricted','irb'], m.access_class)
-      <= array_position(ARRAY['public','internal','restricted','irb'], $9::text)
   AND ($10::jsonb IS NULL OR NOT EXISTS (
         SELECT 1 FROM jsonb_each($10::jsonb) c(key, vals)
          WHERE CASE WHEN EXISTS (SELECT 1 FROM memory_facets f
@@ -117,7 +117,7 @@ function searchSql(withVector: boolean): string {
 vec AS (
   SELECT ${CHUNK_SIGNALS_SQL}
   FROM memory_chunks mc JOIN memories m USING (memory_id), q
-  WHERE mc.embedding IS NOT NULL AND ${VISIBLE_SQL}
+  WHERE mc.embedding IS NOT NULL AND ${SEARCH_WHERE_SQL}
   ORDER BY mc.embedding <=> $1::vector
   LIMIT 200
 ),`;
@@ -127,14 +127,14 @@ ${withVector ? vecArm : ""}
 fts AS (
   SELECT ${CHUNK_SIGNALS_SQL}
   FROM memory_chunks mc JOIN memories m USING (memory_id), q
-  WHERE mc.tsv @@ q.qt AND ${VISIBLE_SQL}
+  WHERE mc.tsv @@ q.qt AND ${SEARCH_WHERE_SQL}
   ORDER BY fts_score DESC
   LIMIT 200
 ),
 ex AS (
   SELECT ${CHUNK_SIGNALS_SQL}
   FROM memory_chunks mc JOIN memories m USING (memory_id), q
-  WHERE mc.chunk_idx = 0 AND cardinality($12::text[]) > 0 AND ${EXACT_SQL} AND ${VISIBLE_SQL}
+  WHERE mc.chunk_idx = 0 AND cardinality($12::text[]) > 0 AND ${EXACT_SQL} AND ${SEARCH_WHERE_SQL}
   LIMIT 200
 ),
 cand AS (
@@ -218,7 +218,7 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
   const params = [
     qVec === null ? null : "[" + qVec.join(",") + "]",
     args.query, args.username, args.project_dir, types, since, dirs, limit,
-    args.clearance ?? "internal", conditions, args.strict ?? false, exactTokens(args.query),
+    args.clearance ?? DEFAULT_CLEARANCE, conditions, args.strict ?? false, exactTokens(args.query),
   ];
 
   // The vector arm filters by visibility after the HNSW scan; iterative scan
@@ -262,18 +262,19 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
   return hits;
 }
 
-// Fetch a single memory by id with its facets grouped by key. Returns
-// soft-deleted rows too (with deleted_at populated) so the frontend can
-// render Forget/Restore correctly — the soft-delete visibility boundary is
-// search/list/timeline, not targeted by-id lookup.
+// Fetch a single memory by id with its facets grouped by key, if the caller
+// can see it (memory-access.ts); otherwise null, as if it did not exist. The
+// owner also gets their soft-deleted rows, so the UI can offer Restore.
 //
 // One round-trip via a correlated subquery that builds the facets map in
 // Postgres (jsonb_object_agg over per-key jsonb_agg). Empty facet sets
 // collapse to '{}'::jsonb so the JS shape is always Record<string,string[]>.
-export async function getMemory(
-  pool:     Pool,
-  memoryId: string,
-): Promise<MemoryDetail | null> {
+export async function getMemory(args: {
+  pool:       Pool;
+  memoryId:   string;
+  username:   string;
+  clearance?: AccessClass;
+}): Promise<MemoryDetail | null> {
   type Row = {
     memory_id:          string;
     username:           string;
@@ -293,7 +294,7 @@ export async function getMemory(
     deleted_at:         Date | null;
     facets:             Record<string, string[]>;
   };
-  const r = await pool.query<Row>(
+  const r = await args.pool.query<Row>(
     `SELECT m.memory_id, m.username, m.project_dir, m.type, m.source,
             m.scope AS scope_tier, m.dir_key,
             m.name, m.description, m.body, m.source_session_id,
@@ -308,8 +309,11 @@ export async function getMemory(
               '{}'::jsonb
             ) AS facets
        FROM memories m
-      WHERE m.memory_id = $1`,
-    [memoryId],
+      WHERE m.memory_id = $1
+        AND ${visibleSql("m", "$2", "$3")}
+        -- A deleted memory is still shown to its owner, who may restore it.
+        AND (m.deleted_at IS NULL OR m.username = $2)`,
+    [args.memoryId, args.username, args.clearance ?? DEFAULT_CLEARANCE],
   );
   if (r.rowCount === 0) return null;
   const row = r.rows[0]!;
@@ -402,6 +406,7 @@ export interface TimelineMemoriesArgs {
   //   "<dir>"   → exact match on project_dir = "<dir>" only; rows with
   //               project_dir IS NULL (including org rows) are excluded
   project_dir?: string | null;
+  clearance?:   AccessClass;
   since?:       Date;
   until?:       Date;
   limit?:       number;
@@ -424,16 +429,16 @@ export async function timelineMemories(args: TimelineMemoriesArgs): Promise<Time
     created_at: Date;
   };
   const r = await args.pool.query<Row>(
-    `SELECT memory_id, name, type, dir_key, created_at
-       FROM memories
-      WHERE deleted_at IS NULL
-        AND (username = $1 OR username = '__org__')
-        AND ($2::text IS NULL OR project_dir = $2)
-        AND ($3::timestamptz IS NULL OR created_at >= $3)
-        AND ($4::timestamptz IS NULL OR created_at <= $4)
-      ORDER BY created_at DESC
+    `SELECT m.memory_id, m.name, m.type, m.dir_key, m.created_at
+       FROM memories m
+      WHERE m.deleted_at IS NULL
+        AND ${visibleSql("m", "$1", "$6")}
+        AND ($2::text IS NULL OR m.project_dir = $2)
+        AND ($3::timestamptz IS NULL OR m.created_at >= $3)
+        AND ($4::timestamptz IS NULL OR m.created_at <= $4)
+      ORDER BY m.created_at DESC
       LIMIT $5`,
-    [args.username, projectDir, since, until, limit],
+    [args.username, projectDir, since, until, limit, args.clearance ?? DEFAULT_CLEARANCE],
   );
   return r.rows.map((row) => ({
     memory_id:  row.memory_id,
@@ -562,60 +567,27 @@ export interface ForgetMemoryArgs {
 // Search and timeline already filter by `deleted_at IS NULL`, so the data is
 // invisible to readers; physical deletion is a separate retention concern.
 export async function forgetMemory(args: ForgetMemoryArgs): Promise<{ ok: boolean }> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    // Lock the row and capture pre-state in one round-trip.
-    const sel = await client.query<{ memory_id: string; deleted_at: Date | null; name: string }>(
-      `SELECT memory_id, deleted_at, name
-         FROM memories
-        WHERE memory_id = $1
-          AND username  = $2
-        FOR UPDATE`,
-      [args.memoryId, args.username],
-    );
-
-    // Not found or wrong owner → rollback, no audit.
-    if (sel.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return { ok: false };
-    }
-
-    const row = sel.rows[0]!;
-
-    // Already deleted → idempotent false, no audit.
-    if (row.deleted_at !== null) {
-      await client.query("ROLLBACK");
-      return { ok: false };
-    }
-
-    await client.query(
-      `UPDATE memories
-          SET deleted_at = now(),
-              updated_at = now()
-        WHERE memory_id = $1
-          AND username  = $2
-          AND deleted_at IS NULL`,
-      [args.memoryId, args.username],
-    );
-
-    await appendAudit(client, {
-      memory_id: args.memoryId,
-      actor:     args.username,
-      action:    'forget',
-      before:    { deleted_at: null, name: row.name },
-      after:     null,
-    });
-
-    await client.query("COMMIT");
-    return { ok: true };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  const r = await withOwnedRow<{ deleted_at: Date | null; name: string }, "deleted">(
+    args.pool, args.memoryId, args.username, "deleted_at, name",
+    async (client, row) => {
+      // Already deleted → idempotent false, no audit.
+      if (row.deleted_at !== null) return { ok: false, reason: "deleted" };
+      await client.query(
+        `UPDATE memories SET deleted_at = now(), updated_at = now() WHERE memory_id = $1`,
+        [args.memoryId],
+      );
+      await appendAudit(client, {
+        memory_id: args.memoryId,
+        actor:     args.username,
+        action:    'forget',
+        before:    { deleted_at: null, name: row.name },
+        after:     null,
+      });
+      return { ok: true };
+    },
+  );
+  // Not found, not yours and already deleted all read as "nothing forgotten".
+  return { ok: r.ok };
 }
 
 export async function updateMemory(args: {
@@ -629,168 +601,95 @@ export async function updateMemory(args: {
   // Fold a near-duplicate into this memory (merge-on-write). Unlike a plain
   // edit it may rewrite distilled rows; audited as 'merge'.
   merge?:      boolean;
-}): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' | 'immutable' }> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
+}): Promise<Changed<"not_found" | "forbidden" | "distilled" | "immutable">> {
+  type Row = {
+    source:      string;
+    name:        string;
+    description: string;
+    body:        string;
+    scope:       "user" | "project" | "org";
+    dir_key:     string;
+    type:        string;
+  };
+  return withOwnedRow<Row, "distilled" | "immutable">(
+    args.pool, args.memoryId, args.actor, "source, name, description, body, scope, dir_key, type",
+    async (client, row) => {
+      if (row.source !== 'user' && !args.merge) return { ok: false, reason: 'distilled' };
+      // Claims are immutable, even for merges: a correction is a new claim
+      // linked with SUPERSEDES or RETRACTS (spec §4.1).
+      if (row.type === 'claim') return { ok: false, reason: 'immutable' };
 
-    // Lock the row and capture pre-state for ownership check and audit.
-    const sel = await client.query<{
-      username:    string;
-      source:      string;
-      name:        string;
-      description: string;
-      body:        string;
-      scope:       "user" | "project" | "org";
-      dir_key:     string;
-      type:        string;
-    }>(
-      `SELECT username, source, name, description, body, scope, dir_key, type
-         FROM memories
-        WHERE memory_id = $1
-        FOR UPDATE`,
-      [args.memoryId],
-    );
+      // Match writeUserMemory's hash recipe exactly: promptVersion=0, body=`${name}\n${body}`.
+      const hash = contentHash({
+        body:          `${args.name}\n${args.body}`,
+        promptVersion: 0,
+      });
 
-    if (sel.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'not_found' };
-    }
+      const dirKey = args.dir ?? row.dir_key;
+      try {
+        await client.query(
+          `UPDATE memories
+              SET name        = $1,
+                  description = $2,
+                  body        = $3,
+                  content_hash = $4,
+                  dir_key     = $6,
+                  updated_at  = now()
+            WHERE memory_id = $5`,
+          [args.name, args.description, args.body, hash, args.memoryId, dirKey],
+        );
+      } catch (e) {
+        if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, row.scope);
+        throw e;
+      }
 
-    const row = sel.rows[0]!;
-
-    if (row.username !== args.actor) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'forbidden' };
-    }
-
-    if (row.source !== 'user' && !args.merge) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'distilled' };
-    }
-
-    // Claims are immutable, even for merges: a correction is a new claim
-    // linked with SUPERSEDES or RETRACTS (spec §4.1).
-    if (row.type === 'claim') {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'immutable' };
-    }
-
-    // Match writeUserMemory's hash recipe exactly: promptVersion=0, body=`${name}\n${body}`.
-    const hash = contentHash({
-      body:          `${args.name}\n${args.body}`,
-      promptVersion: 0,
-    });
-
-    const dirKey = args.dir ?? row.dir_key;
-    try {
-      await client.query(
-        `UPDATE memories
-            SET name        = $1,
-                description = $2,
-                body        = $3,
-                content_hash = $4,
-                dir_key     = $6,
-                updated_at  = now()
-          WHERE memory_id = $5`,
-        [args.name, args.description, args.body, hash, args.memoryId, dirKey],
+      // Delete old chunks and re-insert one chunk with the new body, embedding=NULL.
+      await client.query(`DELETE FROM memory_chunks WHERE memory_id = $1`, [args.memoryId]);
+      const chunk = await client.query<{ chunk_id: string }>(
+        `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
+         VALUES ($1, 0, $2) RETURNING chunk_id`,
+        [args.memoryId, args.body],
       );
-    } catch (e) {
-      if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, row.scope);
-      throw e;
-    }
+      await client.query(
+        `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+        [chunk.rows[0]!.chunk_id],
+      );
 
-    // Delete old chunks and re-insert one chunk with the new body, embedding=NULL.
-    await client.query(
-      `DELETE FROM memory_chunks WHERE memory_id = $1`,
-      [args.memoryId],
-    );
-    const chunk = await client.query<{ chunk_id: string }>(
-      `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
-       VALUES ($1, 0, $2) RETURNING chunk_id`,
-      [args.memoryId, args.body],
-    );
-    await client.query(
-      `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [chunk.rows[0]!.chunk_id],
-    );
-
-    await appendAudit(client, {
-      memory_id: args.memoryId,
-      actor:     args.actor,
-      action:    args.merge ? 'merge' : 'update',
-      before:    { name: row.name, description: row.description, body: row.body, dir_key: row.dir_key },
-      after:     { name: args.name, description: args.description, body: args.body, dir_key: dirKey },
-    });
-
-    await client.query("COMMIT");
-    return { ok: true };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+      await appendAudit(client, {
+        memory_id: args.memoryId,
+        actor:     args.actor,
+        action:    args.merge ? 'merge' : 'update',
+        before:    { name: row.name, description: row.description, body: row.body, dir_key: row.dir_key },
+        after:     { name: args.name, description: args.description, body: args.body, dir_key: dirKey },
+      });
+      return { ok: true };
+    },
+  );
 }
 
 export async function restoreMemory(args: {
   pool:     Pool;
   actor:    string;
   memoryId: string;
-}): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const sel = await client.query<{ username: string; deleted_at: Date | null }>(
-      `SELECT username, deleted_at
-         FROM memories
-        WHERE memory_id = $1
-        FOR UPDATE`,
-      [args.memoryId],
-    );
-
-    if (sel.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'not_found' };
-    }
-
-    const row = sel.rows[0]!;
-
-    if (row.username !== args.actor) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'forbidden' };
-    }
-
-    if (row.deleted_at === null) {
-      await client.query("ROLLBACK");
-      return { ok: false, reason: 'not_deleted' };
-    }
-
-    await client.query(
-      `UPDATE memories
-          SET deleted_at = NULL,
-              updated_at = now()
-        WHERE memory_id = $1`,
-      [args.memoryId],
-    );
-
-    await appendAudit(client, {
-      memory_id: args.memoryId,
-      actor:     args.actor,
-      action:    'restore',
-      before:    { deleted_at: row.deleted_at },
-      after:     { deleted_at: null },
-    });
-
-    await client.query("COMMIT");
-    return { ok: true };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+}): Promise<Changed<"not_found" | "forbidden" | "not_deleted">> {
+  return withOwnedRow<{ deleted_at: Date | null }, "not_deleted">(
+    args.pool, args.memoryId, args.actor, "deleted_at",
+    async (client, row) => {
+      if (row.deleted_at === null) return { ok: false, reason: 'not_deleted' };
+      await client.query(
+        `UPDATE memories SET deleted_at = NULL, updated_at = now() WHERE memory_id = $1`,
+        [args.memoryId],
+      );
+      await appendAudit(client, {
+        memory_id: args.memoryId,
+        actor:     args.actor,
+        action:    'restore',
+        before:    { deleted_at: row.deleted_at },
+        after:     { deleted_at: null },
+      });
+      return { ok: true };
+    },
+  );
 }
 
 export interface ListFilter {
@@ -805,6 +704,7 @@ export interface ListFilter {
   sort?:            'created' | 'hit';            // default 'created'
   limit?:           number;                       // default 50, cap 200
   cursor?:          string;                       // ISO timestamp from prev page's tail
+  clearance?:       AccessClass;                  // default DEFAULT_CLEARANCE
 }
 
 // Paginated browser-friendly listing. Filterable by scope_tier, type, source,
@@ -843,15 +743,11 @@ export async function listMemories(f: ListFilter): Promise<{
   const cursor      = f.cursor ?? null;
   const inclDeleted = f.include_deleted ?? false;
 
-  // Scope filter logic (applied in WHERE):
-  // - scope=undefined: (username=$u OR username='__org__') AND project_dir filter
-  // - scope='org':     username='__org__'
-  // - scope='user':    username=$u AND project_dir IS NULL
-  // - scope='project': username=$u AND project_dir IS NOT NULL (+ project_dir filter)
-  //
-  // We encode this as a parameterized CASE expression to keep a single query.
-  // $3 = scope_filter (text or NULL). The WHERE clause ANDs in one of three
-  // compound conditions based on $3.
+  // Rows are those the caller can see (memory-access.ts), narrowed by scope:
+  // - scope=undefined: every scope, with the project_dir filter
+  // - scope='org' | 'user': that scope
+  // - scope='project': project rows (+ project_dir filter)
+  // $3 = scope_filter (text or NULL).
 
   // Cursor condition: skip rows at/before the cursor timestamp on the sort col.
   // For sort='hit', last_hit_at can be NULL. We only apply the cursor to non-NULL
@@ -915,15 +811,15 @@ SELECT m.memory_id, m.type, m.source,
        m.hit_count, m.last_hit_at, m.deleted_at
   FROM memories m
  WHERE
-   -- Org-merge + scope filter
-   (
-     ($3::text IS NULL AND (m.username = $1 OR m.username = '__org__') AND ($2::text IS NULL OR m.project_dir IS NULL OR m.project_dir = $2))
-     OR ($3 = 'org'     AND m.username = '__org__')
-     OR ($3 = 'user'    AND m.username = $1 AND m.project_dir IS NULL)
-     OR ($3 = 'project' AND m.username = $1 AND m.project_dir IS NOT NULL AND ($2::text IS NULL OR m.project_dir = $2))
+   ${visibleSql("m", "$1", "$10")}
+   -- scope filter
+   AND (
+     ($3::text IS NULL AND ($2::text IS NULL OR m.project_dir IS NULL OR m.project_dir = $2))
+     OR ($3 IN ('org', 'user') AND m.scope = $3)
+     OR ($3 = 'project' AND m.scope = 'project' AND ($2::text IS NULL OR m.project_dir = $2))
    )
-   -- deleted filter
-   AND ($6 OR m.deleted_at IS NULL)
+   -- deleted filter: only the owner sees their deleted rows
+   AND (m.deleted_at IS NULL OR ($6 AND m.username = $1))
    -- type filter
    AND ($4::text[] IS NULL OR m.type = ANY($4))
    -- source filter
@@ -961,6 +857,7 @@ LIMIT $8
     cursor,          // $7
     limit + 1,       // $8 — fetch one extra to determine next_cursor
     f.dir ?? null,   // $9
+    f.clearance ?? DEFAULT_CLEARANCE, // $10
   ]);
 
   const rows = res.rows;
@@ -997,6 +894,7 @@ export interface GetContextArgs {
   username:      string;
   project_path:  string;
   budget_tokens: number;
+  clearance?:    AccessClass;
 }
 
 export interface MemoryContext {
@@ -1026,7 +924,7 @@ const CONTEXT_HEADER =
 
 export async function getContext(args: GetContextArgs): Promise<MemoryContext> {
   const project_dir = encodeProjectDir(args.project_path);
-  const dirs = (await listDirs({ pool: args.pool, username: args.username, project_dir }))
+  const dirs = (await listDirs({ pool: args.pool, username: args.username, project_dir, clearance: args.clearance }))
     .filter((d) => d.entry_count > 0)
     .sort((a, b) => CONTEXT_SCOPE_ORDER[a.scope] - CONTEXT_SCOPE_ORDER[b.scope]);
   if (dirs.length === 0) return { system_prompt: "", memory_ids: [] };
@@ -1044,7 +942,7 @@ export async function getContext(args: GetContextArgs): Promise<MemoryContext> {
     parts.push(dirLine);
     used += dirLine.length;
     const entries = await dirEntries({
-      pool: args.pool, username: args.username, project_dir,
+      pool: args.pool, username: args.username, project_dir, clearance: args.clearance,
       dir_key: d.dir_key, limit: CONTEXT_ENTRIES_PER_DIR,
     });
     for (const e of entries) {
@@ -1139,10 +1037,11 @@ export async function getMetrics(pool: Pool): Promise<{
 // the owner's entries so it is never stale. A caller sees the org and user
 // directories always, and the project directories only with a project_dir.
 
-// Params: $1 username, $2 project_dir (NULL = no project).
+// Params: $1 username, $2 project_dir (NULL = no project), $4 clearance.
 const DIR_VISIBLE_SQL = `(d.scope <> 'project' OR $2::text IS NOT NULL)`;
-const DIR_OWNED_SQL = `
-  (m.scope = 'org' OR (m.username = $1 AND (m.scope = 'user' OR m.project_dir = $2)))`;
+// A directory counts the entries the caller can see, project ones from $2 only.
+const DIR_ENTRY_SQL = `
+  (${visibleSql("m", "$1", "$4")} AND (m.scope <> 'project' OR m.project_dir = $2))`;
 
 // all_projects (UI tree): show project directories even without a
 // project_dir, counting entries across all of the caller's projects.
@@ -1151,6 +1050,7 @@ export async function listDirs(args: {
   username:      string;
   project_dir:   string | null;
   all_projects?: boolean;
+  clearance?:    AccessClass;
 }): Promise<DirSummary[]> {
   type Row = Omit<DirSummary, "updated_at"> & { updated_at: Date | null };
   const r = await args.pool.query<Row>(
@@ -1162,11 +1062,11 @@ export async function listDirs(args: {
          ON m.dir_key = d.dir_key
         AND m.deleted_at IS NULL
         AND m.name <> '${DISTILL_FAILED_NAME}'
-        AND (${DIR_OWNED_SQL} OR ($3 AND m.scope = 'project' AND m.username = $1))
+        AND (${DIR_ENTRY_SQL} OR ($3 AND m.scope = 'project' AND ${visibleSql("m", "$1", "$4")}))
       WHERE ${DIR_VISIBLE_SQL} OR $3
       GROUP BY d.dir_key, d.scope, d.l0, d.sort
       ORDER BY d.sort`,
-    [args.username, args.project_dir, args.all_projects ?? false],
+    [args.username, args.project_dir, args.all_projects ?? false, args.clearance ?? DEFAULT_CLEARANCE],
   );
   return r.rows.map((row) => ({
     ...row,
@@ -1185,13 +1085,15 @@ export const SKILL_MIN_MEMORIES  = 3;
 export const SKILL_MIN_SUCCESSES = 3;
 
 export async function memoryTree(args: {
-  pool:     Pool;
-  username: string;
-  limit?:   number;
+  pool:       Pool;
+  username:   string;
+  limit?:     number;
+  clearance?: AccessClass;
 }): Promise<MemoryTree> {
+  const clearance = args.clearance ?? DEFAULT_CLEARANCE;
   type Row = Omit<TreeMemory, "created_at" | "updated_at"> & { created_at: Date; updated_at: Date };
   const [dirs, r] = await Promise.all([
-    listDirs({ pool: args.pool, username: args.username, project_dir: null, all_projects: true }),
+    listDirs({ pool: args.pool, username: args.username, project_dir: null, all_projects: true, clearance }),
     args.pool.query<Row>(
       `SELECT m.memory_id, m.name, m.description, m.dir_key, m.scope, m.project_dir,
               m.created_at, m.updated_at, m.hit_count, m.success_count, m.failure_count,
@@ -1201,11 +1103,11 @@ export async function memoryTree(args: {
          LEFT JOIN memory_facets f ON f.memory_id = m.memory_id AND f.key = ANY($2)
         WHERE m.deleted_at IS NULL
           AND m.name <> '${DISTILL_FAILED_NAME}'
-          AND (m.scope = 'org' OR m.username = $1)
+          AND ${visibleSql("m", "$1", "$4")}
         GROUP BY m.memory_id
         ORDER BY m.created_at DESC
         LIMIT $3`,
-      [args.username, TOPIC_FACETS, args.limit ?? 2000],
+      [args.username, TOPIC_FACETS, args.limit ?? 2000, clearance],
     ),
   ]);
   const memories = r.rows.map((row) => ({
@@ -1259,6 +1161,7 @@ export async function getDir(args: {
   project_dir: string | null;
   dir_key:     string;
   limit?:      number;
+  clearance?:  AccessClass;
 }): Promise<DirDetail | null> {
   const summary = (await listDirs(args)).find((d) => d.dir_key === args.dir_key);
   if (!summary) return null;
@@ -1271,6 +1174,7 @@ async function dirEntries(args: {
   project_dir: string | null;
   dir_key:     string;
   limit:       number;
+  clearance?:  AccessClass;
 }): Promise<DirDetail["entries"]> {
   type Row = { memory_id: string; name: string; description: string; updated_at: Date };
   const r = await args.pool.query<Row>(
@@ -1279,10 +1183,10 @@ async function dirEntries(args: {
       WHERE m.dir_key = $3
         AND m.deleted_at IS NULL
         AND m.name <> '${DISTILL_FAILED_NAME}'
-        AND ${DIR_OWNED_SQL}
+        AND ${DIR_ENTRY_SQL}
       ORDER BY ${PRIOR_SCORE_SQL} DESC, m.memory_id
-      LIMIT $4`,
-    [args.username, args.project_dir, args.dir_key, args.limit],
+      LIMIT $5`,
+    [args.username, args.project_dir, args.dir_key, args.clearance ?? DEFAULT_CLEARANCE, args.limit],
   );
   return r.rows.map((row) => ({
     memory_id:   row.memory_id,
@@ -1294,13 +1198,14 @@ async function dirEntries(args: {
 
 // Record the outcome of a task that used these memories. Counts toward
 // ranking (success_count / failure_count) and marks them used (hit_count,
-// last_hit_at). Only memories the caller can see are touched: their own and
-// org memories. Returns how many rows were updated.
+// last_hit_at). Only memories the caller can see are touched
+// (memory-access.ts). Returns how many rows were updated.
 export async function recordFeedback(args: {
   pool:       Pool;
   username:   string;
   memory_ids: string[];
   outcome:    "success" | "failure";
+  clearance?: AccessClass;
 }): Promise<{ updated: number }> {
   const r = await args.pool.query(
     `UPDATE memories
@@ -1314,8 +1219,8 @@ export async function recordFeedback(args: {
               THEN 'repeated' ELSE validation_level END
       WHERE memory_id = ANY($1::uuid[])
         AND deleted_at IS NULL
-        AND (username = $2 OR username = '__org__')`,
-    [[...new Set(args.memory_ids)], args.username, args.outcome],
+        AND ${visibleSql("memories", "$2", "$4")}`,
+    [[...new Set(args.memory_ids)], args.username, args.outcome, args.clearance ?? DEFAULT_CLEARANCE],
   );
   return { updated: r.rowCount ?? 0 };
 }

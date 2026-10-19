@@ -55,6 +55,7 @@ describe("callTool", () => {
     const d = deps(Response.json({}));
     await callTool("memory_get", { id: "a b/c" }, d);
     expect(d.sent[0]!.url.pathname).toBe("/memory/a%20b%2Fc");
+    expect(d.sent[0]!.url.searchParams.get("username")).toBe("alice");
 
     await callTool("memory_dir", { project_dir: "-w" }, d);
     expect(d.sent[1]!.url.pathname).toBe("/memory/dirs");
