@@ -9,9 +9,10 @@ import * as path from "node:path";
 import type { ChatRow, ChatsRepo } from "./chats-repo.js";
 import type { AgentEngine, ImageRef } from "./engine/types.js";
 import { enterAutoMode, leaveAutoMode, recordedProject } from "./harness.js";
-import { readSessionMessages, transcriptPath } from "./history.js";
+import { projectItems } from "./chat-items.js";
 import { modePrompt } from "./modes.js";
 import { parentDigest, withSessionContext, type SessionContext } from "./session-context.js";
+import { readTranscript, transcriptPath } from "./transcript/read.js";
 import { runTurn } from "./turn-runner.js";
 import type { StreamEvent, TurnStatus } from "./types.js";
 
@@ -166,11 +167,11 @@ export class ChatTurns {
     if (chat.project_dir) ctx.projectDir = path.resolve(workspaceRoot, chat.project_dir);
     const parent = chat.parent_chat_id ? await chats.read(chat.parent_chat_id) : null;
     if (parent?.session_id) {
-      const messages = await readSessionMessages(home, defaultProjectCwd, parent.session_id);
+      const { entries } = await readTranscript(home, defaultProjectCwd, parent.session_id);
       ctx.parent = {
         name: parent.name,
         transcript: transcriptPath(home, defaultProjectCwd, parent.session_id),
-        digest: parentDigest(messages),
+        digest: parentDigest(projectItems(entries)),
       };
     }
     return withSessionContext(prompt, ctx);

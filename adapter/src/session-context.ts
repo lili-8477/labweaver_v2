@@ -4,7 +4,7 @@
 // appended after the user's text (slash commands and mode routing stay
 // intact) and stripped again when history is shown.
 
-import type { LegacyMessage } from "./history.js";
+import type { ChatItem } from "./chat-items.js";
 
 const TAG = "session-context";
 const MAX_TURNS = 12;
@@ -18,14 +18,14 @@ export interface SessionContext {
 }
 
 /** Last few user/assistant exchanges of the parent, oldest first, capped. */
-export function parentDigest(messages: LegacyMessage[]): string {
-  const turns = messages
-    .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim())
+export function parentDigest(items: ChatItem[]): string {
+  const turns = items
+    .flatMap((it) => (it.kind === "tool" || !it.text.trim() ? [] : [it]))
     .slice(-MAX_TURNS)
-    .map((m) => {
-      const text = stripSessionContext(m.content).trim();
+    .map((it) => {
+      const text = it.text.trim();
       const clipped = text.length > MAX_CHARS_PER_TURN ? `${text.slice(0, MAX_CHARS_PER_TURN)}…` : text;
-      return `${m.role === "user" ? "User" : "Assistant"}: ${clipped}`;
+      return `${it.kind === "user" ? "User" : "Assistant"}: ${clipped}`;
     });
   // Drop oldest turns until the digest fits.
   while (turns.length > 1 && turns.join("\n\n").length > MAX_TOTAL_CHARS) turns.shift();

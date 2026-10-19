@@ -54,8 +54,8 @@ https://github.com/user-attachments/assets/d6bd8825-ba3b-46ab-a8df-a00b71a5925d
 - **Adapter** — small TypeScript bridge inside each user's container. It
   drives [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
   (`dsh --profile acp`, over the Agent Client Protocol) behind a
-  harness-neutral `AgentEngine` seam, and translates its events into the
-  frontend's `chunk` / `step_message` / `chat_finished` stream.
+  harness-neutral `AgentEngine` seam. Each turn is recorded as a transcript
+  and streamed to the frontend as chat items (`item` / `chat_finished`).
 - **Model providers** — DeepSeek (`DEEPSEEK_API_KEY`) and Ollama Cloud
   (`OLLAMA_API_KEY`, OpenAI-compatible `https://ollama.com/v1`), selected
   per chat turn as `provider/model` from the UI.
@@ -211,7 +211,9 @@ hub/workspaces/alice/projects/
 `chat_id` is a UUID, used directly as the Claude Code session ID. Session
 history persists at `~/.labweaver/projects/-workspace/<chat_id>.jsonl` inside
 the container. Reloading the frontend and selecting the chat calls
-`get_chat_messages` which reads the JSONL and re-renders the timeline.
+`get_chat_items`, which projects the JSONL into the same chat items the live
+turn streamed (`adapter/src/chat-items.ts`), so history looks exactly as the
+turn did while it ran.
 
 `stop_chat` aborts cleanly via the SDK's AbortController so the JSONL stays
 well-formed; the next `chat` call resumes the same session.
@@ -223,14 +225,12 @@ drive the frontend against a test user and verify each scenario:
 
 1. `create_chat` — new chat appears in sidebar; `chat_id` is a UUID.
 2. `chat` RPC (frontend send) — streams text, rendered live in ChatPanel.
-3. Tool calls render in ExecutionTimeline with name, JSON-parsed args, duration, cumulative tokens and cost.
-4. Subagent delegation shows the `→` `transfer` badge.
-5. `chat_finished` flips the running indicator off; no orphan `dsh` child (`pgrep -af dsh` inside the container).
-6. Reload the page → `list_chats` + `get_chat_messages` reconstruct the timeline from session JSONL + sidecar.
-7. `delete_chat` removes JSONL + sidecar.
-8. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
-9. Drop a `SKILL.md` into `hub/workspaces/<user>/.labweaver/skills/<name>/` → it appears at `~/.labweaver/skills/` inside the container → invoking by name works.
-10. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
+3. Tool calls render in ExecutionTimeline with name, args, output, duration and failed status, between the agent's text.
+4. `chat_finished` flips the running indicator off; no orphan `dsh` child (`pgrep -af dsh` inside the container).
+5. Reload the page → `list_chats` + `get_chat_items` show the chat exactly as it streamed.
+6. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
+7. Drop a `SKILL.md` into `hub/workspaces/<user>/.labweaver/skills/<name>/` → it appears at `~/.labweaver/skills/` inside the container → invoking by name works.
+8. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
 
 Then soak: 48h under representative load. Watch `pgrep -af dsh` (stable),
 session JSONL tails (not truncated), nats-server logs (no `slow consumer`).
@@ -250,9 +250,7 @@ npm run typecheck
 ```
 
 Tests cover:
-- Event translation (SDK messages → `chunk` / `step_message` / `chat_finished`)
-- `tool_calls[].function.arguments` is a JSON **string**, not an object (the frontend JSON.parses it)
-- Tool-call duration is measured in the adapter (SDK doesn't expose it)
+- Chat items: the items a live turn streams equal the projection of its stored transcript
 - Per-chat mutex rejects overlapping `chat` RPCs
 - `AbortController` cleanly aborts in-flight turns
 - Session sidecar CRUD and path-escape guards in `file_manager`

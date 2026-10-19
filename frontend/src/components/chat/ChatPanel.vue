@@ -2,8 +2,7 @@
 import { ref, nextTick, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { isDisplayableMessage, extractTextContent } from '@/utils/content'
-import type { ChatMessage, ChatMode } from '@/types'
+import type { ChatItem, ChatMode, ToolItem } from '@/types'
 import ChatMessageComp from '@/components/chat/ChatMessage.vue'
 import RequestIndex from '@/components/chat/RequestIndex.vue'
 import ExecutionTimeline from '@/components/chat/ExecutionTimeline.vue'
@@ -65,16 +64,16 @@ let voiceBaseText = ''
 const slashMenuRef = ref<InstanceType<typeof SlashMenu> | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
-const { messages: chatMessages } = storeToRefs(chat)
+const { items: chatItems } = storeToRefs(chat)
 const hints = useChatHints({
-  messages:       chatMessages,
+  items:          chatItems,
   attachments,
   pendingProject,
 })
 
 const placeholder = computed(() => inputPlaceholder({
   sending:        chat.sending,
-  messageCount:   chatMessages.value.length,
+  messageCount:   chatItems.value.length,
   attachments:    attachments.value.length,
   pendingProject: pendingProject.value?.projectName ?? null,
   hintCount:      hints.value.length,
@@ -91,42 +90,30 @@ const hasContent = computed(
   ) && !anyUploading.value,
 )
 
-// Filter messages for display — hide tool/system messages
-const displayMessages = computed(() =>
-  chat.messages.filter(m => isDisplayableMessage(m as Record<string, unknown>))
-)
+// The chat as the view draws it: each user/text item is a message, and each
+// run of consecutive tool items is one timeline.
+type Block =
+  | { kind: 'message'; item: Extract<ChatItem, { kind: 'user' | 'text' }> }
+  | { kind: 'tools'; id: string; tools: ToolItem[] }
 
-// Map from display index to original message index for timeline lookup
-const displayToOriginalIndex = computed(() => {
-  const map = new Map<number, number>()
-  let displayIdx = 0
-  for (let i = 0; i < chat.messages.length; i++) {
-    if (isDisplayableMessage(chat.messages[i] as Record<string, unknown>)) {
-      map.set(displayIdx, i)
-      displayIdx++
-    }
+const blocks = computed<Block[]>(() => {
+  const out: Block[] = []
+  for (const it of chat.items) {
+    if (it.kind !== 'tool') { out.push({ kind: 'message', item: it }); continue }
+    const last = out[out.length - 1]
+    if (last?.kind === 'tools') last.tools.push(it)
+    else out.push({ kind: 'tools', id: it.id, tools: [it] })
   }
-  return map
+  return out
 })
 
-function getTimelineForDisplayMsg(displayIdx: number) {
-  const origIdx = displayToOriginalIndex.value.get(displayIdx)
-  if (origIdx == null) return null
-  return chat.completedTimelines.get(origIdx) || null
-}
-
-// Assistant turns that emitted only tool_use blocks have no text — skip the
-// empty bubble. The timeline rendered below the (now-absent) bubble still
-// shows what the agent did.
-function hasBubbleBody(msg: ChatMessage): boolean {
-  if (msg.role !== 'assistant') return true
-  return extractTextContent(msg.content).trim().length > 0
-}
+/** The agent is working but hasn't produced anything for this turn yet. */
+const thinking = computed(() => chat.sending && chat.items[chat.items.length - 1]?.kind === 'user')
 
 /** Label for the request index: the request's text, minus attached-image lines. */
-function requestLabel(msg: ChatMessage): string | undefined {
-  if (msg.role !== 'user') return undefined
-  const text = extractTextContent(msg.content).replace(/^\[image: [^\]]*\]\n?/gm, '').trim()
+function requestLabel(item: ChatItem): string | undefined {
+  if (item.kind !== 'user') return undefined
+  const text = item.text.replace(/^\[image: [^\]]*\]\n?/gm, '').trim()
   return text.split('\n')[0].slice(0, 120) || 'Image'
 }
 
@@ -516,7 +503,7 @@ watch(() => chat.activeChatId, (id) => {
 
 // Auto-scroll
 watch(
-  [() => chat.messages.length, () => chat.streamingText, () => chat.liveTimeline.length],
+  () => chat.items,
   () => {
     nextTick(() => {
       if (messagesEl.value) {
@@ -561,40 +548,20 @@ watch(
 
       <div class="messages-row">
       <div ref="messagesEl" class="messages">
-        <!-- Rendered messages with inline timelines -->
-        <template v-for="(msg, i) in displayMessages" :key="i">
-          <ChatMessageComp v-if="hasBubbleBody(msg)" :message="msg" :data-request="requestLabel(msg)" />
-          <!-- Show timeline below assistant messages that had tool activity -->
-          <ExecutionTimeline
-            v-if="msg.role === 'assistant' && getTimelineForDisplayMsg(i)"
-            :steps="getTimelineForDisplayMsg(i)!"
-          />
+        <template v-for="(block, i) in blocks" :key="block.kind === 'message' ? block.item.id : block.id">
+          <ChatMessageComp v-if="block.kind === 'message'" :item="block.item" :data-request="requestLabel(block.item)" />
+          <ExecutionTimeline v-else :tools="block.tools" :live="chat.sending && i === blocks.length - 1" />
         </template>
 
-        <!-- Streaming response -->
-        <div v-if="chat.streamingText" class="streaming-msg">
-          <ChatMessageComp
-            :message="{ role: 'assistant', content: chat.streamingText }"
-            :streaming="true"
-          />
-        </div>
-
-        <!-- Live execution timeline (during streaming) -->
-        <ExecutionTimeline
-          v-if="chat.liveTimeline.length > 0"
-          :steps="chat.liveTimeline"
-          :live="true"
-        />
-
-        <!-- Sending indicator (no streaming yet) -->
-        <div v-if="chat.sending && !chat.streamingText && !chat.isStreaming && chat.liveTimeline.length === 0" class="thinking">
+        <!-- Sending indicator (nothing from the agent yet) -->
+        <div v-if="thinking" class="thinking">
           <div class="thinking-dots">
             <span></span><span></span><span></span>
           </div>
           <span class="thinking-text">Agent is thinking...</span>
         </div>
       </div>
-      <RequestIndex :scroller="messagesEl" :version="displayMessages.length" />
+      <RequestIndex :scroller="messagesEl" :version="blocks.length" />
       </div>
 
       <!-- Hints -->
@@ -768,7 +735,6 @@ watch(
 /* position: relative makes this the offsetParent RequestIndex measures against. */
 .messages { flex: 1; min-width: 0; overflow-y: auto; padding: 16px; position: relative; }
 
-.streaming-msg { opacity: 0.95; }
 
 .thinking {
   display: flex; align-items: center; gap: 10px;

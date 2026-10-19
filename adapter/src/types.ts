@@ -1,4 +1,6 @@
-// Wire types — must match pantheon-frontend/src/types/index.ts exactly.
+// Wire types shared with the frontend (frontend/src/types/index.ts).
+
+import type { ChatItem } from "./chat-items.js";
 
 export interface NATSMessage {
   method: string;
@@ -11,40 +13,9 @@ export interface NATSResponse {
   error?: string;
 }
 
-export interface ToolCallInfo {
-  id: string;
-  function: { name: string; arguments: string };
-  type: "function";
-}
-
-export interface StepMessageData {
-  role: "assistant" | "tool" | "user" | "system";
-  content?: unknown;
-  id?: string;
-  timestamp?: number;
-  agent_name?: string;
-  tool_calls?: ToolCallInfo[];
-  reasoning_content?: string;
-  tool_name?: string;
-  name?: string;
-  tool_call_id?: string;
-  raw_content?: unknown;
-  transfer?: boolean;
-  _metadata?: {
-    start_timestamp?: number;
-    end_timestamp?: number;
-    execution_duration?: number;
-    total_tokens?: number;
-    input_tokens?: number;
-    output_tokens?: number;
-    current_cost?: number;
-    chain_path?: string[];
-  };
-}
-
 export type StreamEvent =
-  | { type: "chunk"; chunk: { type: string; text: string }; chat_id: string }
-  | { type: "step_message"; step_message: StepMessageData; chat_id: string }
+  /** A chat item added or changed; the frontend upserts it by id (chat-items.ts). */
+  | { type: "item"; chat_id: string; item: ChatItem }
   /** Ends every accepted turn, whatever its outcome (chat-turn.ts). */
   | { type: "chat_finished"; chat_id: string; status: TurnStatus; error?: string };
 
@@ -55,12 +26,4 @@ export interface StreamEnvelope {
   session_id: string;
   timestamp: number;
   data: StreamEvent;
-}
-
-export interface ChatInfo {
-  id: string;
-  name: string;
-  last_activity_date?: string;
-  running?: boolean;
-  project_name?: string;
 }

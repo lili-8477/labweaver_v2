@@ -2,7 +2,8 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readSessionMessages, transcriptPath } from "../src/history.js";
+import { projectItems } from "../src/chat-items.js";
+import { readTranscript, transcriptPath } from "../src/transcript/read.js";
 import { ClaudeTranscriptWriter } from "../src/transcript/claude-jsonl.js";
 
 const SID = "f47b5dd1-cdfd-4b66-93d4-57fc576ed5ec";
@@ -12,6 +13,7 @@ describe("ClaudeTranscriptWriter", () => {
   let home: string;
   beforeEach(async () => { home = await fs.mkdtemp(path.join(os.tmpdir(), "transcript-")); });
   afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
+  const items = async (sid: string) => projectItems((await readTranscript(home, "/workspace", sid)).entries);
 
   async function writeTurn(): Promise<void> {
     const w = new ClaudeTranscriptWriter({ home, cwd: "/workspace", sessionId: SID, model: "ollama-cloud/gpt-oss:120b" });
@@ -24,18 +26,16 @@ describe("ClaudeTranscriptWriter", () => {
     await w.flush();
   }
 
-  it("round-trips through history.ts (get_chat_messages)", async () => {
+  it("round-trips into chat items (get_chat_items)", async () => {
     await writeTurn();
-    const msgs = await readSessionMessages(home, "/workspace", SID);
-    expect(msgs).toEqual([
-      { role: "user", content: "run echo" },
-      { role: "assistant", content: "Let me look." },
+    expect(await items(SID)).toEqual([
+      { kind: "user", id: expect.stringMatching(UUID_RE), text: "run echo" },
+      { kind: "text", id: expect.stringMatching(UUID_RE), text: "Let me look." },
       {
-        role: "assistant", content: "",
-        tool_calls: [{ id: "call_1", type: "function", function: { name: "bash", arguments: '{"command":"echo hi"}' } }],
+        kind: "tool", id: "call_1", name: "bash", input: { command: "echo hi" }, output: "hi", isError: false,
+        startedAt: expect.any(String), endedAt: expect.any(String),
       },
-      { role: "tool", content: "hi", tool_call_id: "call_1" },
-      { role: "assistant", content: "Done." },
+      { kind: "text", id: expect.stringMatching(UUID_RE), text: "Done." },
     ]);
   });
 
@@ -73,14 +73,14 @@ describe("ClaudeTranscriptWriter", () => {
     w.continues(SID);
     w.userPrompt("again");
     await w.flush();
-    const msgs = await readSessionMessages(home, "/workspace", next);
-    expect(msgs).toHaveLength(6);
-    expect(msgs.at(-1)).toEqual({ role: "user", content: "again" });
+    const all = await items(next);
+    expect(all).toHaveLength(5);
+    expect(all.at(-1)).toMatchObject({ kind: "user", text: "again" });
   });
 
   it("appends across turns of the same session", async () => {
     await writeTurn();
     await writeTurn();
-    expect(await readSessionMessages(home, "/workspace", SID)).toHaveLength(10);
+    expect((await items(SID)).filter((it) => it.kind === "user")).toHaveLength(2);
   });
 });

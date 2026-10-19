@@ -17,7 +17,7 @@ import { LABWEAVER_HOME } from "./labweaver-dir.js";
 
 export const name = "sidechain";
 
-/** Same encoding as transcriptPath in adapter/src/history.ts. */
+/** Same encoding as transcriptPath in adapter/src/transcript/read.ts. */
 const transcriptFile = (cwd, sessionId) =>
   join(LABWEAVER_HOME, "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
 

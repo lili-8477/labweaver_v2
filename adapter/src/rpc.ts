@@ -11,7 +11,8 @@ import { CHAT_MODES, MODE_COMMANDS, type ChatMode } from "./modes.js";
 import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
 import type { FleetMonitor } from "./fleet-status.js";
 import { FileManager } from "./fs-rpc.js";
-import { readSessionMessages, type LegacyMessage } from "./history.js";
+import { projectItems, type ChatItem } from "./chat-items.js";
+import { readTranscript } from "./transcript/read.js";
 import { createProject, listProjects } from "./projects.js";
 import { readChatStats } from "./chat-stats.js";
 import { H5adService } from "./h5ad-rpc.js";
@@ -270,17 +271,13 @@ export class RpcRouter {
         return { success: true };
       }
 
-      case "get_chat_messages": {
+      case "get_chat_items": {
         const chatId = params.chat_id as string;
         const chat = await this.chats.read(chatId);
         // Use the real engine session UUID if we have one, else fall back to chat_id.
         const sessionUuid = chat?.session_id ?? chatId;
-        const messages = await readSessionMessages(
-          this.deps.home,
-          this.deps.defaultProjectCwd,
-          sessionUuid,
-        );
-        return { success: true, messages };
+        const { entries } = await readTranscript(this.deps.home, this.deps.defaultProjectCwd, sessionUuid);
+        return { success: true, items: projectItems(entries) };
       }
 
       case "get_chat_stats": {
@@ -757,19 +754,19 @@ async function inferProjectDirFromHistory(
   workspaceRoot: string,
   sessionId: string,
 ): Promise<string | null> {
-  let messages: LegacyMessage[] = [];
+  let items: ChatItem[] = [];
   try {
-    messages = await readSessionMessages(home, cwd, sessionId);
+    items = projectItems((await readTranscript(home, cwd, sessionId)).entries);
   } catch {
     return null;
   }
-  if (messages.length === 0) return null;
+  if (items.length === 0) return null;
   // Walk newest-to-oldest so we early-exit on the first viable hit, which
   // is typically the most recent agent/user reference to the project.
   const counts = new Map<string, number>();
-  const considered = messages.slice(-500);
-  for (const m of considered) {
-    const content = typeof m.content === "string" ? m.content : "";
+  const considered = items.slice(-500);
+  for (const it of considered) {
+    const content = (it.kind === "tool" ? it.output : it.text) ?? "";
     if (!content) continue;
     PROJECT_REF_RE.lastIndex = 0;
     let mm: RegExpExecArray | null;

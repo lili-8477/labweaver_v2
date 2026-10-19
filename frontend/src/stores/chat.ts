@@ -1,20 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { natsService } from '@/services/nats'
-import { extractTextContent } from '@/utils/content'
 import type {
-  ChatInfo, ChatMessage, StreamMessage, StreamChunk,
-  StepMessage, ChatFinished,
-  StepMessageData, TimelineStep, HarnessProgress, ChatMode, ProjectInfo,
+  ChatInfo, ChatItem, StreamMessage, HarnessProgress, ChatMode, ProjectInfo,
 } from '@/types'
+
+// The user's message, shown until the turn's own user item arrives.
+const PENDING_USER_ID = 'pending-user'
 
 export const useChatStore = defineStore('chat', () => {
   const chats = ref<ChatInfo[]>([])
   const projects = ref<ProjectInfo[]>([])
   const activeChatId = ref<string | null>(null)
-  const messages = ref<ChatMessage[]>([])
-  const streamingText = ref('')
-  const isStreaming = ref(false)
+  // The active chat's items (types/index.ts ChatItem): history and live turn alike.
+  const items = ref<ChatItem[]>([])
   const sending = ref(false)
 
   // Modes whose command is installed in this workspace (plain chat always is).
@@ -27,17 +26,7 @@ export const useChatStore = defineStore('chat', () => {
   // Surfaced in the banner so the user can tell which progress.md is being read.
   const harnessProject = ref<string | null>(null)
 
-  // Live timeline steps for the current turn (while agent is running)
-  const liveTimeline = ref<TimelineStep[]>([])
-  // Completed timelines keyed by the turn index (message index of the assistant message)
-  // After chat finishes, liveTimeline is frozen into completedTimelines
-  const completedTimelines = ref<Map<number, TimelineStep[]>>(new Map())
-
-  // Track pending tool calls (tool_call_id -> TimelineStep index)
-  const pendingToolCalls = new Map<string, number>()
-
   let chatSubId: string | null = null
-  let stepCounter = 0
 
   const activeChat = computed(() => chats.value.find(c => c.id === activeChatId.value))
   // Auto mode covers one request: the adapter flips the chat back to plain
@@ -102,96 +91,23 @@ export const useChatStore = defineStore('chat', () => {
     await natsService.invoke('delete_chat', { chat_id: chatId })
     if (activeChatId.value === chatId) {
       activeChatId.value = null
-      messages.value = []
+      items.value = []
     }
     await loadChats()
   }
 
-  async function loadMessages(chatId: string) {
-    const result = await natsService.invoke('get_chat_messages', {
-      chat_id: chatId,
-      filter_out_images: false,
-    }) as { success: boolean; messages: ChatMessage[] }
-    if (result?.success) {
-      messages.value = result.messages || []
-      // Build timelines from loaded message history
-      buildTimelinesFromHistory()
-    }
+  async function loadItems(chatId: string) {
+    const result = await natsService.invoke('get_chat_items', { chat_id: chatId }) as { success: boolean; items: ChatItem[] }
+    if (result?.success && activeChatId.value === chatId) items.value = result.items || []
   }
 
-  // ---- Timeline from message history ----
-  // When we load messages from the server (not streaming), we can reconstruct
-  // timelines from the tool messages that sit between assistant messages.
-
-  function buildTimelinesFromHistory() {
-    completedTimelines.value.clear()
-    let currentSteps: TimelineStep[] = []
-    let lastAssistantIdx = -1
-
-    for (let i = 0; i < messages.value.length; i++) {
-      const msg = messages.value[i] as Record<string, unknown>
-      const role = msg.role as string
-
-      if (role === 'assistant') {
-        // If we had steps accumulated, attach to the previous assistant
-        if (currentSteps.length > 0 && lastAssistantIdx >= 0) {
-          completedTimelines.value.set(lastAssistantIdx, [...currentSteps])
-        }
-        currentSteps = []
-        lastAssistantIdx = i
-
-        // Check if this assistant message has tool_calls — add as pending steps
-        const toolCalls = msg.tool_calls as Array<Record<string, unknown>> | undefined
-        if (toolCalls && toolCalls.length > 0) {
-          for (const tc of toolCalls) {
-            const fn = tc.function as Record<string, unknown> | undefined
-            const name = fn?.name as string || 'unknown'
-            let input = ''
-            try {
-              const args = fn?.arguments
-              if (typeof args === 'string') {
-                const parsed = JSON.parse(args)
-                input = JSON.stringify(parsed, null, 2)
-              }
-            } catch { /* ignore */ }
-            currentSteps.push({
-              id: (tc.id as string) || `tc_${i}_${currentSteps.length}`,
-              type: 'tool_call',
-              status: 'completed',  // if in history, it completed
-              name,
-              agentName: msg.agent_name as string,
-              startTime: (msg.timestamp as number) || 0,
-              input,
-            })
-          }
-        }
-      } else if (role === 'tool') {
-        const toolName = (msg.tool_name || msg.name || 'tool') as string
-        const meta = msg._metadata as Record<string, unknown> | undefined
-        const duration = meta?.execution_duration as number | undefined
-        const isTransfer = msg.transfer as boolean
-
-        const output = extractTextContent(msg.content)
-
-        currentSteps.push({
-          id: (msg.id as string) || `tool_${i}`,
-          type: isTransfer ? 'transfer' : 'tool_result',
-          status: 'completed',
-          name: isTransfer ? 'call_agent' : toolName,
-          targetAgent: isTransfer ? output : undefined,
-          startTime: meta?.start_timestamp as number || 0,
-          endTime: meta?.end_timestamp as number || 0,
-          duration,
-          output: isTransfer ? undefined : (output.length > 500 ? output.slice(0, 500) + '...' : output),
-          tokens: meta?.total_tokens as number,
-          cost: meta?.current_cost as number,
-        })
-      }
-    }
-    // Attach last batch
-    if (currentSteps.length > 0 && lastAssistantIdx >= 0) {
-      completedTimelines.value.set(lastAssistantIdx, [...currentSteps])
-    }
+  /** Add an item, or replace the one with its id (a tool item gains its result). */
+  function upsert(item: ChatItem) {
+    const list = items.value.filter(it => !(item.kind === 'user' && it.id === PENDING_USER_ID))
+    const i = list.findIndex(it => it.id === item.id)
+    if (i >= 0) list[i] = item
+    else list.push(item)
+    items.value = list
   }
 
   // ---- Chat selection & streaming ----
@@ -203,15 +119,10 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     activeChatId.value = chatId
-    streamingText.value = ''
-    isStreaming.value = false
     sending.value = !!chats.value.find(c => c.id === chatId)?.running
-    liveTimeline.value = []
-    completedTimelines.value.clear()
-    pendingToolCalls.clear()
-    stepCounter = 0
+    items.value = []
 
-    await loadMessages(chatId)
+    await loadItems(chatId)
 
     chatSubId = natsService.subscribe(`chat_${chatId}`, handleStreamMessage)
   }
@@ -221,145 +132,21 @@ export const useChatStore = defineStore('chat', () => {
   function handleStreamMessage(msg: StreamMessage) {
     if (msg.type !== 'chat') return
     const data = msg.data
+    if (data.chat_id !== activeChatId.value) return
 
     switch (data.type) {
-      case 'chunk': {
-        const chunk = data as StreamChunk
-        if (chunk.chunk?.text) {
-          streamingText.value += chunk.chunk.text
-          isStreaming.value = true
-        }
+      case 'item':
+        upsert(data.item)
         break
-      }
-      case 'step_message': {
-        const step = data as StepMessage
-        if (step.step_message) {
-          processStepMessage(step.step_message)
-        }
+      case 'chat_finished':
+        if (data.status === 'error') console.error('Chat error:', data.error)
+        sending.value = false
+        // Live items already match the transcript; reloading drops a pending
+        // user message the turn never recorded (e.g. it failed to start).
+        loadItems(data.chat_id)
+        loadChats()
         break
-      }
-      case 'chat_finished': {
-        const fin = data as ChatFinished
-        if (fin.status === 'error') console.error('Chat error:', fin.error)
-        finishStreaming()
-        loadMessages(fin.chat_id)
-        break
-      }
     }
-  }
-
-  function processStepMessage(step: StepMessageData) {
-    const now = step.timestamp || Date.now() / 1000
-    const meta = step._metadata
-
-    if (step.role === 'assistant') {
-      // Assistant message with tool_calls => add pending tool steps
-      const toolCalls = step.tool_calls || []
-      for (const tc of toolCalls) {
-        const name = tc.function?.name || 'unknown'
-        let input = ''
-        try {
-          if (tc.function?.arguments) {
-            const parsed = JSON.parse(tc.function.arguments)
-            input = JSON.stringify(parsed, null, 2)
-          }
-        } catch { /* ignore */ }
-
-        const idx = liveTimeline.value.length
-        liveTimeline.value.push({
-          id: tc.id || `live_${stepCounter++}`,
-          type: 'tool_call',
-          status: 'running',
-          name,
-          agentName: step.agent_name,
-          startTime: now,
-          input,
-        })
-        pendingToolCalls.set(tc.id, idx)
-      }
-
-      // If assistant has reasoning, add as an assistant step
-      if (step.reasoning_content) {
-        liveTimeline.value.push({
-          id: `reasoning_${stepCounter++}`,
-          type: 'assistant',
-          status: 'completed',
-          name: step.agent_name || 'Agent',
-          startTime: meta?.start_timestamp || now,
-          endTime: meta?.end_timestamp || now,
-          duration: meta?.execution_duration,
-          content: extractTextContent(step.reasoning_content),
-          tokens: meta?.total_tokens,
-          cost: meta?.current_cost,
-        })
-      }
-    } else if (step.role === 'tool') {
-      if (step.transfer) {
-        // Agent delegation
-        liveTimeline.value.push({
-          id: step.id || `transfer_${stepCounter++}`,
-          type: 'transfer',
-          status: 'completed',
-          name: 'call_agent',
-          targetAgent: extractTextContent(step.content),
-          startTime: meta?.start_timestamp || now,
-          endTime: meta?.end_timestamp || now,
-          duration: meta?.execution_duration,
-        })
-      } else {
-        // Tool result — try to match with pending tool_call
-        const toolCallId = step.tool_call_id
-        const pendingIdx = toolCallId ? pendingToolCalls.get(toolCallId) : undefined
-
-        const output = extractTextContent(step.content)
-        const isError = output.toLowerCase().includes('error') || output.toLowerCase().includes('traceback')
-
-        if (pendingIdx !== undefined && pendingIdx < liveTimeline.value.length) {
-          // Update the pending tool_call step with result
-          const existing = liveTimeline.value[pendingIdx]
-          existing.status = isError ? 'failed' : 'completed'
-          existing.endTime = meta?.end_timestamp || now
-          existing.duration = meta?.execution_duration || (existing.endTime - existing.startTime)
-          existing.output = output.length > 500 ? output.slice(0, 500) + '...' : output
-          pendingToolCalls.delete(toolCallId!)
-          // Trigger reactivity
-          liveTimeline.value = [...liveTimeline.value]
-        } else {
-          // No matching pending call — add as standalone result
-          liveTimeline.value.push({
-            id: step.id || `tool_${stepCounter++}`,
-            type: 'tool_result',
-            status: isError ? 'failed' : 'completed',
-            name: step.tool_name || step.name || 'tool',
-            startTime: meta?.start_timestamp || now,
-            endTime: meta?.end_timestamp || now,
-            duration: meta?.execution_duration,
-            output: output.length > 500 ? output.slice(0, 500) + '...' : output,
-          })
-        }
-      }
-    }
-  }
-
-  function finishStreaming() {
-    // Save live timeline to completed, keyed to the message that will be added
-    if (liveTimeline.value.length > 0) {
-      // The assistant message will be the next one added
-      const willBeIdx = messages.value.length
-      if (streamingText.value) {
-        messages.value.push({ role: 'assistant', content: streamingText.value })
-        completedTimelines.value.set(willBeIdx, [...liveTimeline.value])
-      }
-    } else if (streamingText.value) {
-      messages.value.push({ role: 'assistant', content: streamingText.value })
-    }
-
-    streamingText.value = ''
-    isStreaming.value = false
-    sending.value = false
-    liveTimeline.value = []
-    pendingToolCalls.clear()
-    loadChats()
   }
 
   // ---- Send / Stop ----
@@ -368,10 +155,6 @@ export const useChatStore = defineStore('chat', () => {
     const trimmed = content.trim()
     if (!activeChatId.value || (!trimmed && imagePaths.length === 0)) return
     sending.value = true
-    streamingText.value = ''
-    liveTimeline.value = []
-    pendingToolCalls.clear()
-    stepCounter = 0
 
     // Prepend `[image: <path>]` lines so Claude Code reads them via the Read
     // tool. The agent sees these as part of the user turn alongside the text.
@@ -380,7 +163,7 @@ export const useChatStore = defineStore('chat', () => {
       ? (trimmed ? `${prefix}\n${trimmed}` : prefix)
       : trimmed
 
-    messages.value.push({ role: 'user', content: fullContent })
+    upsert({ kind: 'user', id: PENDING_USER_ID, text: fullContent })
 
     // The adapter acknowledges once the turn starts; chat_finished ends it.
     const chatId = activeChatId.value
@@ -403,12 +186,8 @@ export const useChatStore = defineStore('chat', () => {
       const res = await natsService.invoke('stop_chat', { chat_id: chatId }) as { stopped?: boolean }
       if (res?.stopped) return // the turn's chat_finished does the rest
     } catch { /* ignore */ }
-    await loadMessages(chatId)
-    streamingText.value = ''
-    isStreaming.value = false
+    await loadItems(chatId)
     sending.value = false
-    liveTimeline.value = []
-    pendingToolCalls.clear()
   }
 
   async function updateChatName(chatId: string, name: string) {
@@ -480,9 +259,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    chats, projects, activeChatId, activeChat, messages, streamingText, isStreaming,
-    sending,
-    liveTimeline, completedTimelines,
+    chats, projects, activeChatId, activeChat, items, sending,
     harnessActive, availableModes, harnessProgress, harnessProject,
     loadChats, loadProjects, createProject, createChat, deleteChat, selectChat, sendMessage,
     stopChat, updateChatName,

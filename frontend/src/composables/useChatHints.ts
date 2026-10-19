@@ -1,5 +1,5 @@
 import { computed, type ComputedRef, type Ref } from 'vue'
-import type { ChatMessage, HarnessProgress } from '@/types'
+import type { ChatItem, HarnessProgress } from '@/types'
 import type { ChatAttachment } from '@/services/chat-attachments'
 import type { CreatedProject } from '@/services/project-from-drop'
 
@@ -9,7 +9,7 @@ export interface Hint {
 }
 
 export interface HintInputs {
-  messages:       Ref<ChatMessage[]>
+  items:          Ref<ChatItem[]>
   attachments:    Ref<ChatAttachment[]>
   pendingProject: Ref<CreatedProject | null>
 }
@@ -36,31 +36,26 @@ export function useChatHints(inputs: HintInputs): ComputedRef<Hint[]> {
       }]
     }
 
-    if (inputs.messages.value.length === 0) {
+    if (inputs.items.value.length === 0) {
       return [
         { id: 'describe',  text: 'Describe what you want to do' },
         { id: 'drop-file', text: 'Drop a file to start a project' },
       ]
     }
 
-    return nextSteps(inputs.messages.value).map((text, i) => ({ id: `next-step-${i}`, text }))
+    return nextSteps(inputs.items.value).map((text, i) => ({ id: `next-step-${i}`, text }))
   })
 }
 
 /** Options from the last suggest_next_steps call since the latest user message. */
-function nextSteps(messages: ChatMessage[]): string[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i] as unknown as Record<string, unknown>
-    if (msg.role === 'user') return []
-    const calls = (msg.tool_calls ?? []) as Array<{ function?: { name?: string; arguments?: string } }>
-    for (const tc of calls) {
-      if (tc.function?.name !== NEXT_STEP_TOOL) continue
-      try {
-        const options = JSON.parse(tc.function.arguments ?? '{}').options
-        if (Array.isArray(options)) {
-          return options.filter((o): o is string => typeof o === 'string' && o.trim() !== '').map(o => o.trim()).slice(0, MAX_NEXT_STEPS)
-        }
-      } catch { /* malformed arguments: no hints */ }
+function nextSteps(items: ChatItem[]): string[] {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'user') return []
+    if (it.kind !== 'tool' || it.name !== NEXT_STEP_TOOL) continue
+    const options = (it.input as { options?: unknown } | null)?.options
+    if (Array.isArray(options)) {
+      return options.filter((o): o is string => typeof o === 'string' && o.trim() !== '').map(o => o.trim()).slice(0, MAX_NEXT_STEPS)
     }
   }
   return []

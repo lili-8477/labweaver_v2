@@ -75,96 +75,31 @@ export interface ProjectInfo {
   modified_at: string
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system' | 'tool'
-  content: string
-  _llm_content?: unknown
-  id?: string
-  tool_use?: ToolUse
-  raw_content?: unknown
-}
+/** What the chat view shows, in the agent's order (adapter/src/chat-items.ts).
+ *  get_chat_items returns them; a live turn streams each one it adds or
+ *  changes, and the store upserts by id. */
+export type ChatItem =
+  | { kind: 'user'; id: string; text: string }
+  | { kind: 'text'; id: string; text: string }
+  | ToolItem
 
-export interface ToolUse {
+export interface ToolItem {
+  kind: 'tool'
   id: string
   name: string
-  input: Record<string, unknown>
+  input: unknown
+  /** Absent until the result arrives. */
   output?: string
-  status?: string
+  isError?: boolean
+  /** ISO timestamps of the call and of its result. */
+  startedAt: string
+  endedAt?: string
 }
 
-export interface StreamChunk {
-  type: 'chunk'
-  chunk: { type: string; text: string }
+export interface ItemEvent {
+  type: 'item'
   chat_id: string
-}
-
-export interface StepMessage {
-  type: 'step_message'
-  step_message: StepMessageData
-  chat_id: string
-}
-
-/** Actual step_message payload from LabWeaver backend */
-export interface StepMessageData {
-  role: 'assistant' | 'tool' | 'user' | 'system'
-  content?: unknown  // string or structured
-  id?: string
-  timestamp?: number
-  agent_name?: string
-
-  // Assistant messages
-  tool_calls?: ToolCallInfo[]
-  reasoning_content?: string
-
-  // Tool result messages
-  tool_name?: string
-  name?: string
-  tool_call_id?: string
-  raw_content?: unknown
-
-  // Transfer / delegation
-  transfer?: boolean
-
-  // Metadata with timing and cost
-  _metadata?: {
-    start_timestamp?: number
-    end_timestamp?: number
-    execution_duration?: number
-    total_tokens?: number
-    input_tokens?: number
-    output_tokens?: number
-    current_cost?: number
-    chain_path?: string[]
-  }
-}
-
-export interface ToolCallInfo {
-  id: string
-  function: { name: string; arguments: string }
-  type: 'function'
-}
-
-/** Processed step for the execution timeline UI */
-export interface TimelineStep {
-  id: string
-  type: 'tool_call' | 'tool_result' | 'assistant' | 'transfer'
-  status: 'running' | 'completed' | 'failed'
-  name: string         // tool name or agent name
-  agentName?: string
-  startTime: number
-  endTime?: number
-  duration?: number     // seconds
-  // For tool_call: the arguments
-  input?: string
-  // For tool_result: the output
-  output?: string
-  // For assistant: thinking text
-  content?: string
-  // For transfer: target agent
-  targetAgent?: string
-  // Cost info
-  tokens?: number
-  cost?: number
+  item: ChatItem
 }
 
 export interface ChatFinished {
@@ -174,16 +109,7 @@ export interface ChatFinished {
   error?: string
 }
 
-export interface BgTaskUpdate {
-  type: 'bg_task_update'
-  task_id: string
-  tool_name: string
-  status: string
-  agent_name: string
-  chat_id: string
-}
-
-export type StreamData = StreamChunk | StepMessage | ChatFinished | BgTaskUpdate
+export type StreamData = ItemEvent | ChatFinished
 
 export interface StreamMessage {
   type: 'chat' | 'notebook' | 'custom'

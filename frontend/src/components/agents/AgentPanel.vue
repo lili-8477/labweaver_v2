@@ -12,7 +12,7 @@ const stats = ref<ChatStats | null>(null)
 const loading = ref(false)
 const now = ref(Date.now())
 
-const live = computed(() => chat.sending || chat.isStreaming)
+const live = computed(() => chat.sending)
 
 async function loadStats() {
   const chatId = chat.activeChatId

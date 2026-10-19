@@ -1,40 +1,46 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { TimelineStep } from '@/types'
+import type { ToolItem } from '@/types'
 
 const props = defineProps<{
-  steps: TimelineStep[]
+  tools: ToolItem[]
+  /** The turn is still running, so unfinished tools are running, not cut off. */
   live?: boolean
 }>()
 
 const collapsed = ref(true)
 const expandedSteps = ref<Set<string>>(new Set())
 
-const hasSteps = computed(() => props.steps.length > 0)
+type Status = 'running' | 'completed' | 'failed' | 'stopped'
+
+const steps = computed(() => props.tools.map(t => ({
+  id: t.id,
+  name: t.name,
+  status: (t.endedAt ? (t.isError ? 'failed' : 'completed') : props.live ? 'running' : 'stopped') as Status,
+  duration: t.endedAt ? (Date.parse(t.endedAt) - Date.parse(t.startedAt)) / 1000 : undefined,
+  input: formatInput(t.input),
+  output: t.output,
+})))
 
 const summary = computed(() => {
-  const total = props.steps.length
-  const tools = props.steps.filter(s => s.type === 'tool_call' || s.type === 'tool_result')
-  const transfers = props.steps.filter(s => s.type === 'transfer')
-  const running = props.steps.filter(s => s.status === 'running')
-  const failed = props.steps.filter(s => s.status === 'failed')
-
-  const parts: string[] = []
-  if (tools.length > 0) parts.push(`${tools.length} tool${tools.length > 1 ? 's' : ''}`)
-  if (transfers.length > 0) parts.push(`${transfers.length} delegation${transfers.length > 1 ? 's' : ''}`)
-  if (running.length > 0) parts.push(`${running.length} running`)
-  if (failed.length > 0) parts.push(`${failed.length} failed`)
-
-  return parts.join(', ') || `${total} step${total > 1 ? 's' : ''}`
+  const count = (st: Status) => steps.value.filter(s => s.status === st).length
+  const n = steps.value.length
+  const parts = [`${n} tool${n > 1 ? 's' : ''}`]
+  if (count('running')) parts.push(`${count('running')} running`)
+  if (count('failed')) parts.push(`${count('failed')} failed`)
+  if (count('stopped')) parts.push(`${count('stopped')} stopped`)
+  return parts.join(', ')
 })
 
 const totalDuration = computed(() => {
-  const durations = props.steps
-    .filter(s => s.duration != null)
-    .map(s => s.duration!)
-  if (durations.length === 0) return null
-  return durations.reduce((a, b) => a + b, 0)
+  const durations = steps.value.filter(s => s.duration != null).map(s => s.duration!)
+  return durations.length ? durations.reduce((a, b) => a + b, 0) : null
 })
+
+function formatInput(input: unknown): string {
+  if (input == null || (typeof input === 'object' && Object.keys(input as object).length === 0)) return ''
+  try { return JSON.stringify(input, null, 2) } catch { return String(input) }
+}
 
 function toggleStep(id: string) {
   if (expandedSteps.value.has(id)) {
@@ -55,20 +61,16 @@ function formatDuration(seconds: number | undefined): string {
   return `${mins}m ${secs.toFixed(0)}s`
 }
 
-function stepIcon(step: TimelineStep): string {
-  if (step.type === 'transfer') return '\u2192'       // →
-  if (step.status === 'running') return '\u25CB'       // ○
-  if (step.status === 'failed') return '\u2717'        // ✗
-  return '\u2713'                                       // ✓
-}
-
-function stepStatusClass(step: TimelineStep): string {
-  return step.status
+const ICONS: Record<Status, string> = {
+  running: '\u25CB',    // ○
+  failed: '\u2717',     // ✗
+  stopped: '\u2013',    // –
+  completed: '\u2713',  // ✓
 }
 </script>
 
 <template>
-  <div v-if="hasSteps" class="execution-timeline" :class="{ live }">
+  <div v-if="steps.length" class="execution-timeline" :class="{ live }">
     <!-- Collapse header -->
     <div class="timeline-header" @click="collapsed = !collapsed">
       <span class="toggle-icon">{{ collapsed ? '\u25B6' : '\u25BC' }}</span>
@@ -88,33 +90,24 @@ function stepStatusClass(step: TimelineStep): string {
         v-for="step in steps"
         :key="step.id"
         class="timeline-step"
-        :class="stepStatusClass(step)"
+        :class="step.status"
       >
         <!-- Step dot & connector -->
-        <div class="step-dot" :class="stepStatusClass(step)">
-          <span>{{ stepIcon(step) }}</span>
+        <div class="step-dot" :class="step.status">
+          <span>{{ ICONS[step.status] }}</span>
         </div>
 
         <!-- Step content -->
         <div class="step-body">
           <div class="step-row" @click="toggleStep(step.id)">
-            <span class="step-name">
-              <template v-if="step.type === 'transfer'">
-                <span class="transfer-label">delegate to</span>
-                <span class="agent-name">{{ step.targetAgent }}</span>
-              </template>
-              <template v-else>
-                {{ step.name }}
-              </template>
-            </span>
-            <span v-if="step.agentName" class="step-agent">{{ step.agentName }}</span>
+            <span class="step-name">{{ step.name }}</span>
             <span v-if="step.duration != null" class="step-duration">
               {{ formatDuration(step.duration) }}
             </span>
-            <span class="step-status-badge" :class="stepStatusClass(step)">
+            <span class="step-status-badge" :class="step.status">
               {{ step.status }}
             </span>
-            <span v-if="step.input || step.output || step.content" class="expand-hint">
+            <span v-if="step.input || step.output" class="expand-hint">
               {{ expandedSteps.has(step.id) ? '\u25BC' : '\u25B6' }}
             </span>
           </div>
@@ -130,16 +123,6 @@ function stepStatusClass(step: TimelineStep): string {
             <div v-if="step.output" class="detail-section">
               <div class="detail-label">Output</div>
               <pre class="detail-content" :class="{ error: step.status === 'failed' }">{{ step.output }}</pre>
-            </div>
-            <!-- Content (reasoning) -->
-            <div v-if="step.content" class="detail-section">
-              <div class="detail-label">Reasoning</div>
-              <pre class="detail-content">{{ step.content }}</pre>
-            </div>
-            <!-- Metadata -->
-            <div v-if="step.tokens || step.cost" class="detail-meta">
-              <span v-if="step.tokens">{{ step.tokens }} tokens</span>
-              <span v-if="step.cost">${{ step.cost.toFixed(4) }}</span>
             </div>
           </div>
         </div>
@@ -201,6 +184,7 @@ function stepStatusClass(step: TimelineStep): string {
   animation: spin-dot 1.5s linear infinite;
 }
 .step-dot.failed { border-color: var(--danger); color: var(--danger); }
+.step-dot.stopped { border-color: var(--border); color: var(--text-muted); }
 @keyframes spin-dot {
   0% { border-color: var(--accent); }
   50% { border-color: var(--accent-hover); }
@@ -220,14 +204,6 @@ function stepStatusClass(step: TimelineStep): string {
   font-family: var(--font-mono); font-weight: 500;
   color: var(--text-secondary); white-space: nowrap;
 }
-.transfer-label { color: var(--text-muted); font-weight: 400; margin-right: 4px; }
-.agent-name { color: var(--accent); }
-
-.step-agent {
-  font-size: 0.85em; color: var(--text-muted);
-  background: var(--bg-tertiary); padding: 0 5px; border-radius: 3px;
-  white-space: nowrap;
-}
 .step-duration {
   font-family: var(--font-mono); font-size: 0.9em;
   color: var(--text-muted); margin-left: auto; white-space: nowrap;
@@ -240,6 +216,7 @@ function stepStatusClass(step: TimelineStep): string {
 .step-status-badge.completed { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
 .step-status-badge.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .step-status-badge.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.step-status-badge.stopped { color: var(--text-muted); background: var(--bg-tertiary); }
 
 .expand-hint {
   font-size: 0.6em; color: var(--text-muted); width: 10px;
@@ -260,9 +237,4 @@ function stepStatusClass(step: TimelineStep): string {
   max-height: 150px; overflow-y: auto; color: var(--text-secondary);
 }
 .detail-content.error { color: var(--danger); }
-
-.detail-meta {
-  display: flex; gap: 12px; font-size: 0.75em; color: var(--text-muted);
-  font-family: var(--font-mono); padding-top: 2px;
-}
 </style>
