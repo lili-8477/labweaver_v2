@@ -1,22 +1,22 @@
 #!/bin/bash
-# Recreate a user's container (e.g. after bumping the image) while keeping the
-# workspace and IDs.
+# Recreate a user's container (e.g. after bumping the image) from the
+# container spec add-user.sh saved, keeping the workspace and service ID.
+# The workspace is refreshed first (harness skeleton, hook entries, memory
+# MCP registration), so a recreate also brings an older workspace up to date.
+#
+# Usage: [IMAGE=labweaver:dsh-dev] recreate-user.sh <username>
+# IMAGE replaces the image in the spec; other changes: edit
+# hub/workspaces/<user>/container.env.
 
 set -euo pipefail
 
 HUB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WORKSPACES_DIR="${HUB_DIR}/workspaces"
-SHARED_DIR="${WORKSPACES_DIR}/shared"
-SKELETON_DIR="${HUB_DIR}/skeleton/harness"
-NETWORK="labweaver_labweaver-net"
-NATS_HOST="labweaver-nats"
+. "${HUB_DIR}/scripts/lib/user-container.sh"
 ENV_FILE="${HUB_DIR}/.env"
 
-IMAGE="${IMAGE:-labweaver:dev}"
 USERNAME="${1:-}"
-
 if [[ -z "$USERNAME" ]]; then
-    echo "Usage: IMAGE=labweaver:latest $0 <username>"
+    echo "Usage: [IMAGE=labweaver:latest] $0 <username>"
     exit 1
 fi
 
@@ -24,136 +24,37 @@ CONTAINER="labweaver-${USERNAME}"
 WORKSPACE="${WORKSPACES_DIR}/${USERNAME}"
 
 [[ -d "$WORKSPACE" ]] || { echo "No workspace at ${WORKSPACE}"; exit 1; }
-
-if [[ ! -f "$ENV_FILE" ]]; then
-    echo "Missing ${ENV_FILE}; run add-user.sh once (or create the file) to generate POSTGRES_PASSWORD."
-    exit 1
-fi
-# Load POSTGRES_PASSWORD so the docker run -e "PG_URL=..." substitution sees it.
+[[ -f "$ENV_FILE" ]] || { echo "Missing ${ENV_FILE}; run add-user.sh once (or create the file) to generate POSTGRES_PASSWORD."; exit 1; }
+# POSTGRES_PASSWORD for the container's PG_URL.
 set -a
 . "${ENV_FILE}"
 set +a
 
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
-    docker stop "${CONTAINER}" >/dev/null
-    docker rm "${CONTAINER}" >/dev/null
-fi
-
-# Refresh harness skeleton + memory wiring on the existing workspace so
-# recreating a pre-memory user gains the SessionStart hook, the slash
-# commands, and the labweaver-memory MCP server. Commands/agents use cp -n
-# (preserve user customizations); hooks use cp -f (harness-managed code,
-# must stay in sync with the skeleton — otherwise bug fixes like the
-# chpc_job_watcher integration never reach existing workspaces).
-# Per-user Latch CLI token directory. Bind-mounted to /home/node/.latch so
-# `latch cp` (used by scbench dataset downloads) keeps its token across
-# container recreates. mode 700 — it holds a credential.
-mkdir -p "${WORKSPACE}/.latch" "${WORKSPACE}/.dsh"
-chmod 700 "${WORKSPACE}/.latch"
-
-# CHPC bridge home — see hub/workspaces/shared/skills/chpc-bridge/SKILL.md.
-# Bind-mounted to /home/node/.ssh so multiplex socket + config persist across
-# container recreate. mode 700 required by ssh.
-mkdir -p "${WORKSPACE}/.ssh"
-chmod 700 "${WORKSPACE}/.ssh"
-if [[ ! -f "${WORKSPACE}/.ssh/config" ]]; then
-    cat > "${WORKSPACE}/.ssh/config" <<'SSHCFG'
-# CHPC bridge — uncomment the Host stanza and fill in your UNID,
-# then open the bridge via the "CHPC · open" pill in the UI.
-# Reference: /workspace/shared/skills/chpc-bridge/SKILL.md
-#
-# Host chpc-login
-#     HostName notchpeak.chpc.utah.edu
-#     User <YOUR-UNID>
-#     ControlMaster auto
-#     ControlPath ~/.ssh/cm-%r@%h:%p
-#     ControlPersist 8h
-#     ServerAliveInterval 60
-#     ServerAliveCountMax 3
-#     StrictHostKeyChecking accept-new
-#     UserKnownHostsFile ~/.ssh/known_hosts
-SSHCFG
-    chmod 600 "${WORKSPACE}/.ssh/config"
-fi
-
-if [[ -d "${SKELETON_DIR}" ]]; then
-    mkdir -p "${WORKSPACE}/.claude/commands" \
-             "${WORKSPACE}/.claude/agents" \
-             "${WORKSPACE}/.claude/hooks"
-    cp -n "${SKELETON_DIR}/commands/"*.md "${WORKSPACE}/.claude/commands/" 2>/dev/null || true
-    cp -n "${SKELETON_DIR}/agents/"tick-*.md "${WORKSPACE}/.claude/agents/" 2>/dev/null || true
-    # Hooks are harness-managed — force-refresh on every recreate.
-    cp -f "${SKELETON_DIR}/hooks/"*.sh "${WORKSPACE}/.claude/hooks/" 2>/dev/null || true
-    chmod +x "${WORKSPACE}/.claude/hooks/"*.sh 2>/dev/null || true
-
-    # Merge harness hook entries into settings.json (idempotent overwrite of
-    # the harness-managed keys). Preserves inode for the bind mount.
-    if [[ -f "${WORKSPACE}/.claude/settings.json" ]]; then
-        python3 "${HUB_DIR}/scripts/merge-harness-hooks.py" "${WORKSPACE}/.claude/settings.json"
-    fi
-fi
-
-# Ensure the labweaver-memory MCP server is registered in the per-user
-# .mcp.json. Mirrors add-user.sh; merge keeps any pre-existing servers.
-python3 "${HUB_DIR}/scripts/merge-mcp-config.py" "${WORKSPACE}/.mcp.json" "${USERNAME}"
+spec_load "${USERNAME}"
+spec_save "${USERNAME}"
+prepare_workspace "${USERNAME}"
 
 # Keep the user's existing service ID so their frontend link keeps working.
 SERVICE_ID=$("${HUB_DIR}/scripts/service-id.sh" get "${USERNAME}") \
     || { echo "Add one with: ${HUB_DIR}/scripts/service-id.sh ensure ${USERNAME}"; exit 1; }
 
-# GPU passthrough: pass --gpus all when nvidia-container-toolkit is present
-# on the host. Without the toolkit `--gpus all` fails hard, so we detect.
-# Override with GPU=0 to force-disable.
-GPU_FLAGS=()
-if [[ "${GPU:-auto}" != "0" ]] && command -v nvidia-ctk >/dev/null 2>&1; then
-    GPU_FLAGS=(--gpus all)
-    echo "  [gpu] --gpus all (detected nvidia-container-toolkit)"
+# The old container steps aside as <name>-old and comes back if the new one
+# fails to start.
+OLD=""
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+    OLD="${CONTAINER}-old"
+    docker rm -f "$OLD" >/dev/null 2>&1 || true
+    docker stop "$CONTAINER" >/dev/null
+    docker rename "$CONTAINER" "$OLD"
 fi
-
-docker run -d \
-    --name "${CONTAINER}" \
-    --network "${NETWORK}" \
-    --restart unless-stopped \
-    "${GPU_FLAGS[@]}" \
-    -e "SERVICE_ID=${SERVICE_ID}" \
-    -e "NATS_SERVERS=nats://${NATS_HOST}:4222" \
-    -e "NATS_USER=agent" \
-    -e "WORKSPACE_ROOT=/workspace" \
-    -e "DEFAULT_PROJECT=/workspace" \
-    -e "PG_URL=postgres://labweaver:${POSTGRES_PASSWORD}@labweaver-postgres:5432/labweaver" \
-    -e "USERNAME=${USERNAME}" \
-    -e "HOME=/home/node" \
-    -e "MEMORY_API_URL=http://labweaver-indexer:8400" \
-    -e "MEMORY_ENABLED=1" \
-    -v "${WORKSPACE}/local_projects:/workspace/local_projects" \
-    -v "${WORKSPACE}/.claude:/workspace/.claude" \
-    -v "${WORKSPACE}/.env:/workspace/.env:ro" \
-    -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro" \
-    -v "${WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro" \
-    -v "${SHARED_DIR}/CLAUDE.md:/workspace/.labweaver/shared.md:ro" \
-    -v "${WORKSPACE}/.claude/skills:/home/node/.claude/skills-user" \
-    -v "${WORKSPACE}/.claude/agents:/home/node/.claude/agents" \
-    -v "${WORKSPACE}/.claude/commands:/home/node/.claude/commands" \
-    -v "${WORKSPACE}/.claude/hooks:/home/node/.claude/hooks" \
-    -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json" \
-    -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects" \
-    -v "${WORKSPACE}/.dsh:/home/node/.dsh" \
-    -v "${WORKSPACE}/.latch:/home/node/.latch" \
-    -v "${WORKSPACE}/.ssh:/home/node/.ssh" \
-    -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro" \
-    -v "${SHARED_DIR}/projects:/workspace/shared/projects" \
-    -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro" \
-    -v "${SHARED_DIR}/skills:/workspace/shared/skills:ro" \
-    -w /workspace \
-    "${IMAGE}"
-
-# The base image's /venv is owned by root:root so runtime `pip install`
-# (torch, scSurvival, etc) fails with "Permission denied". Fix it once
-# per container — lives in the container's overlay, takes ~10s, and does
-# NOT bloat the shared image layer. Best-effort; don't fail the recreate
-# if it hiccups.
-docker exec -u root "${CONTAINER}" chown -R node:node /venv 2>/dev/null \
-    && echo "  chown /venv -> node:node OK" \
-    || echo "  chown /venv skipped (already owned, or container not ready)"
+if ! run_user_container "${USERNAME}"; then
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    if [[ -n "$OLD" ]]; then
+        docker rename "$OLD" "$CONTAINER" && docker start "$CONTAINER" >/dev/null
+        echo "Restored the previous ${CONTAINER}." >&2
+    fi
+    exit 1
+fi
+[[ -z "$OLD" ]] || docker rm "$OLD" >/dev/null
 
 echo "Recreated ${CONTAINER} with image ${IMAGE}."

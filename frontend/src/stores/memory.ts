@@ -2,8 +2,11 @@
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { memoryService, type ListQuery, type WriteParams } from '@/services/memory'
-import type { MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier, MemoryDirSummary, MemoryTree } from '@/types'
+import { memoryService } from '@/services/memory'
+import type {
+  MemoryListItem, MemoryDetail, MemoryAuditEntry, MemoryType, MemorySource, ScopeTier, MemoryDirSummary, MemoryTree,
+  MemoryListQuery,
+} from '@/types'
 
 export const useMemoryStore = defineStore('memory', () => {
   const items = ref<MemoryListItem[]>([])
@@ -57,7 +60,7 @@ export const useMemoryStore = defineStore('memory', () => {
     cursor.value = null
     error.value = null
     try {
-      const query: ListQuery = {
+      const query: MemoryListQuery = {
         ...filters.value,
         cursor: undefined,
       }
@@ -77,7 +80,7 @@ export const useMemoryStore = defineStore('memory', () => {
     loading.value = true
     error.value = null
     try {
-      const query: ListQuery = {
+      const query: MemoryListQuery = {
         ...filters.value,
         cursor: cursor.value,
       }
@@ -99,7 +102,7 @@ export const useMemoryStore = defineStore('memory', () => {
         memoryService.audit(id),
       ])
       selected.value = detail
-      audit.value = auditTrail
+      audit.value = auditTrail.rows
       editDraft.value = null
       editDirty.value = false
     } catch (e) {
@@ -170,19 +173,6 @@ export const useMemoryStore = defineStore('memory', () => {
     }
   }
 
-  async function memorize(p: WriteParams) {
-    error.value = null
-    try {
-      const response = await memoryService.write(p)
-      if (response.memory_id) {
-        // Reload the first page to include the newly created memory
-        await loadFirstPage()
-      }
-    } catch (e) {
-      error.value = (e as Error)?.message || 'Failed to write memory'
-    }
-  }
-
   function startEdit() {
     if (!selected.value) return
     editDraft.value = {
@@ -219,7 +209,6 @@ export const useMemoryStore = defineStore('memory', () => {
     saveEdit,
     forget,
     restore,
-    memorize,
     startEdit,
     cancelEdit,
     setFilter,

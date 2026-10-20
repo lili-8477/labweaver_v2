@@ -4,32 +4,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-
-export interface TeamMember {
-  /** Session id; a teammate's is its subagent session. */
-  id: string;
-  name: string;
-  role: "lead" | "teammate";
-  status: "running" | "inactive" | "provisioning" | "failed";
-  description?: string;
-  model?: string;
-}
-
-export interface TeamTask {
-  id: string;
-  subject: string;
-  description?: string;
-  status: "pending" | "in_progress" | "completed";
-  ownerName?: string;
-  blockedBy: string[];
-  ready: boolean;
-}
-
-export interface TeamBoard {
-  members: TeamMember[];
-  tasks: TeamTask[];
-  updatedAt: number;
-}
+import type { TeamBoard } from "../rpc-contract.js";
 
 /** DeepSeek Harness state directory (sessions, config, plugin output). */
 export const dshHome = (home: string): string => process.env.DSH_HOME ?? path.join(home, ".dsh");

@@ -30,7 +30,6 @@ const INTERNAL_PATH_MIME = 'application/x-labweaver-path'
 // rename / move / delete with a friendly message so users don't see the
 // raw EBUSY in the tree-error strip.
 const PROTECTED_MOUNT_POINTS = new Set<string>([
-  '.claude',
   '.labweaver',
   '.env',
   'CLAUDE.md',
@@ -238,10 +237,7 @@ async function toggleDir(path: string) {
     loadingDirs.value.add(path)
     loadingDirs.value = new Set(loadingDirs.value)
     try {
-      const result = await natsService.proxyToolset('list_files', {
-        sub_dir: path,
-        recursive: false,
-      }, 'file_manager') as { success: boolean; files: Array<{ name: string; type: string; size?: number }> }
+      const result = await natsService.callToolset('file_manager', 'list_files', { sub_dir: path })
 
       if (result?.success && Array.isArray(result.files)) {
         const children: FileEntry[] = result.files

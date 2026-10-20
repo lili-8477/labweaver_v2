@@ -28,7 +28,7 @@ beforeEach(async () => {
 });
 
 async function experience(name: string, dir = "user/experience"): Promise<string> {
-  const { memory_id } = await writeUserMemory({
+  const { memory_id } = await writeUserMemory({ domain: "lab",
     pool, username: "alice", scope: "user", project_dir: null,
     type: "project", name, description: "d", body: `${name} body`, dir,
   });
@@ -79,14 +79,14 @@ describe("proposeExperiences", () => {
     });
     expect(r.ok).toBe(true);
     const promoted = await pool.query(`SELECT memory_id FROM memories WHERE username = '__org__'`);
-    expect((await getMemory(pool, promoted.rows[0].memory_id))!.dir_key).toBe("org/experience");
+    expect((await getMemory({ pool, memoryId: promoted.rows[0].memory_id, username: "alice" }))!.dir_key).toBe("org/experience");
   });
 });
 
 describe("listDirs all_projects", () => {
   it("counts project directories across every project of the caller", async () => {
     for (const p of ["-a", "-b"]) {
-      await writeUserMemory({
+      await writeUserMemory({ domain: "lab",
         pool, username: "alice", scope: "project", project_dir: p,
         type: "project", name: `n${p}`, description: "d", body: `b${p}`,
       });

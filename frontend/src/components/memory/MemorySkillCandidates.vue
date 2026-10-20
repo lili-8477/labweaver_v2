@@ -3,7 +3,7 @@
  * Facet topics ranked by skill readiness. Readiness has two halves shown as
  * one split meter: knowledge (memories gathered) and proof (successful task
  * uses). "Draft skill" asks the agent in the active chat to distill the
- * topic's memories into ~/.claude/skills/<slug>/SKILL.md.
+ * topic's memories into ~/.labweaver/skills/<slug>/SKILL.md.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
@@ -42,7 +42,7 @@ function draft(t: MemoryTopic) {
     `Build a reusable skill from my memory topic "${t.key}: ${t.value}" ` +
       `(${t.memory_count} memories, ${t.success_count} successful task uses).`,
     `1. Read each memory with memory_get: ${t.memory_ids.join(', ')}.`,
-    `2. Distill the procedure that worked into ~/.claude/skills/${slug(t.value)}/SKILL.md ` +
+    `2. Distill the procedure that worked into ~/.labweaver/skills/${slug(t.value)}/SKILL.md ` +
       'with name and description frontmatter. Keep steps concrete; drop one-off details.',
     '3. Tell me which memories the skill now covers so I can decide whether to forget them.',
   ].join('\n')

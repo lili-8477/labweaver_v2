@@ -1,8 +1,8 @@
 // Writes each turn as a Claude Code–format JSONL transcript at
-// ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl.
+// ~/.labweaver/projects/<encoded-cwd>/<sessionId>.jsonl.
 //
 // The memory pipeline (hub/indexer watcher, session projector, /memory
-// distill) and get_chat_messages (history.ts) all read that format. DSH keeps
+// distill) and the chat view (chat-items.ts, via read.ts) all read that format. DSH keeps
 // its own session log for resume; this file is the stable interchange copy.
 // Only the fields those readers use are written.
 
@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { AgentEvent } from "../engine/types.js";
-import { CONTINUATION_TYPE, transcriptPath } from "../history.js";
+import { CONTINUATION_TYPE, transcriptPath, type TranscriptEntry } from "./read.js";
 
 export interface TranscriptWriterOptions {
   home: string;
@@ -19,6 +19,8 @@ export interface TranscriptWriterOptions {
   /** Recorded as message.model on assistant entries (indexer's sessions.model). */
   model: string;
   now?: () => Date;
+  /** Each user/assistant entry as it is created (before it reaches disk). */
+  onEntry?: (entry: TranscriptEntry) => void;
 }
 
 export class ClaudeTranscriptWriter {
@@ -34,7 +36,7 @@ export class ClaudeTranscriptWriter {
 
   /**
    * Marks this session as continuing an earlier one (e.g. a pre-migration
-   * Claude session DSH cannot resume). history.ts follows the link so the
+   * Claude session DSH cannot resume). read.ts follows the link so the
    * chat's full history still renders; the indexer ignores unknown types.
    */
   continues(previousSessionId: string): void {
@@ -107,6 +109,7 @@ export class ClaudeTranscriptWriter {
       message,
     };
     this.parentUuid = uuid;
+    this.opts.onEntry?.(entry);
     if (type === "assistant") this.pending = entry;
     else this.enqueue(JSON.stringify(entry) + "\n");
   }

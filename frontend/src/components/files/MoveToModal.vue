@@ -28,10 +28,7 @@ const sourceParent = computed(() => parentOf(props.sourcePath))
 
 async function loadDir(parentPath: string): Promise<DirNode[]> {
   try {
-    const result = await natsService.proxyToolset('list_files', {
-      sub_dir: parentPath || null,
-      recursive: false,
-    }, 'file_manager') as { success: boolean; files: Array<{ name: string; type: string }> }
+    const result = await natsService.callToolset('file_manager', 'list_files', { sub_dir: parentPath || null })
     if (!result?.success || !Array.isArray(result.files)) return []
     return result.files
       .filter(f => f.type === 'directory' && f.name !== '.executor')

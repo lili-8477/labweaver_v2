@@ -2,7 +2,7 @@
 # Per-jobid CHPC SLURM poller. Spawned in the background by posttool_jobid.sh
 # after `sbatch` returns a job ID. Polls `sacct` via the multiplexed SSH bridge
 # every CHPC_POLL_INTERVAL seconds. When the job hits a terminal state, writes
-# one NDJSON record to ~/.claude/.chpc_pending and exits.
+# one NDJSON record to ~/.labweaver/.chpc_pending and exits.
 #
 # Passive contract: nothing wakes the agent. userprompt_route.sh drains the
 # inbox the next time the user types anything, so the agent sees the result
@@ -16,8 +16,8 @@ set -uo pipefail
 JOBID="${1:?usage: chpc_job_watcher.sh <jobid> [step_name]}"
 STEP="${2:-chpc-job}"
 HOST="${CHPC_HOST:-chpc-login}"
-INBOX="${CHPC_INBOX:-$HOME/.claude/.chpc_pending}"
-LOG="${CHPC_WATCHER_LOG:-$HOME/.claude/.chpc_watcher.log}"
+INBOX="${CHPC_INBOX:-$HOME/.labweaver/.chpc_pending}"
+LOG="${CHPC_WATCHER_LOG:-$HOME/.labweaver/.chpc_watcher.log}"
 POLL_INTERVAL="${CHPC_POLL_INTERVAL:-600}"
 MAX_HOURS="${CHPC_MAX_HOURS:-72}"
 
@@ -37,7 +37,7 @@ log "start step=$STEP host=$HOST poll=${POLL_INTERVAL}s max=${MAX_HOURS}h pid=$$
 # Single-instance guard: avoid two watchers polling the same jobid (e.g. if
 # the agent re-emits the same sbatch command). flock on a per-jobid file,
 # release on exit. If we can't grab the lock, another watcher owns it.
-LOCK_DIR="$HOME/.claude/.chpc_watch.locks"
+LOCK_DIR="$HOME/.labweaver/.chpc_watch.locks"
 mkdir -p "$LOCK_DIR" 2>/dev/null || true
 LOCK_FILE="$LOCK_DIR/$JOBID.lock"
 exec 9>"$LOCK_FILE"

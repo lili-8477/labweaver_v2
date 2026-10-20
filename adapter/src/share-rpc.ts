@@ -2,6 +2,9 @@
 // share-api route, the username is supplied at construction time. No business
 // logic. Handles HTTP errors as thrown Error with the API's `error` string
 // when present (so dispatchInner can surface them through NATS as RPC errors).
+// Results are the share-api's JSON, typed as the RPC contract states them.
+
+import type { RpcParams, ShareCapabilities, ShareRequest, ShareStatus } from "./rpc-contract.js";
 
 export class ShareRpcClient {
   private readonly timeoutMs = 5000;
@@ -12,45 +15,37 @@ export class ShareRpcClient {
   ) {}
 
   // POST /share/submit  body: { requester, kind, ref, note? }
-  async submit(p: {
-    kind: "memory" | "skill" | "folder";
-    ref: string;
-    note?: string;
-  }): Promise<unknown> {
-    return this.post("/share/submit", { requester: this.username, ...p });
+  async submit(p: RpcParams<"share_submit">): Promise<{ share_id: string }> {
+    return this.post("/share/submit", { requester: this.username, ...p }) as Promise<{ share_id: string }>;
   }
 
   // GET /share/list  query: actor, role, status?, limit?, cursor?
-  async list(qs: {
-    role: "outbox" | "inbox" | "all";
-    status?: "pending" | "approved" | "rejected" | "withdrawn";
-    limit?: number;
-    cursor?: string;
-  }): Promise<unknown> {
-    return this.fetchJson("/share/list", { actor: this.username, ...qs });
+  async list(qs: RpcParams<"share_list">): Promise<{ items: ShareRequest[]; next_cursor: string | null }> {
+    return this.fetchJson("/share/list", { actor: this.username, ...qs }) as Promise<{ items: ShareRequest[]; next_cursor: string | null }>;
   }
 
   // GET /share/:id  query: actor
-  async get(id: string): Promise<unknown> {
-    return this.fetchJson(`/share/${encodeURIComponent(id)}`, { actor: this.username });
+  async get(id: string): Promise<ShareRequest> {
+    return this.fetchJson(`/share/${encodeURIComponent(id)}`, { actor: this.username }) as Promise<ShareRequest>;
   }
 
   // POST /share/:id/decide  body: { actor, decision, comment? }
   async decide(
     id: string,
     p: { decision: "approve" | "reject"; comment?: string },
-  ): Promise<unknown> {
-    return this.post(`/share/${encodeURIComponent(id)}/decide`, { actor: this.username, ...p });
+  ): Promise<{ status: ShareStatus; promotion_result?: Record<string, unknown> }> {
+    return this.post(`/share/${encodeURIComponent(id)}/decide`, { actor: this.username, ...p }) as
+      Promise<{ status: ShareStatus; promotion_result?: Record<string, unknown> }>;
   }
 
   // POST /share/:id/withdraw  body: { actor }
-  async withdraw(id: string): Promise<unknown> {
-    return this.post(`/share/${encodeURIComponent(id)}/withdraw`, { actor: this.username });
+  async withdraw(id: string): Promise<{ status: ShareStatus }> {
+    return this.post(`/share/${encodeURIComponent(id)}/withdraw`, { actor: this.username }) as Promise<{ status: ShareStatus }>;
   }
 
   // GET /share/capabilities  query: actor
-  async capabilities(): Promise<unknown> {
-    return this.fetchJson("/share/capabilities", { actor: this.username });
+  async capabilities(): Promise<ShareCapabilities> {
+    return this.fetchJson("/share/capabilities", { actor: this.username }) as Promise<ShareCapabilities>;
   }
 
   private async fetchJson(

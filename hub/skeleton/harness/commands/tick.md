@@ -4,7 +4,7 @@ Auto mode is on for this task. The harness drives it: after each of your replies
 
 ```
 [auto mode · round N] Do `tick-executor` now, yourself.
-Agent file: /home/node/.claude/agents/tick-executor.md
+Agent file: /home/node/.labweaver/agents/tick-executor.md
 Project directory: /workspace/local_projects/<slug>
 Work item: <the step or review-feedback line>
 ```

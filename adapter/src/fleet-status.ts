@@ -13,6 +13,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ContainerStatus, FleetEntry } from "./rpc-contract.js";
 
 export const STATUS_SUBJECT = "labweaver.fleet.status";
 export const PING_SUBJECT = "labweaver.fleet.ping";
@@ -20,27 +21,6 @@ export const REPORT_EVERY_MS = 15_000;
 /** Missed three reports → offline. */
 export const STALE_MS = 3 * REPORT_EVERY_MS;
 const PING_WAIT_MS = 750;
-
-export interface ContainerStatus {
-  username: string;
-  role: "manager" | "user";
-  hostname: string;
-  startedAt: number;
-  reportedAt: number;
-  memoryBytes: number;
-  memoryLimitBytes: number | null;
-  /** Percent of one core since the previous report; null on the first. */
-  cpuPercent: number | null;
-  cpus: number;
-  activeTurns: number;
-  kernels: number;
-}
-
-export interface FleetEntry {
-  username: string;
-  online: boolean;
-  status: ContainerStatus | null;
-}
 
 export interface Activity {
   activeTurns: number;

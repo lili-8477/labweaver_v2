@@ -3,7 +3,7 @@
 #
 # Responsibilities (kept intentionally small — everything else belongs in the adapter):
 #   1. Source per-user .env if present (DEEPSEEK_API_KEY, OLLAMA_API_KEY, etc.)
-#   2. Ensure ~/.claude/{skills,agents} and DSH_HOME exist even when no bind-mount was attached
+#   2. Point ~/.labweaver at the workspace's labweaver folder and ensure its subdirs + DSH_HOME exist
 #   3. Expose the shared lab instructions to DeepSeek Harness
 #   4. Exec the adapter. SIGTERM handling comes from tini + adapter's signal trap.
 
@@ -18,7 +18,13 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 DSH_HOME="${DSH_HOME:-${HOME}/.dsh}"
-mkdir -p "${HOME}/.claude/skills" "${HOME}/.claude/agents" "${HOME}/.claude/projects" "${DSH_HOME}"
+# The labweaver folder (skills, commands, agents, hooks, settings.json, Auto
+# markers, transcripts) is mounted whole at <workspace>/.labweaver. Code that
+# resolves it from $HOME (the adapter, dsh plugins, hooks) reaches it through
+# this link.
+LABWEAVER_DIR="${WORKSPACE_ROOT:-/workspace}/.labweaver"
+mkdir -p "${LABWEAVER_DIR}"/{skills,agents,commands,hooks,projects,auto} "${DSH_HOME}"
+ln -sfn "${LABWEAVER_DIR}" "${HOME}/.labweaver"
 
 # DeepSeek Harness reads CLAUDE.md natively but not its `@/workspace/.labweaver/shared.md`
 # import. Its user-global instruction file is $DSH_HOME/AGENTS.md, so point
@@ -26,39 +32,5 @@ mkdir -p "${HOME}/.claude/skills" "${HOME}/.claude/agents" "${HOME}/.claude/proj
 if [[ -f /workspace/.labweaver/shared.md ]]; then
     ln -sfn /workspace/.labweaver/shared.md "${DSH_HOME}/AGENTS.md"
 fi
-
-# Stitch shared + per-user skills into ~/.claude/skills, one of the skill
-# roots the adapter registers with DeepSeek Harness (see adapter dsh/patch.ts);
-# the raw bind-mounts (skills-shared, skills-user) are not scanned. Use symlinks so changes
-# on either side propagate without copying.
-#
-# Precedence: user skills win on a name collision.
-stitch_skills() {
-    local dest="${HOME}/.claude/skills"
-    # Clear stale symlinks (from prior container runs). Leaves real dirs alone.
-    find "${dest}" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null || true
-
-    # User skills first so they take precedence.
-    if [[ -d "${HOME}/.claude/skills-user" ]]; then
-        for d in "${HOME}/.claude/skills-user"/*/; do
-            [[ -d "$d" ]] || continue
-            local name
-            name=$(basename "$d")
-            ln -sfn "$d" "${dest}/${name}"
-        done
-    fi
-
-    # Shared skills fill in anything user didn't provide.
-    if [[ -d "${HOME}/.claude/skills-shared" ]]; then
-        for d in "${HOME}/.claude/skills-shared"/*/; do
-            [[ -d "$d" ]] || continue
-            local name
-            name=$(basename "$d")
-            [[ -e "${dest}/${name}" ]] && continue
-            ln -s "$d" "${dest}/${name}"
-        done
-    fi
-}
-stitch_skills
 
 exec node /opt/adapter/dist/index.js

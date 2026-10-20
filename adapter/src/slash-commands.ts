@@ -1,10 +1,11 @@
-// Expands Claude Code–style slash commands (~/.claude/commands/<name>.md)
+// Expands Claude Code–style slash commands (~/.labweaver/commands/<name>.md)
 // before a prompt reaches the agent runtime. DSH has no markdown command
 // loader; its own `/name` handling covers skills, so unknown names pass
 // through untouched for DSH to resolve.
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { labweaverPath } from "./labweaver-dir.js";
 
 const SLASH_RE = /^\/([A-Za-z0-9][\w-]*)(?:\s+([\s\S]*))?$/;
 
@@ -24,7 +25,7 @@ export async function expandSlashCommand(home: string, prompt: string): Promise<
   const [, name, args = ""] = m;
   let body: string;
   try {
-    body = await readFile(join(home, ".claude", "commands", `${name}.md`), "utf8");
+    body = await readFile(labweaverPath(home, "commands", `${name}.md`), "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return prompt;
     throw e;

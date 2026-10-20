@@ -8,40 +8,10 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { CONTINUATION_TYPE, transcriptPath } from "./history.js";
+import { parseLines, readTranscript, transcriptPath, type TranscriptEntry } from "./transcript/read.js";
+import type { SubagentRun, TokenTotals, TranscriptStats } from "./rpc-contract.js";
 
-export interface TokenTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export interface SubagentRun {
-  sessionId: string;
-  description: string | null;
-  /** "stopped": no result and the chat's turn is no longer running. */
-  status: "running" | "done" | "failed" | "stopped";
-  model: string | null;
-  startedAt: string;
-  endedAt: string;
-  tokens: TokenTotals;
-  toolCalls: number;
-  /** First line of the run's last reply. */
-  result: string | null;
-}
-
-export interface ChatStats {
-  /** The chat's own turns, every session in its continuation chain. */
-  main: TokenTotals;
-  turns: number;
-  lastTurn: TokenTotals | null;
-  subagents: SubagentRun[];
-}
-
-type Entry = Record<string, any>;
-
-const MAX_CONTINUATION_DEPTH = 8;
+type Entry = TranscriptEntry;
 
 const zero = (): TokenTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -64,15 +34,6 @@ function add(into: TokenTotals, u: TokenTotals): void {
   into.cacheWrite += u.cacheWrite;
 }
 
-function parseLines(raw: string): Entry[] {
-  const out: Entry[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* torn last line */ }
-  }
-  return out;
-}
-
 const blocks = (entry: Entry): Entry[] =>
   Array.isArray(entry.message?.content) ? entry.message.content : [];
 
@@ -84,36 +45,27 @@ export async function readChatStats(
   cwd: string,
   sessionId: string,
   running: boolean,
-): Promise<ChatStats> {
+): Promise<TranscriptStats> {
   const dir = path.dirname(transcriptPath(home, cwd, sessionId));
   const main = zero();
   let turns = 0;
   let lastTurn: TokenTotals | null = null;
-  const sessions = new Set<string>();
   const calls: SubagentCall[] = [];
   const results = new Map<string, CallResult>();
 
   // Oldest session first, so lastTurn ends on the newest.
-  const readSession = async (id: string, depth: number): Promise<void> => {
-    sessions.add(id);
-    const raw = await fs.readFile(transcriptPath(home, cwd, id), "utf8").catch(() => "");
-    for (const e of parseLines(raw)) {
-      if (e.type === CONTINUATION_TYPE && typeof e.previousSessionId === "string") {
-        if (depth < MAX_CONTINUATION_DEPTH) await readSession(e.previousSessionId, depth + 1);
-        continue;
-      }
-      const u = usageOf(e);
-      if (u) { add(main, u); turns++; lastTurn = u; }
-      for (const b of blocks(e)) {
-        if (b.type === "tool_use" && b.name === "subagent") {
-          calls.push({ id: b.id, at: e.timestamp, description: b.input?.description ?? null });
-        } else if (b.type === "tool_result") {
-          results.set(b.tool_use_id, { at: e.timestamp, isError: b.is_error === true });
-        }
+  const { entries, sessions } = await readTranscript(home, cwd, sessionId);
+  for (const e of entries) {
+    const u = usageOf(e);
+    if (u) { add(main, u); turns++; lastTurn = u; }
+    for (const b of blocks(e)) {
+      if (b.type === "tool_use" && b.name === "subagent") {
+        calls.push({ id: b.id, at: e.timestamp, description: b.input?.description ?? null });
+      } else if (b.type === "tool_result") {
+        results.set(b.tool_use_id, { at: e.timestamp, isError: b.is_error === true });
       }
     }
-  };
-  await readSession(sessionId, 0);
+  }
 
   const names = await fs.readdir(dir).catch(() => [] as string[]);
   const subagents: SubagentRun[] = [];

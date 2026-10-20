@@ -7,13 +7,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-
-export interface ClientModule {
-  /** Package name, e.g. "@skillre/dsh-plugin-pomodoro". */
-  id:   string;
-  /** The bundle source: one `window.__ModuleLoader__.load(...)` call. */
-  code: string;
-}
+import type { ClientModule } from "./rpc-contract.js";
 
 /** The acp profile directory, where `dsh plugin --profile acp add` installs. */
 export function acpProfileDir(home: string): string {

@@ -120,7 +120,7 @@ function requireBaseline(id: string): unknown {
 }
 
 async function load(): Promise<void> {
-  const res = await natsService.invoke('dsh_client_modules', {}) as { modules?: { id: string; code: string }[] }
+  const res = await natsService.invoke('dsh_client_modules')
   for (const mod of res.modules ?? []) {
     try {
       const plugin = evaluate(mod.code).factory(requireBaseline)

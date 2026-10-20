@@ -1,9 +1,8 @@
 // AgentEngine backed by DeepSeek Harness over ACP.
 
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import type { AgentEngine, EngineTurnArgs } from "../engine/types.js";
+import type { AgentEngine, EngineTurnArgs, ImageRef } from "../engine/types.js";
 import { parseModelRef } from "../providers/registry.js";
-import type { ImageRef } from "../rpc.js";
 import type { DshAcpConnection } from "./acp-connection.js";
 import { mapSessionUpdate } from "./acp-mapper.js";
 import { takeTurnUsage } from "./usage.js";

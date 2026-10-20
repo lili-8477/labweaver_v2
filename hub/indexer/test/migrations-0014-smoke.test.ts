@@ -25,11 +25,15 @@ describe('migration 0014 memory_dirs', () => {
     pgc = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     pool = new Pool({ connectionString: pgc.getConnectionUri() });
 
-    // Apply everything before 0014, seed pre-existing rows, then apply 0014.
+    // Apply everything before 0014, seed pre-existing rows, then apply 0014
+    // (and the later migrations, which may build on it).
     const before = await mkdtemp(path.join(tmpdir(), 'mig-'));
     await cp(MIGRATIONS, before, {
       recursive: true,
-      filter: (src) => !path.basename(src).startsWith('0014_'),
+      filter: (src) => {
+        const name = path.basename(src);
+        return !/^\d{4}_/.test(name) || name < '0014_';
+      },
     });
     await runMigrations({ pool, migrationsDir: before, lockKey: 0xdeadbeefn });
     await rm(before, { recursive: true });

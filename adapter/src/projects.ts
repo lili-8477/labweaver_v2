@@ -4,15 +4,9 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import type { ProjectInfo } from "./rpc-contract.js";
 
 export const PROJECTS_ROOT = "local_projects";
-
-export interface ProjectInfo {
-  /** Workspace-relative, e.g. "local_projects/pbmc-qc". */
-  dir: string;
-  name: string;
-  modified_at: string;
-}
 
 export async function listProjects(workspaceRoot: string): Promise<ProjectInfo[]> {
   const root = path.join(workspaceRoot, PROJECTS_ROOT);

@@ -1,9 +1,10 @@
 // frontend/src/services/share.ts
 import { natsService } from './nats';
 import type {
-  ShareRequest, ShareCapabilities, ArtifactKind, ShareStatus,
+  ShareRequest, ShareCapabilities, ShareStatus,
 } from '@/types/share';
 import { hubPath } from '@/utils/hub-path';
+import type { RpcParams } from '@rpc-contract';
 
 export interface ListResponse {
   items: ShareRequest[];
@@ -19,8 +20,8 @@ export const shareService = {
    * Submit a memory/skill/folder for org review.
    * Phase 1: only memory kind is implemented server-side; skill/folder return 501.
    */
-  submit: async (p: { kind: ArtifactKind; ref: string; note?: string }): Promise<SubmitResponse> => {
-    const result = await natsService.invoke('share_submit', p as unknown as Record<string, unknown>) as { success: true; share_id: string };
+  submit: async (p: RpcParams<'share_submit'>): Promise<SubmitResponse> => {
+    const result = await natsService.invoke('share_submit', p);
     return { share_id: result.share_id };
   },
 
@@ -30,8 +31,8 @@ export const shareService = {
    * - role='inbox':  pending requests where I'm the reviewer (managers only — empty for non-managers)
    * - role='all':    union of outbox and inbox
    */
-  list: async (q: { role: 'outbox'|'inbox'|'all'; status?: ShareStatus; limit?: number; cursor?: string }): Promise<ListResponse> => {
-    const result = await natsService.invoke('share_list', q as unknown as Record<string, unknown>) as { success: true; items: ShareRequest[]; next_cursor: string | null };
+  list: async (q: RpcParams<'share_list'>): Promise<ListResponse> => {
+    const result = await natsService.invoke('share_list', q);
     return { items: result.items, next_cursor: result.next_cursor };
   },
 
@@ -39,7 +40,7 @@ export const shareService = {
    * Fetch a single share request by id. Owner-or-reviewer-only.
    */
   get: async (id: string): Promise<ShareRequest> => {
-    const result = await natsService.invoke('share_get', { share_id: id }) as { success: true; share: ShareRequest };
+    const result = await natsService.invoke('share_get', { share_id: id });
     return result.share;
   },
 
@@ -47,7 +48,7 @@ export const shareService = {
    * Manager-only: approve or reject a pending request.
    */
   decide: async (id: string, p: { decision: 'approve'|'reject'; comment?: string }): Promise<DecideResponse> => {
-    const result = await natsService.invoke('share_decide', { share_id: id, ...p }) as { success: true; status: ShareStatus; promotion_result?: Record<string, unknown> };
+    const result = await natsService.invoke('share_decide', { share_id: id, ...p });
     return { status: result.status, promotion_result: result.promotion_result };
   },
 
@@ -55,7 +56,7 @@ export const shareService = {
    * Requester-only: withdraw a pending request.
    */
   withdraw: async (id: string): Promise<WithdrawResponse> => {
-    const result = await natsService.invoke('share_withdraw', { share_id: id }) as { success: true; status: ShareStatus };
+    const result = await natsService.invoke('share_withdraw', { share_id: id });
     return { status: result.status };
   },
 
@@ -65,7 +66,7 @@ export const shareService = {
    * the (N) badge on the panel button.
    */
   capabilities: async (): Promise<ShareCapabilities> => {
-    const result = await natsService.invoke('share_capabilities', {}) as { success: true } & ShareCapabilities;
+    const result = await natsService.invoke('share_capabilities');
     return {
       is_manager: result.is_manager,
       manager_usernames: result.manager_usernames,

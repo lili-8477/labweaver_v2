@@ -44,7 +44,7 @@ takes ~20 min, so reusing the existing artifact is the pragmatic choice.
 | `NATS_PASS` | — | NATS auth token (optional) |
 | `WORKSPACE_ROOT` | `/workspace` | bind-mounted workspace |
 | `DEFAULT_PROJECT` | `/workspace` | cwd for agent turns |
-| `HOME` | `/home/node` | where `.claude/` lives |
+| `HOME` | `/home/node` | `~/.labweaver` links to `$WORKSPACE_ROOT/.labweaver` (the labweaver folder) |
 | `DEEPSEEK_API_KEY` | — | DeepSeek provider; sourced from `$WORKSPACE_ROOT/.env` |
 | `OLLAMA_API_KEY` | — | Ollama Cloud provider; sourced from `$WORKSPACE_ROOT/.env` |
 | `OLLAMA_BASE_URL` | `https://ollama.com/v1` | Ollama OpenAI-compatible endpoint |

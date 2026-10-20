@@ -5,21 +5,21 @@
 // Subagent runs (auto mode's reviewer, or any other delegation) happen in child sessions that dsh never streams over ACP, so the
 // adapter's transcript only holds the parent's view. This writes each child
 // session as its own Claude-format sidechain transcript beside the parent's:
-// ~/.claude/projects/<encoded cwd>/<child session id>.jsonl, with
+// ~/.labweaver/projects/<encoded cwd>/<child session id>.jsonl, with
 // isSidechain: true, parentSessionId linking it to the delegating session, and
 // per-call message.usage. The hub indexer ingests it as an is_sidechain session
 // (so subagent tokens are counted); the chat list already hides those.
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { LABWEAVER_HOME } from "./labweaver-dir.js";
 
 export const name = "sidechain";
 
-/** Same encoding as transcriptPath in adapter/src/history.ts. */
+/** Same encoding as transcriptPath in adapter/src/transcript/read.ts. */
 const transcriptFile = (cwd, sessionId) =>
-  join(homedir(), ".claude", "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
+  join(LABWEAVER_HOME, "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
 
 // dsh-injected context (skill catalog, runtime snapshot, workspace
 // instructions) is environment, not trajectory.

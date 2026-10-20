@@ -1,5 +1,5 @@
 // Auto mode (the self-driving tick harness), adapter side. A chat's mode lives
-// on its chats row. While a chat is in auto mode, ~/.claude/auto/<session id>
+// on its chats row. While a chat is in auto mode, ~/.labweaver/auto/<session id>
 // marks its dsh session for the tick plugin and the harness hooks, and holds
 // the session's project as one absolute path (empty until tick-bootstrap
 // writes one). Auto-mode turns start as `/tick <message>` (modes.ts);
@@ -7,9 +7,10 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { labweaverPath } from "./labweaver-dir.js";
 
 export const sessionFile = (home: string, sessionId: string): string =>
-  path.join(home, ".claude", "auto", sessionId);
+  labweaverPath(home, "auto", sessionId);
 
 /**
  * Mark a session as auto mode, pointed at the chat's bound project

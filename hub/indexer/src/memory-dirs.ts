@@ -20,11 +20,11 @@ export function defaultDir(scope: Scope, type: string): string {
       return "project/decisions";
     case "user":
       if (type === "user" || type === "feedback") return "user/preferences";
-      if (type === "observation") return "user/experience";
+      if (type === "observation" || type === "experience") return "user/experience";
       return "user/notes";
     case "org":
       if (type === "project") return "org/entities";
-      if (type === "reference" || type === "session_summary") return "org/references";
+      if (type === "reference" || type === "session_summary" || type === "claim") return "org/references";
       return "org/experience";
   }
 }

@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FleetMonitor, PING_SUBJECT, STALE_MS, STATUS_SUBJECT, StatusReporter, readUsage,
-  type ContainerStatus,
 } from "../src/fleet-status.js";
+import type { ContainerStatus } from "../src/rpc-contract.js";
 
 /** An in-memory bus: publish delivers synchronously to subscribers. */
 function fakeBus() {

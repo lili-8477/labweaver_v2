@@ -1,8 +1,13 @@
 // file_manager.* RPCs — implement directly on the local filesystem.
-// Scoped to the workspace root so a misbehaving frontend can't escape.
+// Paths resolve through workspace-path.ts (containment + access policy).
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { isListed, workspacePath, type Access } from "./workspace-path.js";
+import type { FileListing, FileManagerMethods } from "./rpc-contract.js";
+
+type FileParams<M extends keyof FileManagerMethods> = FileManagerMethods[M]["params"];
+type FileResult<M extends keyof FileManagerMethods> = FileManagerMethods[M]["result"];
 
 // Extensions that are always binary. Everything else is read as UTF-8 text;
 // if that decode produces replacement chars, we fall back to base64.
@@ -22,29 +27,6 @@ const BINARY_EXTS = new Set([
   // fonts
   "ttf", "otf", "woff", "woff2", "eot",
 ]);
-
-/** Names that must never appear in list_files or be readable via the API.
- * Covers secrets and host-leakage surfaces. Matched by full basename only;
- * .env-prefixed variants are handled with a prefix check. */
-const HIDDEN_NAMES = new Set([
-  ".env",
-  ".ssh",
-  ".aws",
-  ".netrc",
-  ".credentials",
-  ".npmrc",
-  ".pypirc",
-  ".docker",
-  ".executor",
-  ".git",
-]);
-
-function isHidden(name: string): boolean {
-  if (HIDDEN_NAMES.has(name)) return true;
-  // Any .env.* (e.g. .env.local, .env.production)
-  if (name.startsWith(".env.")) return true;
-  return false;
-}
 
 const MIME_BY_EXT: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
@@ -71,19 +53,16 @@ function mimeForExt(ext: string): string {
 export class FileManager {
   constructor(private root: string) {}
 
-  private resolve(relPath: string): string {
-    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
-    const abs = path.resolve(this.root, normalized);
-    if (!abs.startsWith(this.root)) throw new Error("path escapes workspace");
-    return abs;
+  private resolve(relPath: string, access: Access): string {
+    return workspacePath(this.root, relPath, access);
   }
 
-  async listFiles(relPath = ""): Promise<unknown> {
-    const abs = this.resolve(relPath);
+  async listFiles(relPath = ""): Promise<FileResult<"list_files">> {
+    const abs = this.resolve(relPath, "read");
     const entries = await fs.readdir(abs, { withFileTypes: true });
-    const out = [];
+    const out: FileListing[] = [];
     for (const e of entries) {
-      if (isHidden(e.name)) continue;
+      if (!isListed(e.name)) continue;
       const entryPath = path.join(relPath, e.name);
       const full = path.join(abs, e.name);
       try {
@@ -102,13 +81,8 @@ export class FileManager {
     return { success: true, files: out };
   }
 
-  async readFile(relPath: string, opts: { encoding?: "utf8" | "base64" } = {}): Promise<unknown> {
-    // Refuse to read secrets even if the path is known.
-    const segs = relPath.split("/").filter(Boolean);
-    if (segs.some((s) => isHidden(s))) {
-      throw new Error(`read_file: access denied for hidden/secret path: ${relPath}`);
-    }
-    const abs = this.resolve(relPath);
+  async readFile(relPath: string, opts: { encoding?: "utf8" | "base64" } = {}): Promise<FileResult<"read_file">> {
+    const abs = this.resolve(relPath, "read");
     const ext = (relPath.split(".").pop() ?? "").toLowerCase();
     const mime = mimeForExt(ext);
     const wantBase64 = opts.encoding === "base64" || BINARY_EXTS.has(ext);
@@ -156,8 +130,8 @@ export class FileManager {
     relPath: string,
     content: string,
     opts: { encoding?: "utf8" | "base64" } = {},
-  ): Promise<unknown> {
-    const abs = this.resolve(relPath);
+  ): Promise<FileResult<"write_file">> {
+    const abs = this.resolve(relPath, "write");
     await fs.mkdir(path.dirname(abs), { recursive: true });
     if (opts.encoding === "base64") {
       await fs.writeFile(abs, Buffer.from(content, "base64"));
@@ -167,8 +141,8 @@ export class FileManager {
     return { success: true };
   }
 
-  async deleteFile(relPath: string): Promise<unknown> {
-    const abs = this.resolve(relPath);
+  async deleteFile(relPath: string): Promise<FileResult<"delete_file">> {
+    const abs = this.resolve(relPath, "write");
     const st = await fs.stat(abs);
     if (st.isDirectory()) await fs.rm(abs, { recursive: true, force: true });
     else await fs.unlink(abs);
@@ -176,47 +150,29 @@ export class FileManager {
   }
 
   /** manage_path: create_dir | delete | move — used by the frontend's file CRUD. */
-  async managePath(
-    op: string,
-    relPath: string,
-    recursive = true,
-    extra: { from?: string; to?: string } = {},
-  ): Promise<unknown> {
-    if (op === "create_dir") {
-      const abs = this.resolve(relPath);
+  async managePath(p: FileParams<"manage_path">): Promise<FileResult<"manage_path">> {
+    if (p.operation === "create_dir") {
+      const abs = this.resolve(p.path, "write");
       await fs.mkdir(abs, { recursive: true });
       return { success: true };
     }
-    if (op === "delete") {
-      const abs = this.resolve(relPath);
+    if (p.operation === "delete") {
+      const abs = this.resolve(p.path, "write");
       try {
         const st = await fs.stat(abs);
-        if (st.isDirectory()) await fs.rm(abs, { recursive, force: true });
+        if (st.isDirectory()) await fs.rm(abs, { recursive: p.recursive ?? true, force: true });
         else await fs.unlink(abs);
       } catch (e: unknown) {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       }
       return { success: true };
     }
-    if (op === "move") {
-      const from = extra.from ?? "";
-      const to = extra.to ?? "";
+    if (p.operation === "move") {
+      const { from, to } = p;
       if (!from || !to) throw new Error("manage_path move: missing from/to");
 
-      // Hidden-name + traversal guard on every segment of both paths. The
-      // shared resolve() silently strips leading `../`, which is fine for
-      // single-path ops but unsafe for move (target gets rewritten to root).
-      for (const seg of from.split("/").filter(Boolean)) {
-        if (seg === "..") throw new Error(`manage_path move: traversal in from`);
-        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in from: ${seg}`);
-      }
-      for (const seg of to.split("/").filter(Boolean)) {
-        if (seg === "..") throw new Error(`manage_path move: traversal in to`);
-        if (isHidden(seg)) throw new Error(`manage_path move: hidden segment in to: ${seg}`);
-      }
-
-      const absFrom = this.resolve(from);
-      const absTo = this.resolve(to);
+      const absFrom = this.resolve(from, "write");
+      const absTo = this.resolve(to, "write");
 
       // Refuse if target already exists. No overwrite.
       try {
@@ -230,42 +186,21 @@ export class FileManager {
       await fs.rename(absFrom, absTo);
       return { success: true };
     }
-    throw new Error(`manage_path: unknown operation ${op}`);
+    throw new Error(`manage_path: unknown operation ${(p as { operation: unknown }).operation}`);
   }
 
+  /** One handler per FileManagerMethods entry (rpc-contract.ts). */
+  private readonly handlers: { [M in keyof FileManagerMethods]: (p: FileParams<M>) => Promise<FileResult<M>> } = {
+    list_files:  (p) => this.listFiles(p.sub_dir ?? ""),
+    read_file:   (p) => this.readFile(p.file_path, { encoding: p.encoding }),
+    write_file:  (p) => this.writeFile(p.file_path, p.content ?? "", { encoding: p.encoding }),
+    delete_file: (p) => this.deleteFile(p.file_path),
+    manage_path: (p) => this.managePath(p),
+  };
+
   async dispatch(method: string, args: Record<string, unknown>): Promise<unknown> {
-    // The frontend uses different arg names across methods:
-    //   list_files:   sub_dir
-    //   read/write:   file_path
-    //   manage_path:  path
-    // Accept all three keys so we're forgiving.
-    const rel =
-      (args.file_path as string) ??
-      (args.sub_dir as string) ??
-      (args.path as string) ??
-      "";
-    const encoding = args.encoding as "utf8" | "base64" | undefined;
-    switch (method) {
-      case "list_files":
-        return this.listFiles(rel);
-      case "read_file":
-        return this.readFile(rel, { encoding });
-      case "write_file":
-        return this.writeFile(rel, (args.content as string) ?? "", { encoding });
-      case "delete_file":
-        return this.deleteFile(rel);
-      case "manage_path":
-        return this.managePath(
-          (args.operation as string) ?? "delete",
-          rel,
-          (args.recursive as boolean) ?? true,
-          {
-            from: args.from as string | undefined,
-            to: args.to as string | undefined,
-          },
-        );
-      default:
-        throw new Error(`file_manager: unknown method ${method}`);
-    }
+    if (!Object.hasOwn(this.handlers, method)) throw new Error(`file_manager: unknown method ${method}`);
+    const handler = this.handlers[method as keyof FileManagerMethods] as (p: unknown) => Promise<unknown>;
+    return handler(args);
   }
 }

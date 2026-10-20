@@ -10,17 +10,17 @@
 // Auto mode (tick.js) owns turn endings in its sessions, so the nudge stands down there.
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { defineTool } from "@deepseek-ai/dsh-tools";
+import { LABWEAVER_HOME } from "./labweaver-dir.js";
 
 export const name = "next-step";
 export const inject = ["tools", "systemPrompt"];
 
 const TOOL = "suggest_next_steps";
 const MAX_OPTIONS = 4;
-const AUTO_DIR = join(homedir(), ".claude", "auto"); // a session's file = auto mode (src/harness.ts)
+const AUTO_DIR = join(LABWEAVER_HOME, "auto"); // a session's file = auto mode (src/harness.ts)
 
 const NUDGE = `Before you stop: call ${TOOL} with the user's likely next steps. Do not restate your answer.`;
 const GUIDANCE = `When you finish a task for the user, call ${TOOL} once with 2-${MAX_OPTIONS} short, concrete follow-ups the user is likely to want next: imperative, under 10 words each, specific to this work. Skip it for small talk, or when you are asking the user a question. Do not repeat the suggestions in your reply.`;

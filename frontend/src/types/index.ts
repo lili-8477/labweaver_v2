@@ -25,161 +25,35 @@ export interface ConnectionConfig {
 }
 
 // ============================================================
-// Tick-harness progress (parsed from progress.md by the adapter)
+// Wire types: what the adapter's RPCs take and return (the RPC contract,
+// adapter/src/rpc-contract.ts). Frontend-only types follow below.
 // ============================================================
 
-export interface HarnessStep {
-  name: string
-  description: string
-  done: boolean
-  reviewed: boolean
-}
-
-export interface HarnessProgress {
-  pipeline: string | null
-  steps: HarnessStep[]
-  complete: boolean
-  pendingFeedback: number
-  /** Index of the next ☐ step; null when nothing is pending. */
-  nextStepIndex: number | null
-}
+export type {
+  ChatMode, ChatInfo, ProjectInfo, ChatItem, ToolItem, HarnessProgress, HarnessStep,
+  TokenTotals, SubagentRun, ChatStats, TeamMember, TeamTask, TeamBoard,
+  CellOutput, CellType, Notebook, NotebookCell, NotebookInfo, KernelReply,
+} from '@rpc-contract'
+import type { ChatItem, NotebookCell } from '@rpc-contract'
 
 // ============================================================
 // Chat
 // ============================================================
 
-/** How a chat runs its turns: plain agent, the self-driving tick harness, or an agent team. */
-export type ChatMode = 'chat' | 'auto' | 'team'
-
-export interface ChatInfo {
-  id: string
-  name: string
-  last_activity_date?: string
-  running?: boolean
-  project_name?: string
-  /** Workspace-relative project directory bound to this chat (e.g.
-   *  "local_projects/foo-1a2b"). When set, the agent cd's here and harness
-   *  progress is read from <project_dir>/progress.md. Null = unbound. */
-  project_dir?: string | null
-  mode?: ChatMode
-  /** Set when this chat is a sub-session branched from another chat. */
-  parent_chat_id?: string | null
-}
-
-/** A project folder under local_projects/; chats bind to it via project_dir. */
-export interface ProjectInfo {
-  dir: string
-  name: string
-  modified_at: string
-}
-
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system' | 'tool'
-  content: string
-  _llm_content?: unknown
-  id?: string
-  tool_use?: ToolUse
-  raw_content?: unknown
-}
-
-export interface ToolUse {
-  id: string
-  name: string
-  input: Record<string, unknown>
-  output?: string
-  status?: string
-}
-
-export interface StreamChunk {
-  type: 'chunk'
-  chunk: { type: string; text: string }
+export interface ItemEvent {
+  type: 'item'
   chat_id: string
-}
-
-export interface StepMessage {
-  type: 'step_message'
-  step_message: StepMessageData
-  chat_id: string
-}
-
-/** Actual step_message payload from LabWeaver backend */
-export interface StepMessageData {
-  role: 'assistant' | 'tool' | 'user' | 'system'
-  content?: unknown  // string or structured
-  id?: string
-  timestamp?: number
-  agent_name?: string
-
-  // Assistant messages
-  tool_calls?: ToolCallInfo[]
-  reasoning_content?: string
-
-  // Tool result messages
-  tool_name?: string
-  name?: string
-  tool_call_id?: string
-  raw_content?: unknown
-
-  // Transfer / delegation
-  transfer?: boolean
-
-  // Metadata with timing and cost
-  _metadata?: {
-    start_timestamp?: number
-    end_timestamp?: number
-    execution_duration?: number
-    total_tokens?: number
-    input_tokens?: number
-    output_tokens?: number
-    current_cost?: number
-    chain_path?: string[]
-  }
-}
-
-export interface ToolCallInfo {
-  id: string
-  function: { name: string; arguments: string }
-  type: 'function'
-}
-
-/** Processed step for the execution timeline UI */
-export interface TimelineStep {
-  id: string
-  type: 'tool_call' | 'tool_result' | 'assistant' | 'transfer'
-  status: 'running' | 'completed' | 'failed'
-  name: string         // tool name or agent name
-  agentName?: string
-  startTime: number
-  endTime?: number
-  duration?: number     // seconds
-  // For tool_call: the arguments
-  input?: string
-  // For tool_result: the output
-  output?: string
-  // For assistant: thinking text
-  content?: string
-  // For transfer: target agent
-  targetAgent?: string
-  // Cost info
-  tokens?: number
-  cost?: number
+  item: ChatItem
 }
 
 export interface ChatFinished {
   type: 'chat_finished'
   chat_id: string
+  status: 'done' | 'stopped' | 'error'
+  error?: string
 }
 
-export interface BgTaskUpdate {
-  type: 'bg_task_update'
-  task_id: string
-  tool_name: string
-  status: string
-  agent_name: string
-  chat_id: string
-}
-
-export type StreamData = StreamChunk | StepMessage | ChatFinished | BgTaskUpdate
+export type StreamData = ItemEvent | ChatFinished
 
 export interface StreamMessage {
   type: 'chat' | 'notebook' | 'custom'
@@ -187,64 +61,6 @@ export interface StreamMessage {
   timestamp: number
   data: StreamData
   metadata?: Record<string, unknown>
-}
-
-// ============================================================
-// Agents panel: token usage and subagent runs (get_chat_stats)
-// ============================================================
-
-export interface TokenTotals {
-  input: number
-  output: number
-  cacheRead: number
-  cacheWrite: number
-}
-
-export interface SubagentRun {
-  sessionId: string
-  description: string | null
-  status: 'running' | 'done' | 'failed' | 'stopped'
-  model: string | null
-  startedAt: string
-  endedAt: string
-  tokens: TokenTotals
-  toolCalls: number
-  result: string | null
-}
-
-export interface ChatStats {
-  main: TokenTotals
-  turns: number
-  lastTurn: TokenTotals | null
-  subagents: SubagentRun[]
-  /** The chat's Agent Team; null until the lead creates a teammate or task. */
-  team: TeamBoard | null
-}
-
-export interface TeamMember {
-  /** Session id; a teammate's matches its subagent run's sessionId. */
-  id: string
-  name: string
-  role: 'lead' | 'teammate'
-  status: 'running' | 'inactive' | 'provisioning' | 'failed'
-  description?: string
-  model?: string
-}
-
-export interface TeamTask {
-  id: string
-  subject: string
-  description?: string
-  status: 'pending' | 'in_progress' | 'completed'
-  ownerName?: string
-  blockedBy: string[]
-  ready: boolean
-}
-
-export interface TeamBoard {
-  members: TeamMember[]
-  tasks: TeamTask[]
-  updatedAt: number
 }
 
 // ============================================================
@@ -263,41 +79,6 @@ export interface FileEntry {
 // ============================================================
 // Notebook
 // ============================================================
-
-export interface NotebookCell {
-  id: string
-  cell_type: 'code' | 'markdown' | 'raw'
-  source: string
-  outputs: CellOutput[]
-  execution_count: number | null
-  metadata: Record<string, unknown>
-}
-
-export interface CellOutput {
-  output_type: 'stream' | 'execute_result' | 'display_data' | 'error'
-  name?: string     // stdout, stderr
-  text?: string | string[]
-  data?: Record<string, unknown>  // mime-type -> content
-  metadata?: Record<string, unknown>
-  ename?: string
-  evalue?: string
-  traceback?: string[]
-  execution_count?: number
-}
-
-export interface Notebook {
-  cells: NotebookCell[]
-  metadata: Record<string, unknown>
-  nbformat: number
-  nbformat_minor: number
-}
-
-export interface NotebookInfo {
-  file_path: string
-  version: number
-  cell_count: number
-  notebook: Notebook
-}
 
 export interface VariableInfo {
   name: string

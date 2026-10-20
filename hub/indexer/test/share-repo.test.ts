@@ -63,7 +63,7 @@ async function seedMemory(args: {
   try {
     await client.query("BEGIN");
     const hash = contentHash({ body: `${name}\n${body}`, promptVersion: 0 });
-    const memId = await insertMemoryRow(client, {
+    const memId = await insertMemoryRow(client, { domain: "lab",
       username:          args.username,
       project_dir:       null,
       source:            "user",
@@ -392,7 +392,7 @@ describe("decideShareRequest", () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const existingId = await insertMemoryRow(client, {
+      const existingId = await insertMemoryRow(client, { domain: "lab",
         username:          "__org__",
         project_dir:       null,
         source:            "user",
@@ -631,7 +631,7 @@ describe("submitShareRequest skill branch", () => {
     workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
     shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
     // Pre-seed alice's skills/single-cell/SKILL.md
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "single-cell");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "single-cell");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "SKILL.md"), "# single-cell\nbody\n");
     await writeFile(path.join(skill, "qc.py"), "print(1)\n");
@@ -682,7 +682,7 @@ describe("submitShareRequest skill branch", () => {
   });
 
   it("returns missing_manifest when SKILL.md is absent", async () => {
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "no-manifest");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "no-manifest");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "qc.py"), "x");
     const r = await submitShareRequest({
@@ -706,7 +706,7 @@ describe("submitShareRequest skill_update branch", () => {
     workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
     shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
     // alice's source skill
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "single-cell");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "single-cell");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "SKILL.md"), "# v2\n");
     await writeFile(path.join(skill, "qc.py"), "v=2");
@@ -732,7 +732,7 @@ describe("submitShareRequest skill_update branch", () => {
   it("rejects with target_not_found when no existing org skill", async () => {
     // Source exists but no matching org skill — should fail at target check.
     const noOrgRef = "no-org-skill";
-    const srcSkill = path.join(workspacesRoot, "alice", ".claude", "skills", noOrgRef);
+    const srcSkill = path.join(workspacesRoot, "alice", ".labweaver", "skills", noOrgRef);
     await mkdir(srcSkill, { recursive: true });
     await writeFile(path.join(srcSkill, "SKILL.md"), "# v2\n");
     const r = await submitShareRequest({
@@ -754,7 +754,7 @@ describe("submitShareRequest skill_update branch", () => {
   });
 
   it("rejects missing manifest", async () => {
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "no-manifest");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "no-manifest");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "qc.py"), "x");
     // also create matching org skill so we hit missing_manifest before target_not_found
@@ -781,7 +781,7 @@ describe("decideShareRequest skill approve branch", () => {
     // Pre-create shared/skills/ — destination of the untar.
     await mkdir(path.join(workspacesRoot, "shared", "skills"), { recursive: true });
     // Seed alice's source skill.
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "demo");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "demo");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "SKILL.md"), "# demo");
     await writeFile(path.join(skill, "run.sh"), "#!/bin/bash\necho hi\n");
@@ -847,7 +847,7 @@ describe("decideShareRequest skill approve branch", () => {
     if (!submitR.ok) throw new Error("setup failed");
     // Delete the source.
     const { rm } = await import("node:fs/promises");
-    await rm(path.join(workspacesRoot, "alice", ".claude", "skills", "demo"), { recursive: true });
+    await rm(path.join(workspacesRoot, "alice", ".labweaver", "skills", "demo"), { recursive: true });
 
     const decideR = await decideShareRequest({
       pool, actor: "li86", managers: ["li86"],
@@ -1041,7 +1041,7 @@ describe("decideShareRequest skill_update approve branch", () => {
     await writeFile(path.join(orgSkill, "SKILL.md"), "v1");
     await writeFile(path.join(orgSkill, "old.py"), "v=1");
     // alice's source — v2
-    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "demo");
+    const skill = path.join(workspacesRoot, "alice", ".labweaver", "skills", "demo");
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "SKILL.md"), "v2");
     await writeFile(path.join(skill, "new.py"), "v=2");

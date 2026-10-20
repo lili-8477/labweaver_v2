@@ -1,58 +1,30 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { renderMarkdown } from '@/utils/markdown'
-import { extractTextContent } from '@/utils/content'
-import type { ChatMessage } from '@/types'
+import type { ChatItem } from '@/types'
 
 const props = defineProps<{
-  message: ChatMessage
-  streaming?: boolean
+  item: Extract<ChatItem, { kind: 'user' | 'text' }>
 }>()
 
-const isUser = computed(() => props.message.role === 'user')
-const isTool = computed(() => props.message.role === 'tool')
-
-const textContent = computed(() => extractTextContent(props.message.content))
+const isUser = computed(() => props.item.kind === 'user')
 
 const renderedContent = computed(() => {
-  const text = textContent.value
-  if (!text) return ''
-  if (isUser.value) return ''  // user text rendered as plain text in template
+  if (isUser.value || !props.item.text) return ''  // user text rendered as plain text in template
   try {
-    return renderMarkdown(text)
+    return renderMarkdown(props.item.text)
   } catch {
-    return text
+    return props.item.text
   }
-})
-
-const toolName = computed(() => {
-  if (!isTool.value) return ''
-  const msg = props.message as unknown as Record<string, unknown>
-  return (msg.tool_name || msg.name || 'tool') as string
 })
 </script>
 
 <template>
-  <div class="chat-message" :class="{ user: isUser, assistant: !isUser && !isTool, tool: isTool }">
-    <div v-if="isUser || isTool" class="avatar">
-      <span v-if="isUser">U</span>
-      <span v-else>T</span>
-    </div>
+  <div class="chat-message" :class="{ user: isUser, assistant: !isUser }">
+    <div v-if="isUser" class="avatar"><span>U</span></div>
     <div class="bubble">
-      <!-- Tool message -->
-      <template v-if="isTool">
-        <div class="tool-label">{{ toolName }}</div>
-        <pre v-if="textContent" class="tool-content">{{ textContent.slice(0, 500) }}{{ textContent.length > 500 ? '...' : '' }}</pre>
-      </template>
-      <!-- User message -->
-      <template v-else-if="isUser">
-        <div class="content user-text">{{ textContent }}</div>
-      </template>
-      <!-- Assistant message -->
-      <template v-else>
-        <div class="content markdown-body" v-html="renderedContent"></div>
-        <span v-if="streaming" class="cursor-blink">|</span>
-      </template>
+      <div v-if="isUser" class="content user-text">{{ item.text }}</div>
+      <div v-else class="content markdown-body" v-html="renderedContent"></div>
     </div>
   </div>
 </template>
@@ -64,7 +36,6 @@ const toolName = computed(() => {
 .chat-message.user { margin-left: auto; flex-direction: row-reverse; }
 /* Agent answers read as plain text across the panel (no bubble), like DSH. */
 .chat-message.assistant { max-width: 100%; margin-bottom: 6px; }
-.chat-message.tool { margin-right: auto; max-width: 70%; }
 
 .avatar {
   width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
@@ -72,7 +43,6 @@ const toolName = computed(() => {
   font-size: 0.8em; font-weight: 600;
 }
 .user .avatar { background: var(--accent); color: var(--on-accent); }
-.tool .avatar { background: var(--bg-tertiary); color: var(--text-muted); font-size: 0.7em; }
 
 .bubble {
   padding: 10px 14px; border-radius: var(--radius-lg);
@@ -85,29 +55,6 @@ const toolName = computed(() => {
 .assistant .bubble { padding: 0; border-radius: 0; line-height: 1.6; }
 .assistant .markdown-body > :deep(:first-child) { margin-top: 0; }
 .assistant .markdown-body > :deep(:last-child) { margin-bottom: 0; }
-.tool .bubble {
-  background: var(--bg-tertiary); border: 1px solid var(--border);
-  border-bottom-left-radius: 4px; font-size: 0.85em;
-}
 
 .user-text { white-space: pre-wrap; word-break: break-word; }
-
-.tool-label {
-  font-size: 0.75em; color: var(--text-muted); font-family: var(--font-mono);
-  margin-bottom: 4px;
-}
-.tool-content {
-  margin: 0; font-family: var(--font-mono); font-size: 0.8em;
-  color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
-  max-height: 120px; overflow-y: auto;
-}
-
-.cursor-blink {
-  animation: blink 1s step-end infinite; color: var(--accent);
-  font-weight: bold;
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
 </style>

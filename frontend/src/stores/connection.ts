@@ -67,8 +67,8 @@ export const useConnectionStore = defineStore('connection', () => {
 
       // Fetch endpoint info
       try {
-        const ep = await natsService.invoke('get_endpoint') as Record<string, unknown>
-        if (ep?.service_id) endpointServiceId.value = ep.service_id as string
+        const ep = await natsService.invoke('get_endpoint')
+        if (ep?.service_id) endpointServiceId.value = ep.service_id
       } catch { /* not critical */ }
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)

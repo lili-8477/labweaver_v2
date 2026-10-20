@@ -5,7 +5,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { workspacePath, type Access } from "./workspace-path.js";
 import type { KernelBridge, IOPubEvent } from "./kernel.js";
+import type {
+  CellOutput, ExecuteReply, KernelReply, Notebook, NotebookCell, NotebookInfo, NotebookMethods,
+} from "./rpc-contract.js";
+
+type NotebookParams<M extends keyof NotebookMethods> = NotebookMethods[M]["params"];
+type NotebookResult<M extends keyof NotebookMethods> = NotebookMethods[M]["result"];
 
 /**
  * Factory for per-notebook kernels. Receives the stable sessionId the
@@ -13,21 +20,8 @@ import type { KernelBridge, IOPubEvent } from "./kernel.js";
  */
 export type KernelFactory = (sessionId: string) => KernelBridge;
 
-interface NotebookCell {
-  id: string;
-  cell_type: "code" | "markdown" | "raw";
-  source: string;
-  outputs: unknown[];
-  execution_count: number | null;
-  metadata: Record<string, unknown>;
-}
-
-interface NotebookFile {
-  cells: NotebookCell[];
-  metadata: Record<string, unknown>;
-  nbformat: number;
-  nbformat_minor: number;
-}
+/** A notebook as kept on disk and sent over the wire. */
+type NotebookFile = Notebook;
 
 /** Normalize a cell from the on-disk .ipynb shape into our strict shape. */
 function normalizeCell(raw: Record<string, unknown>): NotebookCell {
@@ -42,7 +36,7 @@ function normalizeCell(raw: Record<string, unknown>): NotebookCell {
     id: (raw.id as string) ?? randomUUID(),
     cell_type: cellType,
     source,
-    outputs: (raw.outputs as unknown[]) ?? [],
+    outputs: (raw.outputs as CellOutput[]) ?? [],
     execution_count: cellType === "code" ? ((raw.execution_count as number | null) ?? null) : null,
     metadata: (raw.metadata as Record<string, unknown>) ?? {},
   };
@@ -113,11 +107,8 @@ export class NotebookManager {
     return this.kernels.size;
   }
 
-  private resolve(relPath: string): string {
-    const normalized = path.normalize(relPath).replace(/^(\.\.[/\\])+/, "");
-    const abs = path.resolve(this.root, normalized);
-    if (!abs.startsWith(this.root)) throw new Error("path escapes workspace");
-    return abs;
+  private resolve(relPath: string, access: Access = "read"): string {
+    return workspacePath(this.root, relPath, access);
   }
 
   private bumpVersion(p: string): number {
@@ -152,21 +143,20 @@ export class NotebookManager {
   }
 
   private async writeFile(relPath: string, nb: NotebookFile): Promise<void> {
-    const abs = this.resolve(relPath);
+    const abs = this.resolve(relPath, "write");
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, JSON.stringify(nb, null, 1), "utf8");
   }
 
-  private info(relPath: string, nb: NotebookFile): Record<string, unknown> {
-    const base: Record<string, unknown> = {
+  private info(relPath: string, nb: NotebookFile): { success: true } & NotebookInfo {
+    return {
       success: true,
       file_path: relPath,
       version: this.bumpVersion(relPath),
       cell_count: nb.cells.length,
       notebook: nb,
+      ...(this.kernelFactory ? { kernel_session_id: this.sessionIdFor(relPath) } : {}),
     };
-    if (this.kernelFactory) base.kernel_session_id = this.sessionIdFor(relPath);
-    return base;
   }
 
   /**
@@ -211,13 +201,13 @@ export class NotebookManager {
     return ks?.name || "python3";
   }
 
-  async readNotebook(relPath: string): Promise<unknown> {
+  async readNotebook(relPath: string): Promise<NotebookResult<"read_notebook">> {
     const nb = await this.readFile(relPath);
     return this.info(relPath, nb);
   }
 
-  async createNotebook(relPath: string, language: string): Promise<unknown> {
-    const abs = this.resolve(relPath);
+  async createNotebook(relPath: string, language: string): Promise<NotebookResult<"create_notebook">> {
+    const abs = this.resolve(relPath, "write");
     try {
       await fs.access(abs);
       throw new Error(`notebook already exists: ${relPath}`);
@@ -244,7 +234,7 @@ export class NotebookManager {
     cellType: string,
     source: string,
     position: string | undefined,
-  ): Promise<unknown> {
+  ): Promise<NotebookResult<"add_cell">> {
     const nb = await this.readFile(relPath);
     const newCell = normalizeCell({ cell_type: cellType, source, outputs: [] });
 
@@ -265,7 +255,7 @@ export class NotebookManager {
     return { ...this.info(relPath, nb), cell_id: newCell.id };
   }
 
-  async updateCell(relPath: string, cellId: string, source: string): Promise<unknown> {
+  async updateCell(relPath: string, cellId: string, source: string): Promise<NotebookResult<"update_cell">> {
     const nb = await this.readFile(relPath);
     const cell = nb.cells.find((c) => c.id === cellId);
     if (!cell) throw new Error(`cell not found: ${cellId}`);
@@ -274,7 +264,7 @@ export class NotebookManager {
     return this.info(relPath, nb);
   }
 
-  async deleteCell(relPath: string, cellId: string): Promise<unknown> {
+  async deleteCell(relPath: string, cellId: string): Promise<NotebookResult<"delete_cell">> {
     const nb = await this.readFile(relPath);
     nb.cells = nb.cells.filter((c) => c.id !== cellId);
     await this.writeFile(relPath, nb);
@@ -285,7 +275,7 @@ export class NotebookManager {
     relPath: string,
     cellId: string,
     belowCellId: string | undefined,
-  ): Promise<unknown> {
+  ): Promise<NotebookResult<"move_cell">> {
     const nb = await this.readFile(relPath);
     const idx = nb.cells.findIndex((c) => c.id === cellId);
     if (idx < 0) throw new Error(`cell not found: ${cellId}`);
@@ -301,7 +291,7 @@ export class NotebookManager {
     return this.info(relPath, nb);
   }
 
-  async executeCell(relPath: string, cellId: string): Promise<unknown> {
+  async executeCell(relPath: string, cellId: string): Promise<ExecuteReply> {
     const kernel = this.getOrCreateKernel(relPath);
     if (!kernel) {
       return {
@@ -329,7 +319,7 @@ export class NotebookManager {
     };
   }
 
-  async manageKernel(relPath: string, action: string): Promise<unknown> {
+  async manageKernel(relPath: string, action: string): Promise<KernelReply> {
     if (!this.kernelFactory) {
       if (action === "status")
         return { success: true, status: "dead", kernel_status: "dead", kernel_session_id: null };
@@ -434,46 +424,24 @@ export class NotebookManager {
     return { success: false, error: `unsupported action: ${action}`, kernel_session_id: sessionId };
   }
 
+  /** One handler per NotebookMethods entry (rpc-contract.ts). */
+  private readonly handlers: { [M in keyof NotebookMethods]: (p: NotebookParams<M>) => Promise<NotebookResult<M>> } = {
+    read_notebook:   (p) => this.readNotebook(p.notebook_path),
+    create_notebook: (p) => this.createNotebook(p.notebook_path, p.language ?? "python"),
+    add_cell:        (p) => this.addCell(
+      p.notebook_path, p.cell_type ?? "code", p.content ?? "",
+      p.position === null || p.position === undefined ? undefined : String(p.position),
+    ),
+    update_cell:     (p) => this.updateCell(p.notebook_path, p.cell_id, p.content ?? ""),
+    delete_cell:     (p) => this.deleteCell(p.notebook_path, p.cell_id),
+    move_cell:       (p) => this.moveCell(p.notebook_path, p.cell_id, p.below_cell_id ?? undefined),
+    execute_cell:    (p) => this.executeCell(p.notebook_path, p.cell_id),
+    manage_kernel:   (p) => this.manageKernel(p.notebook_path, p.action ?? "status"),
+  };
+
   async dispatch(method: string, args: Record<string, unknown>): Promise<unknown> {
-    const p = (args.notebook_path as string) ?? "";
-    switch (method) {
-      case "read_notebook":
-        return this.readNotebook(p);
-      case "create_notebook":
-        return this.createNotebook(p, (args.language as string) ?? "python");
-      case "add_cell": {
-        // Frontend sends Pantheon-legacy names (`content`, `position`); keep
-        // `source`/`after_cell_id` as aliases for anything calling the newer
-        // API shape directly.
-        const source = (args.source as string) ?? (args.content as string) ?? "";
-        const position =
-          (args.position as string | number | null | undefined) ??
-          (args.after_cell_id as string | undefined);
-        const positionStr =
-          position === null || position === undefined ? undefined : String(position);
-        return this.addCell(
-          p,
-          (args.cell_type as string) ?? "code",
-          source,
-          positionStr,
-        );
-      }
-      case "update_cell":
-        return this.updateCell(
-          p,
-          args.cell_id as string,
-          (args.source as string) ?? (args.content as string) ?? "",
-        );
-      case "delete_cell":
-        return this.deleteCell(p, args.cell_id as string);
-      case "move_cell":
-        return this.moveCell(p, args.cell_id as string, args.below_cell_id as string | undefined);
-      case "execute_cell":
-        return this.executeCell(p, args.cell_id as string);
-      case "manage_kernel":
-        return this.manageKernel(p, (args.action as string) ?? "status");
-      default:
-        throw new Error(`notebook: unknown method ${method}`);
-    }
+    if (!Object.hasOwn(this.handlers, method)) throw new Error(`notebook: unknown method ${method}`);
+    const handler = this.handlers[method as keyof NotebookMethods] as (p: unknown) => Promise<unknown>;
+    return handler(args);
   }
 }

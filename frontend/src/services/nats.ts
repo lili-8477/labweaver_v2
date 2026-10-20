@@ -7,11 +7,15 @@
 
 import { connect, type NatsConnection, type Subscription, StringCodec, JSONCodec } from 'nats.ws'
 import type { ConnectionConfig, NATSMessage, NATSResponse, StreamMessage } from '@/types'
+import type { RpcMethod, RpcParams, RpcResult, ToolsetName, Toolsets } from '@rpc-contract'
 
 const sc = StringCodec()
 const jc = JSONCodec()
 
 export type StreamCallback = (msg: StreamMessage) => void
+
+/** A method's arguments: params may be left out when every param is optional. */
+type CallArgs<P> = {} extends P ? [params?: P, timeoutMs?: number] : [params: P, timeoutMs?: number]
 
 class NATSService {
   private nc: NatsConnection | null = null
@@ -97,14 +101,15 @@ class NATSService {
   }
 
   /**
-   * JSON-based RPC: send a NATSMessage to the chatroom service and get a response.
+   * JSON-based RPC to this user's adapter, typed by the RPC contract
+   * (adapter/src/rpc-contract.ts): the params and result of `method`.
    */
-  async invoke(method: string, parameters: Record<string, unknown> = {}, timeoutMs = 120_000): Promise<unknown> {
+  async invoke<M extends RpcMethod>(method: M, ...[params, timeoutMs = 120_000]: CallArgs<RpcParams<M>>): Promise<RpcResult<M>> {
     if (!this.nc) throw new Error('Not connected')
 
     const msg: NATSMessage = {
       method,
-      parameters,
+      parameters: (params ?? {}) as Record<string, unknown>,
       correlation_id: crypto.randomUUID(),
     }
 
@@ -115,7 +120,7 @@ class NATSService {
     if (result.error) {
       throw new Error(result.error)
     }
-    return result.result
+    return result.result as RpcResult<M>
   }
 
   /**
@@ -152,16 +157,14 @@ class NATSService {
     }
   }
 
-  /**
-   * Convenience: call a toolset method via the chatroom's proxy_toolset.
-   */
-  async proxyToolset(methodName: string, args: Record<string, unknown> = {}, toolsetName?: string): Promise<unknown> {
-    const params: Record<string, unknown> = {
-      method_name: methodName,
-      args,
-    }
-    if (toolsetName) params.toolset_name = toolsetName
-    return this.invoke('proxy_toolset', params)
+  /** Call one file-manager or notebook method (proxy_toolset), typed by the RPC contract. */
+  async callToolset<T extends ToolsetName, M extends keyof Toolsets[T] & string>(
+    toolset: T,
+    method: M,
+    args: Toolsets[T][M] extends { params: infer P } ? P : never,
+  ): Promise<Toolsets[T][M] extends { result: infer R } ? R : never> {
+    const call = { toolset_name: toolset, method_name: method, args } as unknown as RpcParams<'proxy_toolset'>
+    return (await this.invoke('proxy_toolset', call)) as Toolsets[T][M] extends { result: infer R } ? R : never
   }
 }
 

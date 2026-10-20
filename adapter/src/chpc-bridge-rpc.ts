@@ -18,6 +18,7 @@ import { exec, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import type { BridgeStatus, OpenRequest, OpenEvent } from "./rpc-contract.js";
 
 // node-pty is loaded lazily so the rest of the adapter still boots when
 // the binary module is missing (e.g. fresh container before npm install).
@@ -46,29 +47,6 @@ async function loadPtySpawn(): Promise<PtySpawn> {
 const execAsync = promisify(exec);
 
 export const HOST_ALIAS = "chpc-login";
-
-export type BridgeStatus =
-  | { kind: "up"; pid: number; openedAt: string; user: string }
-  | { kind: "down" }
-  | { kind: "unprovisioned"; reason: "no-ssh" | "no-config" };
-
-export interface OpenRequest {
-  password: string;
-  duo: { kind: "push" } | { kind: "passcode"; code: string };
-  requestId: string;
-}
-
-export type OpenEvent =
-  | { requestId: string; phase: "spawned" }
-  | { requestId: string; phase: "password-accepted" }
-  | { requestId: string; phase: "duo-waiting" }
-  | { requestId: string; phase: "up"; pid: number }
-  | {
-      requestId: string;
-      phase: "error";
-      code: "bad-password" | "duo-denied" | "duo-timeout" | "network" | "config" | "unknown";
-      message: string;
-    };
 
 interface ConfigInfo {
   user: string | null;        // User from ~/.ssh/config Host chpc-login

@@ -35,6 +35,16 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     # pnpm: `dsh plugin --profile acp add <pkg>` installs plugins with it.
     && npm install -g pnpm@10
 
+# 1b. Non-root runtime user. Base image ships only root, and NodeSource's
+#     apt nodejs package doesn't create a user (unlike the official node:* images).
+#     Match the host user's UID so bind-mounted workspace writes stay on the host
+#     user. Default 1001 = the `lili` account on this host; override with
+#     --build-arg UID=... GID=... for other hosts.
+ARG UID=1001
+ARG GID=1001
+RUN groupadd --gid "${GID}" node \
+    && useradd  --uid "${UID}" --gid node --create-home --shell /bin/bash node
+
 # 2. The agent runtime (DeepSeek Harness, `@deepseek-ai/dsh`) is a pinned
 #    adapter dependency installed with the adapter bundle in step 3; the
 #    adapter spawns `dsh --profile acp` from /opt/adapter/node_modules.
@@ -47,7 +57,13 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 #
 #     Placed BEFORE adapter COPY steps so the pip layer is cached across
 #     adapter code edits — only torch version bumps invalidate it.
-RUN pip install --no-cache-dir torch
+#
+#     The same layer hands /venv (root-owned in the base) to node, so agents
+#     can pip install at runtime. Chowning copies the base's files into this
+#     layer once — shared by every container, instead of a per-container
+#     copy-up (~6.5 GB and minutes each) at provisioning.
+RUN pip install --no-cache-dir torch \
+    && chown -R node:node /venv
 
 # 2c. QuPath — headless IHC / whole-slide image analysis.
 #     The Linux tarball is a jpackage bundle that carries its own JRE, so
@@ -100,28 +116,11 @@ RUN chmod +x /opt/mcp-memory/dist/index.js \
 COPY image/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 5. Non-root runtime user. Base image ships only root, and NodeSource's
-#    apt nodejs package doesn't create a user (unlike the official node:* images).
-#    Match the host user's UID so bind-mounted workspace writes stay on the host
-#    user. Default 1001 = the `lili` account on this host; override with
-#    --build-arg UID=... GID=... for other hosts.
-ARG UID=1001
-ARG GID=1001
-RUN groupadd --gid "${GID}" node \
-    && useradd  --uid "${UID}" --gid node --create-home --shell /bin/bash node \
-    && mkdir -p /home/node/.claude/skills \
-                /home/node/.dsh \
-                /home/node/.claude/agents \
-                /home/node/.claude/projects \
-                /home/node/.ssh \
-    && chown -R node:node /home/node/.claude /home/node/.dsh /home/node/.ssh /opt/adapter /opt/mcp-memory \
+# 5. Runtime dirs owned by the node user (created in step 1b).
+RUN mkdir -p /home/node/.dsh /home/node/.ssh \
+    && chown -R node:node /home/node/.dsh /home/node/.ssh /opt/adapter /opt/mcp-memory \
     && chmod 700 /home/node/.ssh \
     && chmod +x /opt/adapter/kernel-bridge.py
-# NOTE: `/venv` is inherited from the base image owned by root. We intentionally
-# do NOT chown it here — doing so rewrites ~10k file inode bits and forces a
-# fresh ~3 GB layer at build time. Instead, add-user.sh / recreate-user.sh run
-# `docker exec -u root <name> chown -R node:node /venv` once per container, so
-# the ownership lives in the container's own overlay (fast, no image bloat).
 
 # Pre-create /workspace as node — otherwise `WORKDIR /workspace` below
 # auto-creates it as root, and scanpy's `sc.pl.*(save=...)` (which does

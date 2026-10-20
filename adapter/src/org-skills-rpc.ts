@@ -4,7 +4,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SkillSummary } from "./skills-rpc.js";
+import type { SkillSummary } from "./rpc-contract.js";
 import { extractDescription } from "./frontmatter.js";
 
 export async function listOrgSkills(workspaceRoot: string): Promise<SkillSummary[]> {

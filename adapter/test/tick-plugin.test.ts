@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// dsh-plugins/tick.js resolves ~/.claude at import, so HOME is set first.
+// dsh-plugins/tick.js resolves ~/.labweaver at import, so HOME is set first.
 const home = mkdtempSync(path.join(tmpdir(), "tick-home-"));
-const claude = path.join(home, ".claude");
+const lw = path.join(home, ".labweaver");
 const project = path.join(home, "proj");
 const progress = path.join(project, "progress.md");
 
@@ -15,7 +15,7 @@ interface FakeAgent { id: string; session: { header: { delegationDepth?: number 
 let stopping: Listener;
 let nextStep: (md: string | null) => { agent?: string; work?: string; complete?: boolean };
 const SID = "sess-1";
-const sessionFile = path.join(claude, "auto", SID);
+const sessionFile = path.join(lw, "auto", SID);
 const agent = (depth?: number): FakeAgent => ({
   id: SID,
   session: { header: { delegationDepth: depth } },
@@ -38,9 +38,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  rmSync(claude, { recursive: true, force: true });
+  rmSync(lw, { recursive: true, force: true });
   rmSync(project, { recursive: true, force: true });
-  mkdirSync(path.join(claude, "auto"), { recursive: true });
+  mkdirSync(path.join(lw, "auto"), { recursive: true });
   mkdirSync(project);
   writeFileSync(sessionFile, `${project}\n`);
 });
@@ -78,9 +78,9 @@ describe("tick plugin loop", () => {
     const a = agent();
     stopping({ agent: a });
     expect(a.steered).toEqual([
-      `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${claude}/agents/tick-executor.md\n` +
+      `[auto mode · round 1] Do \`tick-executor\` now, yourself.\nAgent file: ${lw}/agents/tick-executor.md\n` +
       `Project directory: ${project}\nProject file: ${sessionFile}\nWork item: ☐ qc — filter cells\n` +
-      `Follow the Do procedure in ${claude}/commands/tick.md.`,
+      `Follow the Do procedure in ${lw}/commands/tick.md.`,
     ]);
   });
 
@@ -105,12 +105,12 @@ describe("tick plugin loop", () => {
     stopping({ agent: sub });
     expect(sub.steered).toHaveLength(0);
 
-    writeFileSync(path.join(claude, ".tick_paused"), "");
+    writeFileSync(path.join(lw, ".tick_paused"), "");
     const paused = agent();
     stopping({ agent: paused });
     expect(paused.steered).toHaveLength(0);
 
-    rmSync(path.join(claude, ".tick_paused"));
+    rmSync(path.join(lw, ".tick_paused"));
     rmSync(sessionFile);
     const off = agent();
     stopping({ agent: off });
@@ -134,3 +134,52 @@ describe("tick plugin loop", () => {
     expect(a.steered).toHaveLength(40); // the 41st stop is let through
   });
 });
+
+describe("outcome loop", () => {
+  let sent: Array<{ url: string; body: { username: string; outcome: string; since: string } }>;
+  beforeEach(() => {
+    sent = [];
+    process.env.MEMORY_API_URL = "http://indexer:8400";
+    process.env.USERNAME = "alice";
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response("{}");
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const review = (a: FakeAgent, after: string) => {
+    writeFileSync(progress, md({ Plan: ["☑ qc — filter cells", "☐ norm — normalise"], "Review feedback": [] }));
+    stopping({ agent: a }); // dispatches the reviewer on qc
+    writeFileSync(progress, after);
+    stopping({ agent: a }); // the review round ended
+  };
+
+  it("credits an approval as a success, from the turn's start", () => {
+    const a = agent();
+    const turnStart = new Date(Date.now() - 5000);
+    utimesSync(sessionFile, turnStart, turnStart);
+    review(a, md({ Plan: ["- ☑ (reviewed) qc   filter cells | n=2638", "☐ norm — normalise"], "Review feedback": [] }));
+    expect(sent).toEqual([{ url: "http://indexer:8400/memory/outcome", body: { username: "alice", outcome: "success", since: turnStart.toISOString() } }]);
+  });
+
+  it("credits a rejection as a failure, and starts the next window at the verdict", () => {
+    const a = agent();
+    review(a, md({ Plan: ["☑ qc — filter cells", "☐ norm — normalise"], "Review feedback": ["☐ 2026-10-20 reviewer: qc rejected: n_cells: expected >2000, got 12"] }));
+    expect(sent.map((s) => s.body.outcome)).toEqual(["failure"]);
+    // The executor fixes it, the reviewer approves: a second window.
+    writeFileSync(progress, md({ Plan: ["☑ qc — filter cells", "☐ norm — normalise"], "Review feedback": ["☑ 2026-10-20 reviewer: qc rejected: fixed"] }));
+    stopping({ agent: a }); // reviewer again
+    writeFileSync(progress, md({ Plan: ["☑ (reviewed) qc — filter cells", "☐ norm — normalise"], "Review feedback": [] }));
+    stopping({ agent: a });
+    expect(sent.map((s) => s.body.outcome)).toEqual(["failure", "success"]);
+    expect(sent[1]!.body.since >= sent[0]!.body.since).toBe(true);
+  });
+
+  it("reports nothing when a review did not finish", () => {
+    const a = agent();
+    review(a, md({ Plan: ["☑ qc — filter cells", "☐ norm — normalise"], "Review feedback": [] }));
+    expect(sent).toEqual([]);
+  });
+});
+

@@ -17,9 +17,8 @@ This is the executor step. Do exactly **one step per invocation**. No retries, n
    - If neither exists, return `executor: no work` and stop.
 
 3. **Skill mapping**. Identify the domain for this step (e.g. `single-cell`, `chip-seq`, `differential-expression`). Try in order:
-   - `~/.claude/skills/<domain>/SKILL.md` (workspace-local skills)
-   - `~/.claude/skills-shared/<domain>/SKILL.md` (shared)
-   - `~/.claude/skills-user/<domain>/SKILL.md` (user-level)
+   - `~/.labweaver/skills/<domain>/SKILL.md` (personal skills)
+   - `/workspace/shared/skills/<domain>/SKILL.md` (org skills)
 
    Read the SKILL.md if found — it tells you the *correct way* to do this verb in this environment. If no skill matches, proceed with general best practices but note the gap in `## Decisions`:
    ```

@@ -1,3 +1,4 @@
+import type { Domain } from "./memory-domain.js";
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { insertMemoryRow } from "./distiller-repo.js";
@@ -138,11 +139,12 @@ export async function submitMemoryShareRequest(
     hit_count:   number;
     last_hit_at: Date | null;
     dir_key:       string;
+    domain:        Domain;
     success_count: number;
     failure_count: number;
     facets:      Record<string, string[]>;
   }>(
-    `SELECT m.name, m.description, m.body, m.type, m.source,
+    `SELECT m.name, m.description, m.body, m.type, m.source, m.domain,
             m.hit_count, m.last_hit_at, m.dir_key, m.success_count, m.failure_count,
             COALESCE((SELECT jsonb_object_agg(key, vals)
                         FROM (
@@ -171,6 +173,7 @@ export async function submitMemoryShareRequest(
     hit_count:   s.hit_count,
     last_hit_at: s.last_hit_at ? s.last_hit_at.toISOString() : null,
     dir_key:       s.dir_key,
+    domain:        s.domain,
     success_count: s.success_count,
     failure_count: s.failure_count,
     facets:      s.facets,
@@ -463,6 +466,7 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       body:        string;
       type:        string;
       dir_key?:    string;      // absent in snapshots taken before phase 4
+      domain?:     Domain;      // absent in snapshots taken before the memory domain
       facets:      Record<string, string[] | undefined>;
     };
 
@@ -482,6 +486,7 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       // Experience is promoted as experience whatever its type; everything
       // else is filed by type (memory-dirs.ts defaultDir).
       dir_key:           snap.dir_key?.endsWith("/experience") ? "org/experience" : undefined,
+      domain:            snap.domain ?? "lab",
     });
 
     let promotion_result: Record<string, unknown>;

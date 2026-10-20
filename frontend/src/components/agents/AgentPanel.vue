@@ -12,15 +12,14 @@ const stats = ref<ChatStats | null>(null)
 const loading = ref(false)
 const now = ref(Date.now())
 
-const live = computed(() => chat.sending || chat.isStreaming)
+const live = computed(() => chat.sending)
 
 async function loadStats() {
   const chatId = chat.activeChatId
   if (!chatId) { stats.value = null; return }
   loading.value = true
   try {
-    const res = await natsService.invoke('get_chat_stats', { chat_id: chatId }) as
-      ({ success: boolean } & ChatStats) | undefined
+    const res = await natsService.invoke('get_chat_stats', { chat_id: chatId })
     if (res?.success && chat.activeChatId === chatId) stats.value = res
   } catch (e) {
     console.warn('Failed to load chat stats:', e)

@@ -54,8 +54,8 @@ https://github.com/user-attachments/assets/d6bd8825-ba3b-46ab-a8df-a00b71a5925d
 - **Adapter** — small TypeScript bridge inside each user's container. It
   drives [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
   (`dsh --profile acp`, over the Agent Client Protocol) behind a
-  harness-neutral `AgentEngine` seam, and translates its events into the
-  frontend's `chunk` / `step_message` / `chat_finished` stream.
+  harness-neutral `AgentEngine` seam. Each turn is recorded as a transcript
+  and streamed to the frontend as chat items (`item` / `chat_finished`).
 - **Model providers** — DeepSeek (`DEEPSEEK_API_KEY`) and Ollama Cloud
   (`OLLAMA_API_KEY`, OpenAI-compatible `https://ollama.com/v1`), selected
   per chat turn as `provider/model` from the UI.
@@ -63,10 +63,10 @@ https://github.com/user-attachments/assets/d6bd8825-ba3b-46ab-a8df-a00b71a5925d
   stack (Python 3.12, scanpy, R 4.5.3, Seurat / SoupX / scDblFinder).
 - **Hub** — docker-compose with NATS + nginx + per-user container
   provisioning.
-- **Skills** — a user's skills bind-mount into the container at
-  `~/.claude/skills/` and are registered with the harness as skill roots;
+- **Skills** — a user's skills live in their labweaver folder,
+  `~/.labweaver/skills/`, and are registered with the harness as a skill root;
   org-wide skills live under `hub/workspaces/shared/skills/` and mount
-  read-only.
+  read-only at `/workspace/shared/skills/`.
 - **Memory** — structured laboratory memory persists across sessions and
   feeds back into every turn. The adapter writes each turn as a
   Claude-format JSONL transcript, which the hub indexer distills.
@@ -99,10 +99,15 @@ See `image/README.md` for Dockerfile details.
 Prerequisites: Docker, Node 20.
 
 ```bash
+# 0. The memory contract (hub/indexer/src/memory-contract.ts) is bundled into
+#    the adapter and mcp-memory and type-checked by the frontend, so the
+#    indexer's dependencies come first.
+(cd hub/indexer && npm ci)
+
 # 1. Build the adapter bundle.
 cd adapter
 npm ci
-npm test          # contract tests against the frontend event shape
+npm test
 npm run build
 cd ..
 
@@ -132,7 +137,9 @@ OLLAMA_API_KEY=xxxx ./scripts/add-user.sh alice sk-xxxxxxxx
 
 The final command prints the user's `service_id`: a random 64-hex secret,
 recorded in `hub/users.md` (gitignored, mode 600). It is the user's access
-key — share it only with that user. `recreate-user.sh` reuses it and
+key — share it only with that user. `recreate-user.sh` reuses it (and
+rebuilds the container from the image, hub hosts and data mounts add-user
+saved in `hub/workspaces/<user>/container.env`) and
 `remove-user.sh` retires it; `hub/scripts/service-id.sh get <user>` looks it
 up. Open
 `http://localhost:8088/` (or whatever nginx binds), enter
@@ -143,14 +150,15 @@ also uses it (as a cookie) for file uploads and downloads.
 ## Quick start (single-user local dev)
 
 ```bash
-# The image copies the prebuilt adapter and memory MCP bundles.
-(cd adapter && npm ci && npm run build) && (cd mcp-memory && npm ci && npm run build)
+# The image copies the prebuilt adapter and memory MCP bundles; both bundle
+# the memory contract from hub/indexer, so install its dependencies first.
+(cd hub/indexer && npm ci) && (cd adapter && npm ci && npm run build) && (cd mcp-memory && npm ci && npm run build)
 docker build -f image/Dockerfile -t labweaver:dev .
 
 # hub/.env needs POSTGRES_PASSWORD (add-user.sh generates it on a real hub).
 # Create the devuser workspace: dirs, harness hooks, memory MCP server.
-mkdir -p hub/workspaces/devuser/.claude
-echo '{"model":"deepseek-official/deepseek-v4-pro"}' > hub/workspaces/devuser/.claude/settings.json
+mkdir -p hub/workspaces/devuser/.labweaver
+echo '{"model":"deepseek-official/deepseek-v4-pro"}' > hub/workspaces/devuser/.labweaver/settings.json
 hub/scripts/setup-dev-user.sh
 printf 'DEEPSEEK_API_KEY=sk-...\nOLLAMA_API_KEY=...\n' > hub/workspaces/devuser/.env
 # Random service ID, recorded in hub/users.md and handed to the adapter.
@@ -170,12 +178,12 @@ the adapter's HTTP server at `localhost:5000`, the way nginx does in prod. Set
 
 ## How to drop in a skill
 
-Skills are plain markdown. The adapter registers `~/.claude/skills/` with
+Skills are plain markdown. The adapter registers `~/.labweaver/skills/` with
 DeepSeek Harness, which watches it, so new skills appear without a restart.
 
 ```bash
-mkdir -p hub/workspaces/alice/.claude/skills/scrna-qc
-cat > hub/workspaces/alice/.claude/skills/scrna-qc/SKILL.md <<'SKILL'
+mkdir -p hub/workspaces/alice/.labweaver/skills/scrna-qc
+cat > hub/workspaces/alice/.labweaver/skills/scrna-qc/SKILL.md <<'SKILL'
 ---
 name: scrna-qc
 description: Run standard scanpy QC on an AnnData object
@@ -185,24 +193,22 @@ SKILL
 ```
 
 That's it. No restart needed — next turn, the skill is live inside the
-container at `/home/node/.claude/skills/scrna-qc/SKILL.md`.
+container at `/workspace/.labweaver/skills/scrna-qc/SKILL.md` (`~/.labweaver` links there).
 
 Org-wide skills live at `hub/workspaces/shared/skills/` and are mounted
-read-only at `/home/node/.claude/skills-shared/` in every user's container.
+read-only at `/workspace/shared/skills/` in every user's container, a second
+skill root after the user's own (personal skills win on a name clash).
 
 ## How to open a project
 
 Each user's `projects/<project-name>/` doubles as a Claude Code working
-directory. Drop a `CLAUDE.md` in it for project-specific notes Claude Code
-loads automatically, and optionally `.claude/settings.json` for
-project-scoped tool/model settings.
+directory. Drop a `CLAUDE.md` in it for project-specific notes the agent
+loads automatically.
 
 ```
 hub/workspaces/alice/projects/
 ├── pbmc3k-qc/
 │   ├── CLAUDE.md           # project brief, data layout notes
-│   ├── .claude/
-│   │   └── settings.json   # override model or add skills just for this project
 │   ├── data/
 │   └── results/
 └── hca-atlas/
@@ -211,9 +217,11 @@ hub/workspaces/alice/projects/
 ## How to resume a chat
 
 `chat_id` is a UUID, used directly as the Claude Code session ID. Session
-history persists at `~/.claude/projects/-workspace/<chat_id>.jsonl` inside
+history persists at `~/.labweaver/projects/-workspace/<chat_id>.jsonl` inside
 the container. Reloading the frontend and selecting the chat calls
-`get_chat_messages` which reads the JSONL and re-renders the timeline.
+`get_chat_items`, which projects the JSONL into the same chat items the live
+turn streamed (`adapter/src/chat-items.ts`), so history looks exactly as the
+turn did while it ran.
 
 `stop_chat` aborts cleanly via the SDK's AbortController so the JSONL stays
 well-formed; the next `chat` call resumes the same session.
@@ -225,14 +233,12 @@ drive the frontend against a test user and verify each scenario:
 
 1. `create_chat` — new chat appears in sidebar; `chat_id` is a UUID.
 2. `chat` RPC (frontend send) — streams text, rendered live in ChatPanel.
-3. Tool calls render in ExecutionTimeline with name, JSON-parsed args, duration, cumulative tokens and cost.
-4. Subagent delegation shows the `→` `transfer` badge.
-5. `chat_finished` flips the running indicator off; no orphan `dsh` child (`pgrep -af dsh` inside the container).
-6. Reload the page → `list_chats` + `get_chat_messages` reconstruct the timeline from session JSONL + sidecar.
-7. `delete_chat` removes JSONL + sidecar.
-8. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
-9. Drop a `SKILL.md` into `hub/workspaces/<user>/.claude/skills/<name>/` → it appears at `/home/node/.claude/skills/` inside the container → invoking by name works.
-10. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
+3. Tool calls render in ExecutionTimeline with name, args, output, duration and failed status, between the agent's text.
+4. `chat_finished` flips the running indicator off; no orphan `dsh` child (`pgrep -af dsh` inside the container).
+5. Reload the page → `list_chats` + `get_chat_items` show the chat exactly as it streamed.
+6. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
+7. Drop a `SKILL.md` into `hub/workspaces/<user>/.labweaver/skills/<name>/` → it appears at `~/.labweaver/skills/` inside the container → invoking by name works.
+8. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
 
 Then soak: 48h under representative load. Watch `pgrep -af dsh` (stable),
 session JSONL tails (not truncated), nats-server logs (no `slow consumer`).
@@ -252,14 +258,12 @@ npm run typecheck
 ```
 
 Tests cover:
-- Event translation (SDK messages → `chunk` / `step_message` / `chat_finished`)
-- `tool_calls[].function.arguments` is a JSON **string**, not an object (the frontend JSON.parses it)
-- Tool-call duration is measured in the adapter (SDK doesn't expose it)
+- Chat items: the items a live turn streams equal the projection of its stored transcript
 - Per-chat mutex rejects overlapping `chat` RPCs
 - `AbortController` cleanly aborts in-flight turns
 - Session sidecar CRUD and path-escape guards in `file_manager`
 - `commands_list`, `skills_list`, and `org_skills_list` enumerate
-  `~/.claude/commands/` and the two skill tiers for the in-app slash menu.
+  `~/.labweaver/commands/` and the two skill tiers for the in-app slash menu.
 
 ## License
 

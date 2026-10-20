@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
 import { fileURLToPath } from "node:url";
+import { DistillationResult } from "../src/distiller-prompts.js";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow, writeDistillation } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
@@ -56,7 +57,7 @@ async function seed(rows: Seed[]): Promise<string[]> {
     await client.query("BEGIN");
     for (const r of rows) {
       const n = seq++;
-      const id = await insertMemoryRow(client, {
+      const id = await insertMemoryRow(client, { domain: "lab",
         username:          r.username,
         project_dir:       r.project_dir ?? null,
         source:            "user",
@@ -197,19 +198,19 @@ describe("listDirs / getDir", () => {
 
 describe("writes and directories", () => {
   it("defaults the directory from (scope, type), honours an explicit one, and rejects a cross-scope one", async () => {
-    const dflt = await writeUserMemory({
+    const dflt = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "reference", name: "n1", description: "d", body: "b1",
     });
-    expect((await getMemory(pool, dflt.memory_id!))!.dir_key).toBe("project/entities");
+    expect((await getMemory({ pool, memoryId: dflt.memory_id!, username: "alice" }))!.dir_key).toBe("project/entities");
 
-    const explicit = await writeUserMemory({
+    const explicit = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "project", name: "n2", description: "d", body: "b2", dir: "project/trajectories",
     });
-    expect((await getMemory(pool, explicit.memory_id!))!.dir_key).toBe("project/trajectories");
+    expect((await getMemory({ pool, memoryId: explicit.memory_id!, username: "alice" }))!.dir_key).toBe("project/trajectories");
 
-    await expect(writeUserMemory({
+    await expect(writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "user", project_dir: null,
       type: "user", name: "n3", description: "d", body: "b3", dir: "project/decisions",
     })).rejects.toBeInstanceOf(InvalidDirError);
@@ -218,21 +219,21 @@ describe("writes and directories", () => {
   it("files distilled rows by default mapping", async () => {
     await writeDistillation(pool, {
       sessionMeta: { username: "alice", project_dir: "-w-p", source_session_id: null },
-      result: {
-        summary: { name: "s", description: "d", body: "summary" },
-        observations: [{ type: "finding", name: "o", description: "d", body: "obs", facets: {} }],
-      },
-      promptVersion: 1,
+      result: DistillationResult.parse({
+        run: { subject: "s", statement: "summary" },
+        claims: [{ claim_kind: "observation", subject: "o", statement: "obs" }],
+      }),
+      promptVersion: 2,
     });
     const { items } = await listMemories({ pool, username: "alice", project_dir: "-w-p" });
-    expect(new Map(items.map((i) => [i.type, i.dir_key]))).toEqual(new Map([
-      ["session_summary", "project/trajectories"],
-      ["observation", "project/decisions"],
+    expect(new Map(items.map((i) => [i.name, i.dir_key]))).toEqual(new Map([
+      ["s", "project/trajectories"],
+      ["o", "project/decisions"],
     ]));
   });
 
   it("updateMemory moves within a scope, audits it, and rejects a cross-scope move", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "user", project_dir: null,
       type: "user", name: "n", description: "d", body: "b",
     });
@@ -240,7 +241,7 @@ describe("writes and directories", () => {
     const base = { pool, actor: "alice", memoryId: id, name: "n", description: "d", body: "b" };
 
     expect(await updateMemory({ ...base, dir: "user/notes" })).toEqual({ ok: true });
-    expect((await getMemory(pool, id))!.dir_key).toBe("user/notes");
+    expect((await getMemory({ pool, memoryId: id, username: "alice" }))!.dir_key).toBe("user/notes");
     const trail = await getAuditTrail({ pool, actor: "alice", memoryId: id });
     if ("error" in trail) throw new Error(trail.error);
     expect(trail.rows[0]).toMatchObject({
@@ -250,7 +251,7 @@ describe("writes and directories", () => {
     });
 
     await expect(updateMemory({ ...base, dir: "org/experience" })).rejects.toBeInstanceOf(InvalidDirError);
-    expect((await getMemory(pool, id))!.dir_key).toBe("user/notes");
+    expect((await getMemory({ pool, memoryId: id, username: "alice" }))!.dir_key).toBe("user/notes");
   });
 
   it("listMemories filters by dir", async () => {

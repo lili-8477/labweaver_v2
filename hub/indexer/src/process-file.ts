@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import type { Pool } from "pg";
 import { commitPass, readOffset } from "./db.js";
+import { captureEvidence } from "./evidence-capture.js";
 import { parseJsonlBuffer } from "./jsonl-parser.js";
 import { resolveJsonlPath } from "./path-decode.js";
 import { projectEntries } from "./session-projector.js";
@@ -102,6 +103,7 @@ export async function processFile(opts: ProcessFileOptions): Promise<void> {
     });
 
     isResetPass = false;
+    await captureEvidence(pool, buf, username);
 
     if (committedEnd <= chunkStart) break; // no complete lines in this slice
     chunkStart = committedEnd;

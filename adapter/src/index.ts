@@ -41,11 +41,11 @@ import { loadMcpServers } from "./mcp-config.js";
 import { buildProviders, DEFAULT_MODEL_REF, ollamaBaseURL, type ProviderSpec } from "./providers/registry.js";
 import { discoverOllamaModels } from "./providers/ollama-discovery.js";
 import { loadDbConfig } from "./db-config.js";
-import { MemoryRpcClient } from "./memory-rpc.js";
+import { labweaverPath } from "./labweaver-dir.js";
+import { MemoryForwarder } from "./memory-rpc.js";
 import { NatsBus } from "./nats-bus.js";
 import { ShareRpcClient } from "./share-rpc.js";
 import { RpcRouter, type RpcDeps } from "./rpc.js";
-import { importSidecar } from "./sidecar-import.js";
 import { startUploadServer } from "./upload-http.js";
 
 /** A NATS subject token, long enough to be unguessable. */
@@ -82,17 +82,11 @@ async function main(): Promise<void> {
   await waitForPg(pool, 60);
   console.log(`[adapter] connected to PG as user=${dbCfg.username}`);
 
-  // Best-effort one-shot import of legacy sidecar files. Runs in the
-  // background; a subsequent boot is a no-op once the sentinel is written.
-  importSidecar({ pool, username: dbCfg.username, workspaceRoot })
-    .then((r) => console.log(`[adapter] sidecar import: imported=${r.imported} skipped=${r.skipped}`))
-    .catch((err) => console.warn("[adapter] sidecar import failed:", err));
-
   const chatsRepo = new ChatsRepo(pool, dbCfg.username);
 
   const memoryApiUrl = process.env.MEMORY_API_URL;
   const memoryClient = memoryApiUrl
-    ? new MemoryRpcClient(memoryApiUrl, dbCfg.username)
+    ? new MemoryForwarder({ baseUrl: memoryApiUrl, user: dbCfg.username })
     : null;
   if (!memoryClient) {
     console.warn("[adapter] MEMORY_API_URL not set — memory_* RPCs will be unavailable");
@@ -206,13 +200,13 @@ async function main(): Promise<void> {
 async function createEngine(opts: { home: string; workspaceRoot: string; providers: ProviderSpec[] }): Promise<DshAcpEngine> {
   const dshHome = dshHomeDir(opts.home);
   mkdirSync(dshHome, { recursive: true });
-  const settingsPath = path.join(opts.home, ".claude", "settings.json");
+  const settingsPath = labweaverPath(opts.home, "settings.json");
   const patchFile = path.join(dshHome, "labweaver.patch.yml");
   writeFileSync(patchFile, serializePatch(buildDshPatch({
     providers: opts.providers,
     defaultModel: DEFAULT_MODEL_REF,
     // Per-user skills first so they win name collisions with org skills.
-    skillDirs: [path.join(opts.workspaceRoot, ".claude", "skills"), path.join(opts.home, ".claude", "skills")],
+    skillDirs: [labweaverPath(opts.home, "skills"), path.join(opts.workspaceRoot, "shared", "skills")],
     hooksConfigPath: existsSync(settingsPath) ? settingsPath : undefined,
     // Same relative path from src/ (tsx dev) and dist/ (build).
     pluginsDirUrl: new URL("../dsh-plugins/", import.meta.url).href,

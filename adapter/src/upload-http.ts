@@ -7,14 +7,16 @@
 //
 // All trust decisions live in this file. nginx authenticates the user (HTTP
 // Basic) and routes to the right per-user container; once the request lands
-// here we still validate the path because the agent harness shares this
-// process and we don't want a path-traversal bug to clobber CLAUDE.md, .env,
-// or session state.
+// here we still validate the path (workspace-path.ts, plus the allowed
+// subtree and symlink checks below) so a path bug can't clobber CLAUDE.md,
+// .env, or session state.
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { createWriteStream } from "node:fs";
 import { mkdir, realpath, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { LABWEAVER_DIR } from "./labweaver-dir.js";
+import { workspacePath } from "./workspace-path.js";
 
 export interface UploadServerOptions {
   workspaceRoot: string;        // absolute, e.g. "/workspace"
@@ -26,11 +28,9 @@ export interface UploadServerOptions {
   memoryApiUrl?:   string;       // omitted → /share-snapshot/ returns 503
 }
 
-const DENY_NAMES = new Set([".env", ".claude", "CLAUDE.md", ".labweaver"]);
-// Carve-out: skill folder uploads land under .claude/skills/. For these we
-// skip the .claude DENY_NAMES check and switch the allowed subtree to
-// .claude/skills/. Anything else under .claude/ stays denied.
-const SKILLS_PREFIX = ".claude/skills/";
+// Skill folder uploads land under .labweaver/skills/ (workspace-path.ts lets
+// writes through there); everything else lands under the allowed subtree.
+const SKILLS_PREFIX = `${LABWEAVER_DIR}/skills/`;
 
 export function startUploadServer(opts: UploadServerOptions): Server {
   const { workspaceRoot, port } = opts;
@@ -104,22 +104,16 @@ async function handle(
 
   const isSkillUpload = relPath.startsWith(SKILLS_PREFIX);
   const allowedPrefix = isSkillUpload
-    ? resolve(ctx.workspaceRoot, ".claude/skills") + "/"
+    ? resolve(ctx.workspaceRoot, SKILLS_PREFIX) + "/"
     : ctx.allowedPrefix;
 
-  // Reject deny-listed top-level names defensively, even within the allowed
-  // subtree — nothing legitimate should land at e.g. local_projects/.env.
-  // Skill uploads must traverse .claude/, so let that one segment through;
-  // the isUnder check below still scopes them to .claude/skills/.
-  for (const seg of relPath.split("/")) {
-    if (isSkillUpload && seg === ".claude") continue;
-    if (DENY_NAMES.has(seg)) {
-      sendJson(res, 403, { error: "denied_name", segment: seg });
-      return;
-    }
+  let abs: string;
+  try {
+    abs = workspacePath(ctx.workspaceRoot, relPath, "write");
+  } catch (err) {
+    sendJson(res, 403, { error: "denied_path", message: (err as Error).message });
+    return;
   }
-
-  const abs = resolve(ctx.workspaceRoot, relPath);
   if (!isUnder(abs, allowedPrefix)) {
     sendJson(res, 403, { error: "path_outside_allowed_subtree", path: abs });
     return;

@@ -1,0 +1,349 @@
+// Upload API for the LabWeaver Glasses iOS app. The contract is
+// docs/UPLOAD_API.md in lili-8477/labweaver-glasses.
+//
+// nginx authenticates the Bearer token, strips it, and passes the workspace
+// owner in X-Forwarded-User. User containers share the indexer's docker
+// network and could send that header themselves, so the owner is only
+// trusted alongside X-Glasses-Proxy-Secret, which only nginx knows
+// (GLASSES_PROXY_SECRET). With no secret configured every request is refused.
+//
+// Files land in <recordingsRoot>/<owner>/<recordingId>/<name> under the names
+// the phone uses, so scripts/mux-recording.sh from the glasses repo runs on them.
+//
+// Ported from v1 (claude-bioflow), which the installed app talks to at
+// /api/glasses/; the routes answer there and at /api/glasses/v1/, the base
+// URL the contract names.
+
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import * as path from "node:path";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Pool } from "pg";
+import { z } from "zod";
+import {
+  createRecording,
+  deleteFiles,
+  getRecording,
+  getRecordingParts,
+  listRecordings,
+  listFileNames,
+  markComplete,
+  storeFile,
+  type FileRow,
+} from "./glasses-repo.js";
+import { CHUNK_RE, MediaType, Original, joinOriginal, originalsOf } from "./glasses-originals.js";
+
+export interface GlassesApiDeps {
+  pool:           Pool;
+  recordingsRoot: string;
+  maxChunkBytes:  number;
+  proxySecret:    string;   // must match nginx's X-Glasses-Proxy-Secret
+}
+
+const PREFIXES        = ["/api/glasses", "/api/glasses/v1"];
+const OWNER_RE        = /^[a-z0-9][a-z0-9-]*$/;             // add-user.sh rule
+const RECORDING_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;  // phone: yyyyMMdd-HHmmss-xxxx
+const SHA256_RE       = /^[0-9a-f]{64}$/;
+const INT_RE          = /^\d{1,12}$/;
+
+// nginx's internal location that serves hub/recordings (see hub/nginx.conf).
+// A download answers with X-Accel-Redirect to it, so nginx streams the file
+// with Range, ETag and sendfile, and the indexer never reads the bytes.
+export const ACCEL_PREFIX = "/_glasses_files";
+
+const ListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+const CreateBody = z.object({
+  localId:   z.string().regex(RECORDING_ID_RE),
+  source:    z.enum(["stream", "meta-ai"]).default("stream"),
+  startedAt: z.string().datetime({ offset: true }),
+  device:    z.record(z.unknown()).default({}),
+  config:    z.record(z.unknown()).default({}),
+}).refine((b) => b.source === "stream" || MediaType.safeParse(b.config.type).success, {
+  message: "a meta-ai recording needs config.type video or photo", path: ["config", "type"],
+});
+
+const CompleteBody = z.object({
+  durationMs: z.number().int().nonnegative().optional(),
+  endedAt:    z.string().datetime({ offset: true }).optional(),
+}).passthrough();
+
+// Only the fields the server checks; the rest of the manifest is stored as is.
+const Manifest = z.object({
+  recordingId: z.string().optional(),
+  mediaParts:  z.array(z.object({
+    files: z.array(z.object({ file: z.string() }).passthrough()),
+  }).passthrough()),
+  originals:   z.array(Original).optional(),
+}).passthrough();
+
+type Kind = FileRow["kind"];
+type Track = "video" | "audio";
+
+/** Kind and track implied by a file name, or null if the name is not allowed. */
+export function classifyName(name: string): { kind: Kind; track: Track | null; part?: number; seq?: number } | null {
+  let m = /^p(\d{3})-(video|audio)-init\.mp4$/.exec(name);
+  if (m) return { kind: "init", track: m[2] as Track, part: Number(m[1]) };
+  m = /^seg-(\d{6})-(video|audio)\.m4s$/.exec(name);
+  if (m) return { kind: "media", track: m[2] as Track, seq: Number(m[1]) };
+  m = CHUNK_RE.exec(name);
+  if (m) return { kind: "chunk", track: null, part: Number(m[1]), seq: Number(m[2]) };
+  if (name === "events.jsonl") return { kind: "events", track: null };
+  if (name === "manifest.json") return { kind: "manifest", track: null };
+  return null;
+}
+
+function tempPath(target: string): string {
+  return path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
+}
+
+export function glassesRoutesPlugin(deps: GlassesApiDeps) {
+  return async function (app: FastifyInstance) {
+    for (const prefix of PREFIXES) await app.register(glassesRoutes(deps), { prefix });
+  };
+}
+
+function glassesRoutes(deps: GlassesApiDeps) {
+  return async function (instance: FastifyInstance) {
+    instance.addContentTypeParser(
+      ["application/octet-stream", "video/mp4", "video/iso.segment", "application/x-ndjson"],
+      { parseAs: "buffer", bodyLimit: deps.maxChunkBytes },
+      (_req, body, done) => done(null, body),
+    );
+
+    const expected = Buffer.from(deps.proxySecret);
+    const fromProxy = (req: FastifyRequest): boolean => {
+      const got = Buffer.from(String(req.headers["x-glasses-proxy-secret"] ?? ""));
+      return expected.length > 0 && got.length === expected.length && timingSafeEqual(got, expected);
+    };
+
+    // Resolves the owner, or sends 401 and returns null.
+    const ownerOf = (req: FastifyRequest, reply: FastifyReply): string | null => {
+      const owner = req.headers["x-forwarded-user"];
+      if (fromProxy(req) && typeof owner === "string" && OWNER_RE.test(owner)) return owner;
+      reply.code(401).send({ error: "unauthenticated" });
+      return null;
+    };
+
+    // Resolves owner and recording id from the URL, or sends the error and returns null.
+    const target = (req: FastifyRequest, reply: FastifyReply) => {
+      const owner = ownerOf(req, reply);
+      if (!owner) return null;
+      const recordingId = (req.params as { id: string }).id;
+      if (!RECORDING_ID_RE.test(recordingId)) {
+        reply.code(400).send({ error: "invalid recording id" });
+        return null;
+      }
+      return { owner, recordingId, dir: path.join(deps.recordingsRoot, owner, recordingId) };
+    };
+
+    const removeFiles = async (t: { owner: string; recordingId: string; dir: string }, names: string[]) => {
+      await deleteFiles(deps.pool, t.owner, t.recordingId, names);
+      await Promise.all(names.map((n) => unlink(path.join(t.dir, n)).catch(() => {})));
+    };
+
+    instance.get("/ping", async (req, reply) => {
+      if (!ownerOf(req, reply)) return reply;
+      return { ok: true };
+    });
+
+    // POST /recordings — create (idempotent per owner + localId).
+    instance.post("/recordings", async (req, reply) => {
+      const owner = ownerOf(req, reply);
+      if (!owner) return reply;
+      const parsed = CreateBody.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "validation failed", issues: parsed.error.issues });
+      }
+      const { localId, ...rest } = parsed.data;
+      await mkdir(path.join(deps.recordingsRoot, owner, localId), { recursive: true });
+      const { created } = await createRecording(deps.pool, { owner, recordingId: localId, ...rest });
+      return reply.code(created ? 201 : 200).send({ recordingId: localId });
+    });
+
+    // PUT /recordings/:id/files/:name — one file, stored atomically.
+    instance.put("/recordings/:id/files/:name", async (req, reply) => {
+      const t = target(req, reply);
+      if (!t) return reply;
+      const name = (req.params as { name: string }).name;
+      const implied = classifyName(name);
+      if (!implied) return reply.code(400).send({ error: "invalid file name" });
+
+      const h = req.headers;
+      const header = (k: string) => (typeof h[k] === "string" ? (h[k] as string) : undefined);
+      const intHeader = (k: string): number | null | "bad" => {
+        const v = header(k);
+        if (v === undefined) return null;
+        return INT_RE.test(v) ? Number(v) : "bad";
+      };
+      const claimed = header("x-file-sha256");
+      if (!claimed || !SHA256_RE.test(claimed)) {
+        return reply.code(400).send({ error: "X-File-SHA256 must be lowercase hex" });
+      }
+      if (header("x-file-kind") !== implied.kind) {
+        return reply.code(400).send({ error: `X-File-Kind must be ${implied.kind} for ${name}` });
+      }
+      const track = header("x-file-track");
+      if (track !== undefined && track !== implied.track) {
+        return reply.code(400).send({ error: "X-File-Track does not match the file name" });
+      }
+      const ints = {
+        part:       intHeader("x-file-part"),
+        seq:        intHeader("x-file-seq"),
+        startMs:    intHeader("x-file-start-ms"),
+        durationMs: intHeader("x-file-duration-ms"),
+      };
+      if (Object.values(ints).includes("bad")) {
+        return reply.code(400).send({ error: "X-File-Part/Seq/Start-Ms/Duration-Ms must be integers" });
+      }
+
+      const body = req.body;
+      if (!Buffer.isBuffer(body)) return reply.code(400).send({ error: "expected a raw body" });
+      const sha256 = createHash("sha256").update(body).digest("hex");
+      if (sha256 !== claimed) return reply.code(400).send({ error: "sha256 mismatch" });
+
+      if (await getRecording(deps.pool, t.owner, t.recordingId) === null) {
+        return reply.code(404).send({ error: "recording not found" });
+      }
+
+      const final = path.join(t.dir, name);
+      const tmp = tempPath(final);
+      await writeFile(tmp, body);
+      const row: FileRow = {
+        owner: t.owner, recordingId: t.recordingId, name, kind: implied.kind, track: implied.track,
+        part:       (ints.part as number | null) ?? implied.part ?? null,
+        seq:        (ints.seq as number | null) ?? implied.seq ?? null,
+        startMs:    ints.startMs as number | null,
+        durationMs: ints.durationMs as number | null,
+        sha256, bytes: body.length,
+      };
+      const result = await storeFile(deps.pool, row, () => rename(tmp, final))
+        .finally(() => unlink(tmp).catch(() => {}));   // no-op once renamed
+
+      switch (result.status) {
+        case "created":      return reply.code(201).send({ ok: true });
+        case "exists":       return result.sha256 === sha256
+          ? reply.code(200).send({ ok: true })
+          : reply.code(409).send({ error: "different bytes already stored under this name" });
+        case "closed":       return reply.code(409).send({ error: "recording is complete" });
+        case "no_recording": return reply.code(404).send({ error: "recording not found" });
+      }
+    });
+
+    // GET /recordings — the owner's recordings, newest first.
+    instance.get("/recordings", async (req, reply) => {
+      const owner = ownerOf(req, reply);
+      if (!owner) return reply;
+      const q = ListQuery.safeParse(req.query);
+      if (!q.success) return reply.code(400).send({ error: "limit must be 1 to 200" });
+      return { recordings: await listRecordings(deps.pool, owner, q.data.limit) };
+    });
+
+    // GET /recordings/:id/parts — state and muxed parts ([] until processed).
+    instance.get("/recordings/:id/parts", async (req, reply) => {
+      const t = target(req, reply);
+      if (!t) return reply;
+      const found = await getRecordingParts(deps.pool, t.owner, t.recordingId);
+      if (!found) return reply.code(404).send({ error: "recording not found" });
+      return {
+        recordingId: t.recordingId,
+        state: found.state,
+        parts: found.parts.map((p) => ({ ...p, file: path.basename(p.file) })),
+      };
+    });
+
+    // GET /recordings/:id/parts/:n — the muxed pNNN.mp4, served by nginx.
+    instance.get("/recordings/:id/parts/:n", async (req, reply) => {
+      const t = target(req, reply);
+      if (!t) return reply;
+      const n = (req.params as { n: string }).n;
+      if (!/^[1-9]\d{0,5}$/.test(n)) return reply.code(400).send({ error: "invalid part number" });
+      const found = await getRecordingParts(deps.pool, t.owner, t.recordingId);
+      if (!found) return reply.code(404).send({ error: "recording not found" });
+      const part = found.parts.find((p) => p.part === Number(n));
+      if (!part) return reply.code(404).send({ error: "part not found", state: found.state });
+      return reply
+        .header("X-Accel-Redirect", `${ACCEL_PREFIX}/${t.owner}/${t.recordingId}/${part.file}`)
+        .code(200)
+        .send();
+    });
+
+    // GET /recordings/:id/originals/:n — an import's joined original, as uploaded.
+    instance.get("/recordings/:id/originals/:n", async (req, reply) => {
+      const t = target(req, reply);
+      if (!t) return reply;
+      const n = (req.params as { n: string }).n;
+      if (!/^[1-9]\d{0,2}$/.test(n)) return reply.code(400).send({ error: "invalid original number" });
+      const rec = await getRecording(deps.pool, t.owner, t.recordingId);
+      if (!rec) return reply.code(404).send({ error: "recording not found" });
+      const original = originalsOf(rec.manifest).find((o) => o.index === Number(n));
+      if (!original) return reply.code(404).send({ error: "original not found", state: rec.state });
+      return reply
+        .header("X-Accel-Redirect", `${ACCEL_PREFIX}/${t.owner}/${t.recordingId}/${original.file}`)
+        .code(200)
+        .send();
+    });
+
+    // POST /recordings/:id/complete — checks the uploaded manifest.json; for
+    // an import, also joins and checks the originals.
+    instance.post("/recordings/:id/complete", async (req, reply) => {
+      const t = target(req, reply);
+      if (!t) return reply;
+      const body = CompleteBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        return reply.code(400).send({ error: "validation failed", issues: body.error.issues });
+      }
+      const rec = await getRecording(deps.pool, t.owner, t.recordingId);
+      if (rec === null) return reply.code(404).send({ error: "recording not found" });
+      if (rec.state !== "uploading") return reply.code(202).send({ ok: true });   // already complete
+
+      const received = await listFileNames(deps.pool, t.owner, t.recordingId);
+      if (!received.has("manifest.json")) return reply.code(409).send({ missing: ["manifest.json"] });
+
+      let manifestJson: unknown;
+      try {
+        manifestJson = JSON.parse(await readFile(path.join(t.dir, "manifest.json"), "utf8"));
+      } catch {
+        return reply.code(400).send({ error: "manifest.json is not valid JSON" });
+      }
+      const manifest = Manifest.safeParse(manifestJson);
+      if (!manifest.success) {
+        return reply.code(400).send({ error: "manifest.json has no mediaParts[].files[].file" });
+      }
+      if (manifest.data.recordingId !== undefined && manifest.data.recordingId !== t.recordingId) {
+        return reply.code(400).send({ error: "manifest recordingId does not match the URL" });
+      }
+
+      const originals = manifest.data.originals ?? [];
+      if ((rec.source === "meta-ai") !== (originals.length > 0)) {
+        return reply.code(400).send({ error: "manifest originals[] must be set for meta-ai recordings only" });
+      }
+
+      const missing = [
+        ...manifest.data.mediaParts.flatMap((p) => p.files.map((f) => f.file)),
+        ...originals.flatMap((o) => o.chunks),
+        "events.jsonl",
+      ].filter((f) => !received.has(f));
+      if (missing.length > 0) return reply.code(409).send({ missing });
+
+      // A bad original's chunks are dropped so the phone resends all of them.
+      const bad: string[] = [];
+      for (const o of originals) if (!(await joinOriginal(t.dir, o))) bad.push(...o.chunks);
+      if (bad.length > 0) {
+        await removeFiles(t, bad);
+        return reply.code(409).send({ missing: bad });
+      }
+
+      await markComplete(deps.pool, {
+        owner: t.owner, recordingId: t.recordingId, manifest: manifest.data,
+        durationMs: body.data.durationMs ?? null, endedAt: body.data.endedAt ?? null,
+      });
+      // Joined and checked; a repeat complete short-circuits above, so the
+      // chunks are no longer needed.
+      await removeFiles(t, originals.flatMap((o) => o.chunks));
+      return reply.code(202).send({ ok: true });
+    });
+  };
+}

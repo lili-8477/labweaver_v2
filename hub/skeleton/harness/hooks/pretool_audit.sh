@@ -5,11 +5,11 @@ set -euo pipefail
 INPUT="$(cat)"
 
 # Stay no-op unless this session is in auto mode: the adapter marks it with
-# ~/.claude/auto/<session id>, which holds the project path (adapter/src/harness.ts).
+# ~/.labweaver/auto/<session id>, which holds the project path (adapter/src/harness.ts).
 SID="$(printf '%s' "$INPUT" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("session_id",""), end="")
 except Exception: pass' 2>/dev/null || true)"
-SESSION_FILE="$HOME/.claude/auto/$SID"
+SESSION_FILE="$HOME/.labweaver/auto/$SID"
 [[ -n "$SID" && -f "$SESSION_FILE" ]] || exit 0
 
 # Log into the session's project.

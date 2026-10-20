@@ -4,16 +4,16 @@ import { parentDigest, stripSessionContext, withSessionContext } from "../src/se
 describe("session context", () => {
   it("digest keeps recent user/assistant text and skips tool messages", () => {
     const digest = parentDigest([
-      { role: "user", content: "load pbmc3k" },
-      { role: "tool", content: "ok" },
-      { role: "assistant", content: "Loaded 2700 cells." },
+      { kind: "user", id: "u", text: "load pbmc3k" },
+      { kind: "tool", id: "t", name: "bash", input: {}, output: "ok", startedAt: "2026-01-01T00:00:00Z" },
+      { kind: "text", id: "a", text: "Loaded 2700 cells." },
     ]);
     expect(digest).toBe("User: load pbmc3k\n\nAssistant: Loaded 2700 cells.");
   });
 
   it("digest drops the oldest turns to fit the size cap", () => {
     const long = "x".repeat(600);
-    const msgs = Array.from({ length: 12 }, (_, i) => ({ role: "user" as const, content: `${i}${long}` }));
+    const msgs = Array.from({ length: 12 }, (_, i) => ({ kind: "user" as const, id: `u${i}`, text: `${i}${long}` }));
     const digest = parentDigest(msgs);
     expect(digest.length).toBeLessThanOrEqual(6000);
     expect(digest).toContain("User: 11");

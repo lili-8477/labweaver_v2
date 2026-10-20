@@ -52,8 +52,10 @@ describe("startWatcher", () => {
       logger,
     });
     try {
-      // Create file after watcher starts.
-      const dir = path.join(root, "frank", ".claude", "claude-projects", "-w");
+      // Create the file once the watcher's initial scan is done, so it
+      // arrives as a live add rather than racing the scan.
+      await handle.ready;
+      const dir = path.join(root, "frank", ".labweaver", "projects", "-w");
       await mkdir(dir, { recursive: true });
       const full = path.join(dir, `${SID}.jsonl`);
       await writeFile(full, JSON.stringify({
@@ -90,7 +92,7 @@ describe("startWatcher", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-w2-"));
     const SID = "aaaaaaaa-0000-0000-0000-000000000099";
     const logger = pino({ level: "silent" });
-    const dir = path.join(root, "gwen", ".claude", "claude-projects", "-w");
+    const dir = path.join(root, "gwen", ".labweaver", "projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
     await writeFile(full, JSON.stringify({

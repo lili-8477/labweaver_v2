@@ -25,10 +25,17 @@ import {
   getDir,
   memoryTree,
   recordFeedback,
+  recordUse,
+  usedSince,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { proposeExperiences } from "./experience-promotion.js";
+import { linkMemories } from "./lineage-repo.js";
+import { buildBundle } from "./context-bundle.js";
+import { consolidate } from "./consolidate.js";
 import { shareRoutesPlugin } from "./share-api.js";
+import { glassesRoutesPlugin } from "./glasses-api.js";
+import { execRunner, runMuxOnce } from "./glasses-mux.js";
 import { cleanupOldSnapshots, autoCloseIdleRequests } from "./share-cleanup.js";
 import {
   submitShareRequest,
@@ -47,6 +54,7 @@ async function main(): Promise<void> {
 
   await mkdir(cfg.shareSnapshotsDir, { recursive: true });
   logger.info({ dir: cfg.shareSnapshotsDir }, "share snapshots dir ready");
+  await mkdir(cfg.recordingsRoot, { recursive: true });
 
   const pool = new Pool({ connectionString: cfg.pgUrl, max: Math.max(10, cfg.maxConcurrentFiles * 2) });
   // An idle client losing its connection (e.g. postgres restart) emits here;
@@ -143,6 +151,26 @@ async function main(): Promise<void> {
 
   startAutoCloseLoop();
 
+  // Muxes completed glasses recordings into muxed/pNNN.mp4 (glasses-mux.ts).
+  const startGlassesMuxLoop = (): void => {
+    const tools = { ffmpeg: cfg.ffmpegBin, ffprobe: cfg.ffprobeBin, run: execRunner };
+    const tick = async (): Promise<void> => {
+      try {
+        const result = await runMuxOnce(pool, cfg.recordingsRoot, tools);
+        if (result.processed > 0 || result.failed.length > 0) {
+          logger.info({ result }, "glasses mux pass");
+        }
+      } catch (err) {
+        logger.error({ err }, "glasses mux pass crashed");
+      } finally {
+        setTimeout(tick, cfg.glassesMuxIntervalMs);
+      }
+    };
+    setTimeout(tick, 5_000);
+  };
+
+  startGlassesMuxLoop();
+
   const app = buildApp({
     pool,
     embedderClient: {
@@ -150,6 +178,7 @@ async function main(): Promise<void> {
     },
     mergeSimilarity: cfg.memoryMergeSimilarity,
     managers:        cfg.memoryOrgManagers,
+    clearance:       cfg.memoryClearance,
     repo: {
       searchMemories,
       getMemory,
@@ -166,8 +195,13 @@ async function main(): Promise<void> {
       getDir,
       memoryTree,
       recordFeedback,
+      recordUse,
+      usedSince,
       proposeExperiences,
       writeDistillation,
+      linkMemories,
+      buildBundle,
+      consolidate,
     },
   });
   await app.register(shareRoutesPlugin({
@@ -185,6 +219,14 @@ async function main(): Promise<void> {
       getShareCapabilities,
     },
   }));
+
+  await app.register(glassesRoutesPlugin({
+    pool,
+    recordingsRoot: cfg.recordingsRoot,
+    maxChunkBytes:  cfg.glassesMaxChunkBytes,
+    proxySecret:    cfg.glassesProxySecret,
+  }));
+  if (!cfg.glassesProxySecret) logger.warn("GLASSES_PROXY_SECRET unset: /api/glasses/ rejects every request");
 
   await app.listen({ port: cfg.memoryApiPort, host: "0.0.0.0" });
   logger.info({ port: cfg.memoryApiPort }, "memory-api listening");
