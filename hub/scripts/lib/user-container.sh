@@ -9,7 +9,7 @@
 #   spec_save <user>             write the spec from the variables below
 #   spec_load <user>             read it back (IMAGE from the environment wins)
 #   prepare_workspace <user>     host-side files the container mounts; idempotent
-#   run_user_container <user>    docker run from the spec, then fix /venv
+#   run_user_container <user>    docker run from the spec
 #
 # Spec variables: IMAGE NETWORK NATS_HOST PG_HOST INDEXER_HOST NGINX_CONTAINER
 # and the array DATA_MOUNTS ("host:target[:ro]", already resolved).
@@ -213,10 +213,4 @@ run_user_container() {
         docker logs "$container" 2>&1 | tail -30 >&2
         return 1
     fi
-
-    # The base image's /venv is root-owned, so runtime pip installs fail.
-    # Chown it once per container (its own overlay, not the image layer).
-    docker exec -u root "$container" chown -R node:node /venv 2>/dev/null \
-        && echo "  chown /venv -> node:node OK" \
-        || echo "  chown /venv skipped (already owned, or container not ready)"
 }
