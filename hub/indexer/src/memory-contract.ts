@@ -78,6 +78,7 @@ export const MEMORY_OPS = {
   })),
   memory_get: op("GET", "/memory/:memory_id", "username", z.object({
     memory_id: z.string().min(1),
+    use:       qBool.optional().describe("The agent is using this memory for its work: recorded for the outcome loop."),
   })),
   memory_timeline: op("GET", "/memory/timeline", "username", z.object({
     project_dir: projectDir.optional(),
@@ -114,6 +115,10 @@ export const MEMORY_OPS = {
   memory_tree: op("GET", "/memory/tree", "username", z.object({
     limit:  qInt(5000).optional(),
     domain: domainFilter,
+  })),
+  memory_outcome: op("POST", "/memory/outcome", "username", z.object({
+    outcome: z.enum(["success", "failure"]),
+    since:   z.iso.datetime().describe("Credit the memories the agent used from this time on."),
   })),
   memory_feedback: op("POST", "/memory/feedback", "username", z.object({
     memory_ids: z.array(z.uuid()).min(1).max(100),
@@ -393,6 +398,7 @@ export interface MemoryResults {
   memory_restore:  { ok: true };
   memory_audit:    { rows: AuditRow[] };
   memory_feedback: { updated: number; proposed_for_org: string[] };
+  memory_outcome:  { memory_ids: string[]; updated: number; proposed_for_org: string[] };
 }
 
 export type MemoryResult<O extends MemoryOp> = O extends keyof MemoryResults ? MemoryResults[O] : unknown;

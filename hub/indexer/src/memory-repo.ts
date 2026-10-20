@@ -1236,3 +1236,23 @@ export async function recordFeedback(args: {
   );
   return { updated: r.rowCount ?? 0 };
 }
+
+// ---------------------------------------------------------------------------
+// Outcome loop (GLOSSARY.md): the agent's memory opens are recorded, and a
+// step outcome credits the memories opened since the step began.
+
+export async function recordUse(args: { pool: Pool; username: string; memoryId: string }): Promise<void> {
+  await args.pool.query(
+    `INSERT INTO memory_uses (username, memory_id) VALUES ($1, $2)`,
+    [args.username, args.memoryId],
+  );
+}
+
+/** The distinct memories `username` used since `since`. */
+export async function usedSince(args: { pool: Pool; username: string; since: Date }): Promise<string[]> {
+  const r = await args.pool.query<{ memory_id: string }>(
+    `SELECT DISTINCT memory_id FROM memory_uses WHERE username = $1 AND used_at >= $2`,
+    [args.username, args.since],
+  );
+  return r.rows.map((row) => row.memory_id);
+}

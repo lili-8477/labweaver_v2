@@ -13,7 +13,7 @@ import type { AccessClass } from "../src/access-classes.js";
 import type { Domain } from "../src/memory-domain.js";
 import {
   forgetMemory, getMemory, listDirs, listMemories, memoryTree, recordFeedback, restoreMemory,
-  searchMemories, timelineMemories, updateMemory,
+  recordUse, searchMemories, timelineMemories, updateMemory, usedSince,
 } from "../src/memory-repo.js";
 import { lineageOf } from "../src/lineage-repo.js";
 
@@ -151,3 +151,15 @@ describe("memory changes", () => {
     expect(audit.rows.map((r) => r.action)).toEqual(["forget", "restore"]);
   });
 });
+
+describe("memory uses", () => {
+  it("are the user's own, distinct, and from the given time on", async () => {
+    const before = new Date(Date.now() - 1000);
+    await recordUse({ pool, username: "alice", memoryId: id["org-internal"]! });
+    await recordUse({ pool, username: "alice", memoryId: id["org-internal"]! });
+    await recordUse({ pool, username: "bob", memoryId: id["bob-own"]! });
+    expect(keysOf(await usedSince({ pool, username: "alice", since: before }))).toEqual(["org-internal"]);
+    expect(await usedSince({ pool, username: "alice", since: new Date(Date.now() + 60_000) })).toEqual([]);
+  });
+});
+

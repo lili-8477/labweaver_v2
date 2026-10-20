@@ -26,3 +26,4 @@ export interface ParsedProgress {
 export function section(md: string, title: string): string[] | null;
 export function nextStep(md: string | null): NextStep;
 export function parseProgress(md: string): ParsedProgress;
+export function verdict(md: string | null, line: string): "success" | "failure" | null;

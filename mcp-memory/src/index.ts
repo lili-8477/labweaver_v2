@@ -51,7 +51,9 @@ const TOOLS: Tool[] = [
     description: "Fetch a single memory by id. Returns null/404-error if not found.",
     input: z.object({ id: z.string().min(1) }),
     op: () => "memory_get",
-    params: (a) => ({ memory_id: a.id }),
+    // Every agent read counts as a use: an Auto-mode review verdict later
+    // credits it (the outcome loop).
+    params: (a) => ({ memory_id: a.id, use: true }),
   },
   {
     name: "memory_timeline",

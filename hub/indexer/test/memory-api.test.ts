@@ -35,6 +35,8 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   getDir:           ReturnType<typeof vi.fn>;
   memoryTree:       ReturnType<typeof vi.fn>;
   recordFeedback:   ReturnType<typeof vi.fn>;
+  recordUse:        ReturnType<typeof vi.fn>;
+  usedSince:        ReturnType<typeof vi.fn>;
   proposeExperiences: ReturnType<typeof vi.fn>;
   writeDistillation: ReturnType<typeof vi.fn>;
   linkMemories:     ReturnType<typeof vi.fn>;
@@ -66,6 +68,8 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     getDir:           vi.fn(async () => null),
     memoryTree:       vi.fn(async () => ({ dirs: [], memories: [], topics: [], thresholds: { memories: 3, successes: 3 } })),
     recordFeedback:   vi.fn(async () => ({ updated: 0 })),
+    recordUse:        vi.fn(async () => undefined),
+    usedSince:        vi.fn(async () => [] as string[]),
     proposeExperiences: vi.fn(async () => ({ proposed: [] as string[] })),
     writeDistillation: vi.fn(async () => ({ ...EMPTY_OUTCOME })),
     linkMemories:     vi.fn(async (): Promise<{ ok: boolean; reason?: "not_found" | "forbidden" | "self" }> => ({ ok: true })),
@@ -935,6 +939,37 @@ describe("memory-api", () => {
       expect(res.json()).toEqual(mockMetrics);
       expect(depsBag.repo.getMetrics).toHaveBeenCalledTimes(1);
       expect(depsBag.repo.getMetrics).toHaveBeenCalledWith(depsBag.deps.pool);
+    });
+  });
+
+  // ────────────────────────────── outcome loop ──────────────────────────────
+
+  describe("outcome loop", () => {
+    const detail = { memory_id: "m1", name: "n" };
+
+    it("records a use only when the agent says it is using the memory", async () => {
+      depsBag.repo.getMemory.mockResolvedValue(detail);
+      await app.inject({ method: "GET", url: "/memory/m1?username=alice" });
+      expect(depsBag.repo.recordUse).not.toHaveBeenCalled();
+      await app.inject({ method: "GET", url: "/memory/m1?username=alice&use=true" });
+      expect(depsBag.repo.recordUse).toHaveBeenCalledWith(expect.objectContaining({ username: "alice", memoryId: "m1" }));
+    });
+
+    it("credits a step outcome to the memories used since the step began", async () => {
+      depsBag.repo.usedSince.mockResolvedValueOnce(["m1", "m2"]);
+      depsBag.repo.recordFeedback.mockResolvedValueOnce({ updated: 2 });
+      depsBag.repo.proposeExperiences.mockResolvedValueOnce({ proposed: ["m2"] });
+      const since = "2026-10-20T10:00:00.000Z";
+      const res = await app.inject({ method: "POST", url: "/memory/outcome", payload: { username: "alice", outcome: "success", since } });
+      expect(res.json()).toEqual({ memory_ids: ["m1", "m2"], updated: 2, proposed_for_org: ["m2"] });
+      expect(depsBag.repo.usedSince).toHaveBeenCalledWith(expect.objectContaining({ username: "alice", since: new Date(since) }));
+      expect(depsBag.repo.recordFeedback).toHaveBeenCalledWith(expect.objectContaining({ memory_ids: ["m1", "m2"], outcome: "success" }));
+    });
+
+    it("does nothing when no memory was used", async () => {
+      const res = await app.inject({ method: "POST", url: "/memory/outcome", payload: { username: "alice", outcome: "failure", since: "2026-10-20T10:00:00.000Z" } });
+      expect(res.json()).toEqual({ memory_ids: [], updated: 0, proposed_for_org: [] });
+      expect(depsBag.repo.recordFeedback).not.toHaveBeenCalled();
     });
   });
 });

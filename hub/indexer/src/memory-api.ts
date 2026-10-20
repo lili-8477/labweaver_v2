@@ -16,6 +16,8 @@ import type {
   getDir,
   memoryTree,
   recordFeedback,
+  recordUse,
+  usedSince,
 } from "./memory-repo.js";
 import { InvalidDirError } from "./memory-dirs.js";
 import { encodeProjectDir } from "./path-decode.js";
@@ -57,6 +59,8 @@ export interface MemoryApiDeps {
     getDir:           typeof getDir;
     memoryTree:       typeof memoryTree;
     recordFeedback:   typeof recordFeedback;
+    recordUse:        typeof recordUse;
+    usedSince:        typeof usedSince;
     proposeExperiences: typeof proposeExperiences;
     writeDistillation: typeof writeDistillation;
     linkMemories:     typeof linkMemories;
@@ -242,6 +246,20 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     }));
   });
 
+  // A task outcome for memories that informed it: counts towards their
+  // ranking, and a success may carry personal experience over the promotion
+  // threshold.
+  const applyOutcome = async (username: string, memory_ids: string[], outcome: "success" | "failure") => {
+    if (memory_ids.length === 0) return { updated: 0, proposed_for_org: [] as string[] };
+    const { updated } = await deps.repo.recordFeedback({
+      pool: deps.pool, username, memory_ids, outcome, clearance: clearanceOf(username),
+    });
+    const { proposed } = outcome === "success"
+      ? await deps.repo.proposeExperiences({ pool: deps.pool, managers: deps.managers, memory_ids })
+      : { proposed: [] as string[] };
+    return { updated, proposed_for_org: proposed };
+  };
+
   // POST /memory/feedback — outcome of a task that used these memories.
   app.post("/memory/feedback", async (req, reply) => {
     const parsed = apiSchema("memory_feedback").safeParse(req.body);
@@ -249,16 +267,21 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       reply.code(400);
       return { error: "validation failed", issues: parsed.error.issues };
     }
-    const { updated } = await deps.repo.recordFeedback({
-      pool: deps.pool, ...parsed.data, clearance: clearanceOf(parsed.data.username),
-    });
-    // A success may carry personal experience over the promotion threshold.
-    const { proposed } = parsed.data.outcome === "success"
-      ? await deps.repo.proposeExperiences({
-          pool: deps.pool, managers: deps.managers, memory_ids: parsed.data.memory_ids,
-        })
-      : { proposed: [] as string[] };
-    return result("memory_feedback", { updated, proposed_for_org: proposed });
+    const b = parsed.data;
+    return result("memory_feedback", await applyOutcome(b.username, b.memory_ids, b.outcome));
+  });
+
+  // POST /memory/outcome — a step outcome (an Auto-mode review verdict),
+  // credited to the memories the agent used since the step began.
+  app.post("/memory/outcome", async (req, reply) => {
+    const parsed = apiSchema("memory_outcome").safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const b = parsed.data;
+    const memory_ids = await deps.repo.usedSince({ pool: deps.pool, username: b.username, since: new Date(b.since) });
+    return result("memory_outcome", { memory_ids, ...(await applyOutcome(b.username, memory_ids, b.outcome)) });
   });
 
   // POST /memory/write — /memorize-style user-authored memory. Returns
@@ -468,6 +491,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       reply.code(404);
       return { error: "memory not found" };
     }
+    if (q.use) await deps.repo.recordUse({ pool: deps.pool, username: q.username, memoryId: detail.memory_id });
     return result("memory_get", detail);
   });
 

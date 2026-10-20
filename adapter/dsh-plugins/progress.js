@@ -34,6 +34,22 @@ export function nextStep(md) {
   return { complete: true };
 }
 
+/**
+ * The reviewer's verdict on the plan line it was dispatched on, read from
+ * progress.md after the review: "success" once the step is `(reviewed)`,
+ * "failure" when an open review note says `reviewer: <step> rejected`, null
+ * when the review left neither (it did not finish).
+ */
+export function verdict(md, line) {
+  const name = STEP.exec(line)?.[2];
+  if (md == null || !name) return null;
+  const step = (section(md, "Plan") ?? []).find((l) => STEP.exec(l)?.[2] === name);
+  if (step && /\(reviewed\)/.test(step)) return "success";
+  const rejected = (section(md, "Review feedback") ?? [])
+    .some((l) => OPEN.test(l) && l.includes(`reviewer: ${name} rejected`));
+  return rejected ? "failure" : null;
+}
+
 /** The UI's view of progress.md: the plan's steps and what runs next. */
 export function parseProgress(md) {
   const steps = [];
