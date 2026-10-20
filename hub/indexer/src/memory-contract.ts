@@ -14,6 +14,7 @@ import {
   CONDITIONS_HELP, DistillationFields, EXPERIENCE_SOURCE_MESSAGE, experienceSourcesValid,
 } from "./distiller-prompts.js";
 import { FACET_KEYS } from "./facet-keys.js";
+import { DOMAIN_HELP, DOMAINS, UI_DOMAIN } from "./memory-domain.js";
 
 // ─── shared pieces ──────────────────────────────────────────────────────
 
@@ -26,6 +27,8 @@ export const EDGE_RELS = [
 ] as const;
 
 const conditions = z.partialRecord(z.enum(FACET_KEYS), z.array(z.string()).min(1)).describe(CONDITIONS_HELP);
+const domain = z.enum(DOMAINS).describe(DOMAIN_HELP);
+const domainFilter = z.enum(DOMAINS).optional().describe("Only memories of this domain.");
 const projectDir = z.string().describe("Encoded project dir (e.g. -home-alice-proj).");
 
 // GET operations travel as a querystring, where every value is a string.
@@ -71,6 +74,7 @@ export const MEMORY_OPS = {
     dirs:         z.array(z.string()).optional().describe("Restrict to directories (dir_key, e.g. project/decisions)."),
     conditions:   conditions.optional(),
     strict:       z.boolean().optional().describe("Also exclude memories that do not state a requested condition."),
+    domain:       domainFilter,
   })),
   memory_get: op("GET", "/memory/:memory_id", "username", z.object({
     memory_id: z.string().min(1),
@@ -95,10 +99,12 @@ export const MEMORY_OPS = {
     sort:            z.enum(["created", "hit"]).optional(),
     limit:           qInt(200).optional(),
     cursor:          z.iso.datetime().optional(),
+    domain:          domainFilter,
   })),
   memory_dirs: op("GET", "/memory/dirs", "username", z.object({
     project_dir:  projectDir.optional().describe("Encoded project dir; required to see project/* directories."),
     all_projects: qBool.default(false),
+    domain:       domainFilter,
   })),
   memory_dir: op("GET", "/memory/dirs/:dir_key", "username", z.object({
     dir_key:     z.string().min(1).describe("dir_key, e.g. project/decisions."),
@@ -106,7 +112,8 @@ export const MEMORY_OPS = {
     limit:       qInt(200).optional().describe("Max entries in the overview (default 20)."),
   })),
   memory_tree: op("GET", "/memory/tree", "username", z.object({
-    limit: qInt(5000).optional(),
+    limit:  qInt(5000).optional(),
+    domain: domainFilter,
   })),
   memory_feedback: op("POST", "/memory/feedback", "username", z.object({
     memory_ids: z.array(z.uuid()).min(1).max(100),
@@ -119,6 +126,7 @@ export const MEMORY_OPS = {
     name:        z.string().min(1),
     description: z.string(),
     body:        z.string(),
+    domain,
     facets:      z.record(z.string(), z.array(z.string())).optional(),
     dir:         z.string().optional().describe("Directory in the same scope (e.g. project/decisions). Omit to file by type."),
     force_new:   z.boolean().optional().describe("Write even if similar memories exist. Only after reviewing a `similar` response and deciding the new memory is distinct."),
@@ -155,6 +163,7 @@ export const MEMORY_OPS = {
     description: z.string(),
     body:        z.string().min(1).describe("The full body (replaces the old one)."),
     dir:         z.string().optional(),
+    domain:      domain.optional().describe("Change the domain, e.g. a lab memory filed as technical."),
     merge:       z.boolean().optional(),
   })),
   memory_restore: op("POST", "/memory/:memory_id/restore", "actor", z.object({
@@ -191,6 +200,13 @@ export function toolJsonSchema(schema: z.ZodType): Record<string, unknown> {
   });
   return json;
 }
+
+/**
+ * The UI's listing operations. The adapter pins them to UI_DOMAIN: the chat
+ * UI's users are life scientists, so technical memories stay agent-only.
+ */
+export const UI_DOMAIN_OPS = ["memory_search", "memory_list", "memory_dirs", "memory_tree"] as const satisfies readonly MemoryOp[];
+export { UI_DOMAIN };
 
 /** Operations the chat UI may call through the adapter. */
 export const UI_OPS = [

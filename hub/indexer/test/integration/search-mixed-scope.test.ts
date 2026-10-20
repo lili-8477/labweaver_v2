@@ -67,7 +67,7 @@ async function seedMemory(args: SeedArgs): Promise<string> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const memId = await insertMemoryRow(client, {
+    const memId = await insertMemoryRow(client, { domain: "lab",
       username:          args.username,
       project_dir:       args.project_dir,
       source:            "user",

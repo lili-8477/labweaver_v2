@@ -66,7 +66,7 @@ async function seedMemory(args: SeedArgs): Promise<string> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const memId = await insertMemoryRow(client, {
+    const memId = await insertMemoryRow(client, { domain: "lab",
       username:          args.username,
       project_dir:       args.project_dir,
       source:            "user",
@@ -417,7 +417,7 @@ describe("timelineMemories", () => {
 
 describe("writeUserMemory", () => {
   it("scope='user' writes a row with (username, NULL) and source='user'", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -439,7 +439,7 @@ describe("writeUserMemory", () => {
   });
 
   it("scope='user' coerces project_dir to NULL even when caller passes a non-null value", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -458,7 +458,7 @@ describe("writeUserMemory", () => {
   });
 
   it("scope='project' writes a row with (username, project_dir)", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "project",
@@ -481,7 +481,7 @@ describe("writeUserMemory", () => {
 
   it("scope='project' without project_dir throws", async () => {
     await expect(
-      writeUserMemory({
+      writeUserMemory({ domain: "lab",
         pool,
         username:    "alice",
         scope:       "project",
@@ -496,7 +496,7 @@ describe("writeUserMemory", () => {
 
   it("scope='org' throws (admin-only)", async () => {
     await expect(
-      writeUserMemory({
+      writeUserMemory({ domain: "lab",
         pool,
         username:    "alice",
         scope:       "org",
@@ -510,7 +510,7 @@ describe("writeUserMemory", () => {
   });
 
   it("creates exactly one chunk in memory_chunks", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -528,7 +528,7 @@ describe("writeUserMemory", () => {
   });
 
   it("enqueues exactly one row in embedder_queue for the new chunk", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -548,7 +548,7 @@ describe("writeUserMemory", () => {
   });
 
   it("writes facets when supplied", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -576,6 +576,7 @@ describe("writeUserMemory", () => {
       name:        "dup-test",
       description: "first write",
       body:        "alice always uses scanpy for single-cell analysis pipelines",
+      domain:      "lab" as const,
     };
     const first = await writeUserMemory(args);
     expect(first.memory_id).not.toBeNull();
@@ -1035,7 +1036,7 @@ describe("restoreMemory", () => {
 
 describe("getAuditTrail", () => {
   it("happy path: write → forget → restore returns 3 rows in DESC order (restore, forget, write)", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -1088,7 +1089,7 @@ describe("getAuditTrail", () => {
   });
 
   it("forbidden: returns {error:'forbidden'} when actor is not the owner", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "bob",
       scope:       "user",
@@ -1110,7 +1111,7 @@ describe("getAuditTrail", () => {
 
   it("respects limit parameter (max 100)", async () => {
     // Create a memory to get its ID
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool,
       username:    "alice",
       scope:       "user",
@@ -1334,7 +1335,7 @@ describe("listMemories", () => {
       await client.query("BEGIN");
 
       // User-authored memory: type "observation"
-      const memId1 = await insertMemoryRow(client, {
+      const memId1 = await insertMemoryRow(client, { domain: "lab",
         username:          "alice",
         project_dir:       null,
         source:            "user",
@@ -1348,7 +1349,7 @@ describe("listMemories", () => {
       });
 
       // User-authored memory: type "feedback"
-      const memId2 = await insertMemoryRow(client, {
+      const memId2 = await insertMemoryRow(client, { domain: "lab",
         username:          "bob",
         project_dir:       null,
         source:            "user",
@@ -1362,7 +1363,7 @@ describe("listMemories", () => {
       });
 
       // Distilled memory: type "session_summary"
-      const memId3 = await insertMemoryRow(client, {
+      const memId3 = await insertMemoryRow(client, { domain: "lab",
         username:          "alice",
         project_dir:       null,
         source:            "distilled",
@@ -1376,7 +1377,7 @@ describe("listMemories", () => {
       });
 
       // Distilled memory: type "reference"
-      const memId4 = await insertMemoryRow(client, {
+      const memId4 = await insertMemoryRow(client, { domain: "lab",
         username:          "bob",
         project_dir:       null,
         source:            "distilled",
@@ -1390,7 +1391,7 @@ describe("listMemories", () => {
       });
 
       // Soft-deleted memory
-      const memId5 = await insertMemoryRow(client, {
+      const memId5 = await insertMemoryRow(client, { domain: "lab",
         username:          "alice",
         project_dir:       null,
         source:            "user",

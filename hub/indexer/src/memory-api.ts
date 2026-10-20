@@ -113,6 +113,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       conditions:     b.conditions as Record<string, string[]> | undefined,
       strict:         b.strict,
       clearance:      clearanceOf(b.username),
+      domain:         b.domain,
     });
     return result("memory_search", hits);
   });
@@ -181,6 +182,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       limit:           q.limit,
       cursor:          q.cursor,
       clearance:       clearanceOf(q.username),
+      domain:          q.domain,
     }));
   });
 
@@ -200,6 +202,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       project_dir:  q.project_dir ?? null,
       all_projects: q.all_projects,
       clearance:    clearanceOf(q.username),
+      domain:       q.domain,
     }));
   });
 
@@ -235,7 +238,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     }
     const q = parsed.data;
     return result("memory_tree", await deps.repo.memoryTree({
-      pool: deps.pool, limit: q.limit, username: q.username, clearance: clearanceOf(q.username),
+      pool: deps.pool, limit: q.limit, username: q.username, clearance: clearanceOf(q.username), domain: q.domain,
     }));
   });
 
@@ -276,6 +279,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       name:        b.name,
       description: b.description,
       body:        b.body,
+      domain:      b.domain,
       facets:      b.facets,
       dir:         b.dir,
       force_new:   b.force_new,
@@ -401,6 +405,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       description: parsed.data.description,
       body:        parsed.data.body,
       dir:         parsed.data.dir,
+      domain:      parsed.data.domain,
       merge:       parsed.data.merge,
     });
     if (!r.ok && r.reason === 'not_found') { reply.code(404); return { error: 'memory not found' }; }

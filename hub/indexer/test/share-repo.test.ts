@@ -63,7 +63,7 @@ async function seedMemory(args: {
   try {
     await client.query("BEGIN");
     const hash = contentHash({ body: `${name}\n${body}`, promptVersion: 0 });
-    const memId = await insertMemoryRow(client, {
+    const memId = await insertMemoryRow(client, { domain: "lab",
       username:          args.username,
       project_dir:       null,
       source:            "user",
@@ -392,7 +392,7 @@ describe("decideShareRequest", () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const existingId = await insertMemoryRow(client, {
+      const existingId = await insertMemoryRow(client, { domain: "lab",
         username:          "__org__",
         project_dir:       null,
         source:            "user",

@@ -46,7 +46,8 @@ Pin the *current chat* to long-term memory. Auto-distillation is off. This comma
       "boundary_conditions": ["<where it stops applying>"],
       "failure_modes":       ["<how it goes wrong>"],
       "expected_qc":         { "pct_mito_max": 5 },
-      "source":              "run"
+      "source":              "run",
+      "domain":              "lab | technical"
     }
   ]
 }
@@ -55,6 +56,7 @@ Pin the *current chat* to long-term memory. Auto-distillation is off. This comma
 - `run` is required: exactly one per session.
 - `claims`: 0..5. Use `feedback` for something the user said about how they want the agent to work.
 - `experiences`: 0..3. Each must name one or more `applicability` items and one or more boundary conditions or failure modes. `source` is `"run"` or the index of the claim it comes from. If a lesson cannot meet this bar, leave it out.
+- `domain`: required on each experience; claims and the run default to `"lab"`. Use `"lab"` for science a researcher would want to read (samples, protocols, QC thresholds, analysis choices, findings) and `"technical"` for software know-how only you need (packages, environment, tool errors, notebook mechanics). The user is a life scientist and sees only lab memories; set `"technical"` on a claim or run only when the session was purely about making software work.
 
 ## Rules
 

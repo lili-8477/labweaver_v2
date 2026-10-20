@@ -235,7 +235,7 @@ describe("bundle versions", () => {
 describe("experience promotion guards", () => {
   const withExp = (statement: string) => ({
     run: { subject: "qc run", statement },
-    experiences: [{ task: "QC of PBMC", solution: "mt cutoff 5%", applicability: ["10x v3"], failure_modes: ["kills stressed cells"] }],
+    experiences: [{ task: "QC of PBMC", solution: "mt cutoff 5%", domain: "lab", applicability: ["10x v3"], failure_modes: ["kills stressed cells"] }],
   });
 
   it("needs 'repeated' (two successes) on top of three successes, and no contradiction on its source", async () => {
@@ -262,7 +262,7 @@ describe("consolidation", () => {
   it("proposes SUPPORTS for near-identical same-condition claims, reports others, and flags stale experiences", async () => {
     const payload = (statement: string) => ({
       run: { subject: "viability A549", statement, conditions: { cell_line: ["a549"] } },
-      experiences: [{ task: "viability assays", solution: "seed 5k cells", applicability: ["a549"], failure_modes: ["edge effects"] }],
+      experiences: [{ task: "viability assays", solution: "seed 5k cells", domain: "lab", applicability: ["a549"], failure_modes: ["edge effects"] }],
     });
     // Written without the merge check, so near-duplicates both land.
     const a = await distill(payload("viability 60% at 1uM"), { withMerge: false });

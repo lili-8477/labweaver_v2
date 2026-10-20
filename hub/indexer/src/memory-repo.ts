@@ -8,6 +8,7 @@ import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from 
 import { normalizeFacets } from "./facets.js";
 import type { AccessClass } from "./access-classes.js";
 import { DEFAULT_CLEARANCE, visibleSql, withOwnedRow, type Changed } from "./memory-access.js";
+import type { Domain } from "./memory-domain.js";
 import type {
   AuditRow, DirDetail, DirSummary, ListItem, MemoryDetail, MemoryTree, SearchHit, TimelineEntry, TreeMemory, TreeTopic,
 } from "./memory-contract.js";
@@ -56,6 +57,7 @@ export interface SearchMemoriesArgs {
   clearance?:     AccessClass;
   conditions?:    Record<string, string[]>;
   strict?:        boolean;
+  domain?:        Domain;
 }
 
 // Name of the sentinel row distiller.ts writes on permanent failure; never
@@ -74,7 +76,7 @@ const PRIOR_SCORE_SQL = `
 // Hybrid search. Params: $1 query vector (NULL when the embedder is down),
 // $2 query text, $3 username, $4 project_dir, $5 types[], $6 since,
 // $7 dirs[], $8 limit, $9 caller clearance, $10 condition filters (jsonb
-// {key: [values]}), $11 strict conditions, $12 exact-ID tokens[].
+// {key: [values]}), $11 strict conditions, $12 exact-ID tokens[], $13 domain.
 //
 // Hard filters (spec §6.1) run inside SEARCH_WHERE_SQL, i.e. before each arm's
 // LIMIT 200: status, validity, access class, and conditions. A condition
@@ -90,7 +92,7 @@ const SEARCH_WHERE_SQL = `
       m.deleted_at IS NULL
   AND m.status = 'active'
   AND (m.valid_to IS NULL OR m.valid_to > now())
-  AND ${visibleSql("m", "$3", "$9")}
+  AND ${visibleSql("m", "$3", "$9", "$13")}
   AND (m.project_dir IS NULL OR m.project_dir = $4)
   AND ($5::text[] IS NULL OR m.type = ANY($5))
   AND ($6::timestamptz IS NULL OR m.created_at >= $6)
@@ -219,6 +221,7 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     qVec === null ? null : "[" + qVec.join(",") + "]",
     args.query, args.username, args.project_dir, types, since, dirs, limit,
     args.clearance ?? DEFAULT_CLEARANCE, conditions, args.strict ?? false, exactTokens(args.query),
+    args.domain ?? null,
   ];
 
   // The vector arm filters by visibility after the HNSW scan; iterative scan
@@ -458,6 +461,7 @@ export interface WriteUserMemoryArgs {
   name:        string;
   description: string;
   body:        string;
+  domain:      Domain;
   facets?:     Record<string, string[]>;
   dir?:        string;            // dir_key; defaults by (scope, type)
   // When set, look for near matches in the target directory first and return
@@ -526,6 +530,7 @@ export async function writeUserMemory(
       facets:            args.facets ?? {},
       content_hash:      hash,
       dir_key:           dirKey,
+      domain:            args.domain,
       embedding,
     });
     if (memory_id !== null) {
@@ -598,6 +603,7 @@ export async function updateMemory(args: {
   description: string;
   body:        string;
   dir?:        string;            // move to another dir in the same scope
+  domain?:     Domain;            // relabel; unchanged when omitted
   // Fold a near-duplicate into this memory (merge-on-write). Unlike a plain
   // edit it may rewrite distilled rows; audited as 'merge'.
   merge?:      boolean;
@@ -634,9 +640,10 @@ export async function updateMemory(args: {
                   body        = $3,
                   content_hash = $4,
                   dir_key     = $6,
+                  domain      = COALESCE($7, domain),
                   updated_at  = now()
             WHERE memory_id = $5`,
-          [args.name, args.description, args.body, hash, args.memoryId, dirKey],
+          [args.name, args.description, args.body, hash, args.memoryId, dirKey, args.domain ?? null],
         );
       } catch (e) {
         if (isDirFkViolation(e)) throw new InvalidDirError(dirKey, row.scope);
@@ -705,6 +712,7 @@ export interface ListFilter {
   limit?:           number;                       // default 50, cap 200
   cursor?:          string;                       // ISO timestamp from prev page's tail
   clearance?:       AccessClass;                  // default DEFAULT_CLEARANCE
+  domain?:          Domain;                       // only this domain
 }
 
 // Paginated browser-friendly listing. Filterable by scope_tier, type, source,
@@ -811,7 +819,7 @@ SELECT m.memory_id, m.type, m.source,
        m.hit_count, m.last_hit_at, m.deleted_at
   FROM memories m
  WHERE
-   ${visibleSql("m", "$1", "$10")}
+   ${visibleSql("m", "$1", "$10", "$11")}
    -- scope filter
    AND (
      ($3::text IS NULL AND ($2::text IS NULL OR m.project_dir IS NULL OR m.project_dir = $2))
@@ -858,6 +866,7 @@ LIMIT $8
     limit + 1,       // $8 — fetch one extra to determine next_cursor
     f.dir ?? null,   // $9
     f.clearance ?? DEFAULT_CLEARANCE, // $10
+    f.domain ?? null, // $11
   ]);
 
   const rows = res.rows;
@@ -1037,11 +1046,12 @@ export async function getMetrics(pool: Pool): Promise<{
 // the owner's entries so it is never stale. A caller sees the org and user
 // directories always, and the project directories only with a project_dir.
 
-// Params: $1 username, $2 project_dir (NULL = no project), $4 clearance.
+// Params: $1 username, $2 project_dir (NULL = no project), $4 clearance,
+// and the domain parameter `domain` names, if any.
 const DIR_VISIBLE_SQL = `(d.scope <> 'project' OR $2::text IS NOT NULL)`;
 // A directory counts the entries the caller can see, project ones from $2 only.
-const DIR_ENTRY_SQL = `
-  (${visibleSql("m", "$1", "$4")} AND (m.scope <> 'project' OR m.project_dir = $2))`;
+const dirEntrySql = (domain?: string) => `
+  (${visibleSql("m", "$1", "$4", domain)} AND (m.scope <> 'project' OR m.project_dir = $2))`;
 
 // all_projects (UI tree): show project directories even without a
 // project_dir, counting entries across all of the caller's projects.
@@ -1051,6 +1061,7 @@ export async function listDirs(args: {
   project_dir:   string | null;
   all_projects?: boolean;
   clearance?:    AccessClass;
+  domain?:       Domain;
 }): Promise<DirSummary[]> {
   type Row = Omit<DirSummary, "updated_at"> & { updated_at: Date | null };
   const r = await args.pool.query<Row>(
@@ -1062,11 +1073,11 @@ export async function listDirs(args: {
          ON m.dir_key = d.dir_key
         AND m.deleted_at IS NULL
         AND m.name <> '${DISTILL_FAILED_NAME}'
-        AND (${DIR_ENTRY_SQL} OR ($3 AND m.scope = 'project' AND ${visibleSql("m", "$1", "$4")}))
+        AND (${dirEntrySql("$5")} OR ($3 AND m.scope = 'project' AND ${visibleSql("m", "$1", "$4", "$5")}))
       WHERE ${DIR_VISIBLE_SQL} OR $3
       GROUP BY d.dir_key, d.scope, d.l0, d.sort
       ORDER BY d.sort`,
-    [args.username, args.project_dir, args.all_projects ?? false, args.clearance ?? DEFAULT_CLEARANCE],
+    [args.username, args.project_dir, args.all_projects ?? false, args.clearance ?? DEFAULT_CLEARANCE, args.domain ?? null],
   );
   return r.rows.map((row) => ({
     ...row,
@@ -1089,11 +1100,12 @@ export async function memoryTree(args: {
   username:   string;
   limit?:     number;
   clearance?: AccessClass;
+  domain?:    Domain;
 }): Promise<MemoryTree> {
   const clearance = args.clearance ?? DEFAULT_CLEARANCE;
   type Row = Omit<TreeMemory, "created_at" | "updated_at"> & { created_at: Date; updated_at: Date };
   const [dirs, r] = await Promise.all([
-    listDirs({ pool: args.pool, username: args.username, project_dir: null, all_projects: true, clearance }),
+    listDirs({ pool: args.pool, username: args.username, project_dir: null, all_projects: true, clearance, domain: args.domain }),
     args.pool.query<Row>(
       `SELECT m.memory_id, m.name, m.description, m.dir_key, m.scope, m.project_dir,
               m.created_at, m.updated_at, m.hit_count, m.success_count, m.failure_count,
@@ -1103,11 +1115,11 @@ export async function memoryTree(args: {
          LEFT JOIN memory_facets f ON f.memory_id = m.memory_id AND f.key = ANY($2)
         WHERE m.deleted_at IS NULL
           AND m.name <> '${DISTILL_FAILED_NAME}'
-          AND ${visibleSql("m", "$1", "$4")}
+          AND ${visibleSql("m", "$1", "$4", "$5")}
         GROUP BY m.memory_id
         ORDER BY m.created_at DESC
         LIMIT $3`,
-      [args.username, TOPIC_FACETS, args.limit ?? 2000, clearance],
+      [args.username, TOPIC_FACETS, args.limit ?? 2000, clearance, args.domain ?? null],
     ),
   ]);
   const memories = r.rows.map((row) => ({
@@ -1183,7 +1195,7 @@ async function dirEntries(args: {
       WHERE m.dir_key = $3
         AND m.deleted_at IS NULL
         AND m.name <> '${DISTILL_FAILED_NAME}'
-        AND ${DIR_ENTRY_SQL}
+        AND ${dirEntrySql()}
       ORDER BY ${PRIOR_SCORE_SQL} DESC, m.memory_id
       LIMIT $5`,
     [args.username, args.project_dir, args.dir_key, args.clearance ?? DEFAULT_CLEARANCE, args.limit],

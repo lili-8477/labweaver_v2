@@ -101,7 +101,7 @@ const RESULT = DistillationResult.parse({
     { claim_kind: "feedback", subject: "prefer Seurat conventions", statement: "label clusters the Seurat way" },
   ],
   experiences: [{
-    task: "QC of 10x PBMC data", solution: "percentile mt filter", applicability: ["10x v3 PBMC"],
+    task: "QC of 10x PBMC data", solution: "percentile mt filter", domain: "lab", applicability: ["10x v3 PBMC"],
     failure_modes: ["removes stressed but real cells"], source: 0,
   }],
 });

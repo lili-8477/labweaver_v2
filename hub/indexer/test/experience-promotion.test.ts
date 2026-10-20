@@ -28,7 +28,7 @@ beforeEach(async () => {
 });
 
 async function experience(name: string, dir = "user/experience"): Promise<string> {
-  const { memory_id } = await writeUserMemory({
+  const { memory_id } = await writeUserMemory({ domain: "lab",
     pool, username: "alice", scope: "user", project_dir: null,
     type: "project", name, description: "d", body: `${name} body`, dir,
   });
@@ -86,7 +86,7 @@ describe("proposeExperiences", () => {
 describe("listDirs all_projects", () => {
   it("counts project directories across every project of the caller", async () => {
     for (const p of ["-a", "-b"]) {
-      await writeUserMemory({
+      await writeUserMemory({ domain: "lab",
         pool, username: "alice", scope: "project", project_dir: p,
         type: "project", name: `n${p}`, description: "d", body: `b${p}`,
       });

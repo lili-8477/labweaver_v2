@@ -5,6 +5,7 @@
 import { z } from "zod/v4";
 import { ACCESS_ORDER } from "./access-classes.js";
 import { FACET_KEYS } from "./facet-keys.js";
+import { DOMAIN_HELP, DOMAINS } from "./memory-domain.js";
 
 export const PROMPT_VERSION = 2;
 
@@ -12,6 +13,7 @@ export const CONDITIONS_HELP = `Condition facets, key → values. Keys: ${FACET_
 const Conditions = z.partialRecord(z.enum(FACET_KEYS), z.array(z.string().max(200)).max(20)).describe(CONDITIONS_HELP);
 
 const AccessClass = z.enum(ACCESS_ORDER);
+const Domain = z.enum(DOMAINS).describe(DOMAIN_HELP);
 
 // Evidence is cited by URI (file://, s3://, chpc://, https://, transcript://).
 // The agent never invents URIs: it cites paths, job IDs and links it saw.
@@ -36,6 +38,7 @@ const ClaimBase = {
   conditions:  Conditions.default({}),
   evidence:    EvidenceList,
   observed_at: z.iso.datetime().optional().describe("ISO-8601 time of the experiment or run, if not now."),
+  domain:      Domain.default("lab"),
 };
 
 export const RunClaim = z.object({
@@ -63,6 +66,7 @@ export const Experience = z.object({
   failure_modes:       z.array(z.string().max(300)).max(10).default([]),
   expected_qc:         z.record(z.string(), z.union([z.number(), z.string().max(200)])).default({}),
   search_keys:         z.array(z.string().max(80)).max(10).default([]),
+  domain:              Domain,
   conditions:          Conditions.default({}),
   // The run claim, or an index into `claims`.
   source:              z.union([z.literal("run"), z.number().int().min(0)]).default("run")

@@ -43,6 +43,18 @@ describe("memory_* RPCs", () => {
     expect(requests[0]).toMatchObject({ method: "POST", body: { query: "qc", username: "alice" } });
   });
 
+  it("list only lab memories, whatever the UI asks for", async () => {
+    const { router, requests } = setup([]);
+    await router.dispatch("memory_search", { query: "qc", domain: "technical" });
+    await router.dispatch("memory_list", {});
+    await router.dispatch("memory_tree", {});
+    await router.dispatch("memory_dirs", {});
+    await router.dispatch("memory_get", { memory_id: "m1" });
+    expect(requests[0]!.body).toMatchObject({ domain: "lab" });
+    for (const r of requests.slice(1, 4)) expect(r.url.searchParams.get("domain")).toBe("lab");
+    expect(requests[4]!.url.searchParams.has("domain")).toBe(false);
+  });
+
   it("put the actor on owner-checked edits", async () => {
     const { router, requests } = setup();
     await router.dispatch("memory_update", { memory_id: "m1", name: "n", description: "d", body: "b", dir: "user/notes" });

@@ -265,6 +265,7 @@ describe("memory-api", () => {
           name:        "n",
           description: "d",
           body:        "b",
+          domain:      "technical",
           facets:      { tag: ["x"] },
         },
       });
@@ -274,6 +275,7 @@ describe("memory-api", () => {
       expect(arg.scope).toBe("user");
       expect(arg.project_dir).toBeNull();
       expect(arg.facets).toEqual({ tag: ["x"] });
+      expect(arg.domain).toBe("technical");
       expect(arg.pool).toBe(depsBag.deps.pool);
     });
 
@@ -289,6 +291,7 @@ describe("memory-api", () => {
           name:        "n",
           description: "d",
           body:        "b",
+          domain:      "lab",
         },
       });
       expect(res.statusCode).toBe(200);
@@ -719,7 +722,7 @@ describe("memory-api", () => {
     });
 
     it("rejects an experience below the value bar", async () => {
-      const exp = { task: "t", solution: "s", applicability: ["always"] };
+      const exp = { task: "t", solution: "s", domain: "lab", applicability: ["always"] };
       const res = await app.inject({
         method: "POST", url: "/memory/distill", payload: { ...validBody, experiences: [exp] },
       });
@@ -841,7 +844,7 @@ describe("memory-api", () => {
     it("POST /memory/write passes force_new and the merge check", async () => {
       await app.inject({
         method: "POST", url: "/memory/write",
-        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", force_new: true },
+        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", domain: "lab", force_new: true },
       });
       expect(depsBag.repo.writeUserMemory).toHaveBeenCalledWith(expect.objectContaining({
         force_new: true,
@@ -905,7 +908,7 @@ describe("memory-api", () => {
       depsBag.repo.writeUserMemory.mockRejectedValueOnce(new InvalidDirError("project/decisions", "user"));
       const res = await app.inject({
         method: "POST", url: "/memory/write",
-        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", dir: "project/decisions" },
+        payload: { username: "alice", scope: "user", type: "user", name: "n", description: "d", body: "b", domain: "lab", dir: "project/decisions" },
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toMatch(/project\/decisions/);

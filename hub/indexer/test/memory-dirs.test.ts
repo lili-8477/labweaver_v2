@@ -57,7 +57,7 @@ async function seed(rows: Seed[]): Promise<string[]> {
     await client.query("BEGIN");
     for (const r of rows) {
       const n = seq++;
-      const id = await insertMemoryRow(client, {
+      const id = await insertMemoryRow(client, { domain: "lab",
         username:          r.username,
         project_dir:       r.project_dir ?? null,
         source:            "user",
@@ -198,19 +198,19 @@ describe("listDirs / getDir", () => {
 
 describe("writes and directories", () => {
   it("defaults the directory from (scope, type), honours an explicit one, and rejects a cross-scope one", async () => {
-    const dflt = await writeUserMemory({
+    const dflt = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "reference", name: "n1", description: "d", body: "b1",
     });
     expect((await getMemory({ pool, memoryId: dflt.memory_id!, username: "alice" }))!.dir_key).toBe("project/entities");
 
-    const explicit = await writeUserMemory({
+    const explicit = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "project", project_dir: "-w-p",
       type: "project", name: "n2", description: "d", body: "b2", dir: "project/trajectories",
     });
     expect((await getMemory({ pool, memoryId: explicit.memory_id!, username: "alice" }))!.dir_key).toBe("project/trajectories");
 
-    await expect(writeUserMemory({
+    await expect(writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "user", project_dir: null,
       type: "user", name: "n3", description: "d", body: "b3", dir: "project/decisions",
     })).rejects.toBeInstanceOf(InvalidDirError);
@@ -233,7 +233,7 @@ describe("writes and directories", () => {
   });
 
   it("updateMemory moves within a scope, audits it, and rejects a cross-scope move", async () => {
-    const { memory_id } = await writeUserMemory({
+    const { memory_id } = await writeUserMemory({ domain: "lab",
       pool, username: "alice", scope: "user", project_dir: null,
       type: "user", name: "n", description: "d", body: "b",
     });

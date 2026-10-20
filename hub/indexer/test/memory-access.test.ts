@@ -10,6 +10,7 @@ import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
 import type { AccessClass } from "../src/access-classes.js";
+import type { Domain } from "../src/memory-domain.js";
 import {
   forgetMemory, getMemory, listDirs, listMemories, memoryTree, recordFeedback, restoreMemory,
   searchMemories, timelineMemories, updateMemory,
@@ -25,12 +26,12 @@ let pg: StartedPostgreSqlContainer;
 let pool: Pool;
 const id: Record<string, string> = {};
 
-async function seed(key: string, username: string, opts: { access?: AccessClass; deleted?: boolean } = {}) {
+async function seed(key: string, username: string, opts: { access?: AccessClass; deleted?: boolean; domain?: Domain } = {}) {
   const client = await pool.connect();
   try {
     const body = `visibility marker ${key}`;
     const memId = await insertMemoryRow(client, {
-      username, project_dir: null, source: "user", type: "observation", source_session_id: null,
+      domain: opts.domain ?? "lab", username, project_dir: null, source: "user", type: "observation", source_session_id: null,
       name: key, description: key, body, facets: {},
       content_hash: contentHash({ body, promptVersion: 0 }),
       science: opts.access ? { access_class: opts.access } : undefined,
@@ -48,6 +49,7 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: pg.getConnectionUri() });
   await runMigrations({ pool, migrationsDir: MIGRATIONS_DIR, lockKey: 0x62696f666c77n });
   await seed("alice-own", "alice");
+  await seed("alice-technical", "alice", { domain: "technical" });
   await seed("alice-deleted", "alice", { deleted: true });
   await seed("bob-own", "bob");
   await seed("bob-deleted", "bob", { deleted: true });
@@ -63,9 +65,9 @@ afterAll(async () => {
 /** The fixture keys a read path returned. */
 const keysOf = (ids: string[]) => Object.keys(id).filter((k) => ids.includes(id[k]!)).sort();
 
-/** Every read path, as alice with the given clearance: the keys each one shows. */
-async function seenBy(clearance: AccessClass): Promise<Record<string, string[]>> {
-  const viewer = { pool, username: "alice", clearance };
+/** Every read path, as alice with the given clearance (and domain, on the UI's listing paths): the keys each one shows. */
+async function seenBy(clearance: AccessClass, domain?: Domain): Promise<Record<string, string[]>> {
+  const viewer = { pool, username: "alice", clearance, domain };
   const byId = await Promise.all(Object.values(id).map((memoryId) => getMemory({ ...viewer, memoryId })));
   return {
     get:      keysOf(byId.flatMap((m) => (m ? [m.memory_id] : []))),
@@ -78,11 +80,23 @@ async function seenBy(clearance: AccessClass): Promise<Record<string, string[]>>
 
 describe("memory visibility", () => {
   it("is the same on every read path: own and org, within clearance; deleted rows only for their owner", async () => {
-    const live = ["alice-own", "org-internal"];
-    const withDeleted = ["alice-deleted", "alice-own", "org-internal"];
+    const live = ["alice-own", "alice-technical", "org-internal"];
+    const withDeleted = ["alice-deleted", "alice-own", "alice-technical", "org-internal"];
     expect(await seenBy("internal")).toEqual({
       get: withDeleted, search: live, timeline: live, list: withDeleted, tree: live,
     });
+  });
+
+  it("keeps technical memories out of the lab view's listings", async () => {
+    const lab = await seenBy("internal", "lab");
+    for (const path of ["search", "list", "tree"] as const) expect(lab[path]).not.toContain("alice-technical");
+    expect(lab.list).toContain("alice-own");
+    // Opening one by id still works: the domain filters listings, not access.
+    expect(lab.get).toContain("alice-technical");
+    const dirOf = (await getMemory({ pool, username: "alice", memoryId: id["alice-technical"]! }))!.dir_key;
+    const count = async (domain?: Domain) =>
+      (await listDirs({ pool, username: "alice", project_dir: null, domain })).find((d) => d.dir_key === dirOf)!.entry_count;
+    expect(await count("lab")).toBe((await count()) - 1);
   });
 
   it("opens restricted memories to cleared viewers, on every path", async () => {

@@ -7,6 +7,7 @@ import { embedForMerge, findSimilar, type MergeCheck, type SimilarMemory } from 
 import { conditionKey, normalizeFacets } from "./facets.js";
 import { decideReconcile, renderClaimBody, renderExperienceBody, truncate, type Candidate } from "./claims.js";
 import { linkEvidence, strictest, upsertEvidence, writeEdge, type AccessClass } from "./lineage-repo.js";
+import type { Domain } from "./memory-domain.js";
 
 export interface SettledSession {
   session_id:          string;
@@ -59,6 +60,8 @@ export interface InsertMemoryRowArgs {
   content_hash:       Buffer;
   // Directory to file the memory under; defaults by (scope, type).
   dir_key?:           string;
+  // Lab knowledge for the UI, or technical know-how for the agent only.
+  domain:             Domain;
   // Embedding already computed for the merge check: stored on the chunk
   // directly instead of going through embedder_queue.
   embedding?:         number[];
@@ -90,9 +93,9 @@ export async function insertMemoryRow(
          memory_id, username, project_dir, type, source,
          name, description, body, source_session_id, content_hash, dir_key,
          claim_kind, confidence, validation_level, observed_at, access_class,
-         condition_key, attrs
+         condition_key, attrs, domain
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, COALESCE($16, 'internal'), $17, $18::jsonb)
+                 $12, $13, $14, $15, COALESCE($16, 'internal'), $17, $18::jsonb, $19)
        ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
        RETURNING memory_id`,
       [
@@ -101,7 +104,7 @@ export async function insertMemoryRow(
         dirKey,
         sc.claim_kind ?? null, sc.confidence ?? null, sc.validation_level ?? null,
         sc.observed_at ?? null, sc.access_class ?? null, sc.condition_key ?? null,
-        JSON.stringify(sc.attrs ?? {}),
+        JSON.stringify(sc.attrs ?? {}), args.domain,
       ],
     );
   } catch (e) {
@@ -296,6 +299,7 @@ async function writeClaim(
     facets,
     content_hash:      contentHash({ body: `${w.kind}\n${body}`, promptVersion }),
     dir_key:           w.kind === "run" ? (project ? "project/trajectories" : "user/notes") : undefined,
+    domain:            c.domain,
     embedding:         w.embedding,
     science: {
       claim_kind:    w.kind,
@@ -399,6 +403,7 @@ async function writeExperience(
     facets,
     content_hash:      contentHash({ body: `experience\n${body}`, promptVersion: args.promptVersion }),
     dir_key:           "user/experience",
+    domain:            e.domain,
     embedding,
     science: {
       validation_level: "anecdotal",
@@ -441,6 +446,7 @@ async function writePreference(
     description: truncate(c.statement, 200), body: c.statement,
     facets: normalizeFacets(c.conditions),
     content_hash: contentHash({ body: `${name}\n${c.statement}`, promptVersion: args.promptVersion }),
+    domain: c.domain,
     embedding,
   });
 }

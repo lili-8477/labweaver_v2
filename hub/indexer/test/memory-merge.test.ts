@@ -45,7 +45,7 @@ const down: MergeCheck = {
 };
 
 const write = (body: string, extra: Partial<Parameters<typeof writeUserMemory>[0]> = {}) =>
-  writeUserMemory({
+  writeUserMemory({ domain: "lab",
     pool, username: "alice", scope: "user", project_dir: null, type: "feedback",
     name: body, description: "d", body, merge, ...extra,
   });
@@ -105,7 +105,7 @@ describe("writeDistillation merge check", () => {
       sessionMeta: { username: "alice", project_dir: "-p", source_session_id: null },
       result: DistillationResult.parse({
         run: { subject: "s", statement: "summary of the session" },
-        experiences: [{ task: "qc thresholds", solution: "200 genes, 5% mt", applicability: ["pbmc"], failure_modes: ["neurons"] }],
+        experiences: [{ task: "qc thresholds", solution: "200 genes, 5% mt", domain: "lab", applicability: ["pbmc"], failure_modes: ["neurons"] }],
       }),
       promptVersion: 2,
       merge,

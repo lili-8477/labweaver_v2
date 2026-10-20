@@ -13,6 +13,7 @@ You turn what this project's reviews taught into **reusable experience**: practi
 2. Call `memory_dir` (server `labweaver-memory`) with `dir: "project/trajectories"` and `project_dir` = the absolute project directory with every `/` replaced by `-`. Read any entries you need with `memory_get`. Rejected-then-approved steps are the richest source.
 3. Write **0–3** experiences with `memory_write`:
    - `scope: "user"`, `dir: "user/experience"`, `type: "project"`
+   - `domain`: `"lab"` when the practice is about the science (samples, protocols, QC thresholds, analysis choices); `"technical"` when it is about making the code or tools work. The user, a life scientist, sees only lab experiences.
    - `name`: the practice as an imperative (≤80c), e.g. "Filter cells by mt% before doublet detection"
    - `description`: when it applies, one line
    - `body`: the practice, why (the evidence from this project, with numbers), and when it does not apply.

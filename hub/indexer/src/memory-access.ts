@@ -10,11 +10,13 @@
 
 import type { Pool, PoolClient } from "pg";
 import { ACCESS_ORDER, type AccessClass } from "./access-classes.js";
+import type { Domain } from "./memory-domain.js";
 
-/** Who is reading: their username and clearance. */
+/** Who is reading: their username and clearance, and the domain they read when it is one (the lab UI). */
 export interface Viewer {
   username:  string;
   clearance: AccessClass;
+  domain?:   Domain;
 }
 
 /** The viewer when no clearance is configured for them (MEMORY_CLEARANCE). */
@@ -25,10 +27,13 @@ const ORDER_SQL = `ARRAY[${ACCESS_ORDER.map((c) => `'${c}'`).join(",")}]`;
 /**
  * SQL condition: memory row `alias` is visible to the viewer whose username
  * and clearance are the query parameters `user` and `clearance` (e.g. "$1").
+ * With `domain`, a parameter holding the viewer's domain or NULL, the row
+ * must also be of that domain.
  */
-export function visibleSql(alias: string, user: string, clearance: string): string {
+export function visibleSql(alias: string, user: string, clearance: string, domain?: string): string {
   return `((${alias}.username = ${user} OR ${alias}.scope = 'org')
-    AND array_position(${ORDER_SQL}, ${alias}.access_class) <= array_position(${ORDER_SQL}, ${clearance}::text))`;
+    AND array_position(${ORDER_SQL}, ${alias}.access_class) <= array_position(${ORDER_SQL}, ${clearance}::text)${
+    domain ? `\n    AND (${domain}::text IS NULL OR ${alias}.domain = ${domain})` : ""})`;
 }
 
 export type Changed<Reason extends string> = { ok: true } | { ok: false; reason: Reason };

@@ -30,14 +30,14 @@ describe("distillation payload v2", () => {
   });
 
   it("an experience must name a boundary condition or a failure mode", () => {
-    const e = { task: "t", solution: "s", applicability: ["10x v3 data"] };
+    const e = { task: "t", solution: "s", domain: "lab", applicability: ["10x v3 data"] };
     expect(() => DistillationResult.parse({ run, experiences: [e] })).toThrow(/boundary condition or failure mode/);
     expect(() => DistillationResult.parse({ run, experiences: [{ ...e, failure_modes: ["fails on v2"] }] })).not.toThrow();
     expect(() => DistillationResult.parse({ run, experiences: [{ ...e, applicability: [], failure_modes: ["x"] }] })).toThrow();
   });
 
   it("experience.source must point at the run or an existing claim", () => {
-    const e = { task: "t", solution: "s", applicability: ["a"], failure_modes: ["f"] };
+    const e = { task: "t", solution: "s", domain: "lab", applicability: ["a"], failure_modes: ["f"] };
     const claim = { claim_kind: "result", subject: "s", statement: "x" };
     expect(() => DistillationResult.parse({ run, claims: [claim], experiences: [{ ...e, source: 0 }] })).not.toThrow();
     expect(() => DistillationResult.parse({ run, claims: [claim], experiences: [{ ...e, source: 1 }] })).toThrow();
@@ -46,7 +46,7 @@ describe("distillation payload v2", () => {
   it("caps claims at 5 and experiences at 3", () => {
     const claim = { claim_kind: "result", subject: "s", statement: "x" };
     expect(() => DistillationResult.parse({ run, claims: Array(6).fill(claim) })).toThrow();
-    const e = { task: "t", solution: "s", applicability: ["a"], failure_modes: ["f"] };
+    const e = { task: "t", solution: "s", domain: "lab", applicability: ["a"], failure_modes: ["f"] };
     expect(() => DistillationResult.parse({ run, experiences: Array(4).fill(e) })).toThrow();
   });
 });
