@@ -96,7 +96,7 @@ export async function buildBundle(a: BuildBundleArgs): Promise<ContextBundle> {
   const warnings: string[] = [];
   let lineage_error = false;
   try {
-    const edges = await lineageOf(a.pool, ids);
+    const edges = await lineageOf(a.pool, ids, { username: a.username, clearance: a.clearance ?? DEFAULT_CLEARANCE });
     const others = [...new Set([...edges.values()].flat().map((e) => e.other_id))];
     const otherDetails = await loadDetails(a.pool, others.filter((id) => !details.has(id)));
     for (const [k, v] of details) otherDetails.set(k, v);

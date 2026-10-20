@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from "pg";
 import { ACCESS_ORDER, type AccessClass } from "./access-classes.js";
 import { EDGE_RELS } from "./memory-contract.js";
 import { appendAudit } from "./memory-repo.js";
+import { visibleSql, type Viewer } from "./memory-access.js";
 
 export { ACCESS_ORDER, type AccessClass };
 
@@ -161,16 +162,21 @@ export interface LineageEdge {
 export async function lineageOf(
   pool: Pool,
   memory_ids: string[],
+  viewer: Viewer,
 ): Promise<Map<string, LineageEdge[]>> {
   const out = new Map<string, LineageEdge[]>();
   if (memory_ids.length === 0) return out;
+  // Only edges whose other end the viewer can see and that is not deleted.
   const r = await pool.query<{ id: string; rel: EdgeRel; dir: "out" | "in"; other_id: string; status: string }>(
-    `SELECT src_id AS id, rel, 'out' AS dir, dst_id AS other_id, status
-       FROM memory_edges WHERE src_id = ANY($1::uuid[]) AND status <> 'rejected'
-     UNION ALL
-     SELECT dst_id AS id, rel, 'in' AS dir, src_id AS other_id, status
-       FROM memory_edges WHERE dst_id = ANY($1::uuid[]) AND status <> 'rejected'`,
-    [memory_ids],
+    `SELECT e.id, e.rel, e.dir, e.other_id, e.status
+       FROM (SELECT src_id AS id, rel, 'out' AS dir, dst_id AS other_id, status
+               FROM memory_edges WHERE src_id = ANY($1::uuid[]) AND status <> 'rejected'
+             UNION ALL
+             SELECT dst_id AS id, rel, 'in' AS dir, src_id AS other_id, status
+               FROM memory_edges WHERE dst_id = ANY($1::uuid[]) AND status <> 'rejected') e
+       JOIN memories o ON o.memory_id = e.other_id
+      WHERE o.deleted_at IS NULL AND ${visibleSql("o", "$2", "$3")}`,
+    [memory_ids, viewer.username, viewer.clearance],
   );
   for (const row of r.rows) {
     const list = out.get(row.id) ?? [];

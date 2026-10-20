@@ -14,6 +14,7 @@ import {
   forgetMemory, getMemory, listDirs, listMemories, memoryTree, recordFeedback, restoreMemory,
   searchMemories, timelineMemories, updateMemory,
 } from "../src/memory-repo.js";
+import { lineageOf } from "../src/lineage-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 const DIM = 384;
@@ -96,6 +97,16 @@ describe("memory visibility", () => {
       (await listDirs({ pool, username: "alice", project_dir: null, clearance })).find((d) => d.dir_key === dir)!.entry_count;
     expect(await count("internal")).toBe(1);
     expect(await count("irb")).toBe(2);
+  });
+
+  it("shows lineage only to visible, live memories", async () => {
+    for (const other of ["bob-own", "org-internal", "org-irb", "alice-deleted"]) {
+      await pool.query(`INSERT INTO memory_edges (src_id, dst_id, rel, status, actor) VALUES ($1, $2, 'SUPPORTS', 'accepted', 'alice')`, [id["alice-own"], id[other]]);
+    }
+    const linked = async (clearance: AccessClass) =>
+      keysOf(((await lineageOf(pool, [id["alice-own"]!], { username: "alice", clearance })).get(id["alice-own"]!) ?? []).map((e) => e.other_id));
+    expect(await linked("internal")).toEqual(["org-internal"]);
+    expect(await linked("irb")).toEqual(["org-internal", "org-irb"]);
   });
 
   it("records feedback only on visible memories", async () => {
