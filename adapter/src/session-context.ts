@@ -4,7 +4,7 @@
 // appended after the user's text (slash commands and mode routing stay
 // intact) and stripped again when history is shown.
 
-import type { ChatItem } from "./chat-items.js";
+import type { ChatItem } from "./rpc-contract.js";
 
 const TAG = "session-context";
 const MAX_TURNS = 12;

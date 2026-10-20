@@ -16,6 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { workspacePath } from "./workspace-path.js";
 import type { KernelBridge } from "./kernel.js";
+import type { H5adIntrospection, PlotKind } from "./rpc-contract.js";
 
 export type H5adKernelFactory = (sessionId: string) => KernelBridge;
 
@@ -261,17 +262,17 @@ export class H5adService {
     }
   }
 
-  async introspect(relPath: string): Promise<Record<string, unknown>> {
+  async introspect(relPath: string): Promise<H5adIntrospection> {
     const abs = this.resolve(relPath);
     const code = `h5ad_introspect(${JSON.stringify(abs)})`;
-    return this.runCall(code);
+    return (await this.runCall(code)) as unknown as H5adIntrospection;
   }
 
   async plot(
     relPath: string,
-    kind: "qc" | "embedding" | "spatial",
+    kind: PlotKind,
     params: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{ png: string }> {
     const abs = this.resolve(relPath);
     let code: string;
     if (kind === "qc") {
@@ -291,7 +292,7 @@ export class H5adService {
     } else {
       throw new Error(`unknown plot kind: ${kind}`);
     }
-    return this.runCall(code);
+    return (await this.runCall(code)) as unknown as { png: string };
   }
 
   shutdown(): void {

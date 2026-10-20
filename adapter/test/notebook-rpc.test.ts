@@ -40,13 +40,10 @@ describe("NotebookManager", () => {
   });
 
   it("create_notebook writes a blank Python notebook", async () => {
-    const res = (await nm.createNotebook("new.ipynb", "python")) as {
-      success: boolean;
-      notebook: { metadata: { kernelspec: { name: string } }; cells: unknown[] };
-    };
+    const res = await nm.createNotebook("new.ipynb", "python");
     expect(res.success).toBe(true);
     expect(res.notebook.cells).toEqual([]);
-    expect(res.notebook.metadata.kernelspec.name).toBe("python3");
+    expect(res.notebook.metadata.kernelspec).toMatchObject({ name: "python3" });
     const back = await fs.readFile(path.join(root, "new.ipynb"), "utf8");
     expect(JSON.parse(back).nbformat).toBe(4);
   });

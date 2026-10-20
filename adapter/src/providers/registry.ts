@@ -7,6 +7,8 @@
 //   catalog (ollama-discovery.ts), else OLLAMA_CLOUD_MODELS, else the static
 //   list below.
 
+import type { ModelOption } from "../rpc-contract.js";
+
 export interface ModelSpec {
   id: string;
   label: string;
@@ -22,13 +24,6 @@ export interface ProviderSpec {
   /** Present only for routes the adapter must declare to DSH itself. */
   openaiCompatible?: { baseURL: string };
   models: ModelSpec[];
-}
-
-export interface ModelOption {
-  ref: string;
-  label: string;
-  provider: string;
-  available: boolean;
 }
 
 const OLLAMA_DEFAULT_MODELS = ["gpt-oss:120b", "deepseek-v4.1-flash", "kimi-k2.6", "glm-5.3", "minimax-m2.7"];

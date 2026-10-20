@@ -1,4 +1,1 @@
-export interface SkillSummary {
-  name:        string;
-  description: string;
-}
+export type { SkillSummary } from '@rpc-contract'

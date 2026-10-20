@@ -6,7 +6,7 @@ import { natsService } from './nats'
 import type { MemoryInput, MemoryResult, UiOp } from '@memory-contract'
 
 function call<O extends UiOp>(op: O, params: MemoryInput<O>): Promise<MemoryResult<O>> {
-  return natsService.invoke(op, params as Record<string, unknown>) as Promise<MemoryResult<O>>
+  return natsService.invoke(op, params) as Promise<MemoryResult<O>>
 }
 
 export const memoryService = {

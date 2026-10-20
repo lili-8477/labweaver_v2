@@ -9,35 +9,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { parseLines, readTranscript, transcriptPath, type TranscriptEntry } from "./transcript/read.js";
-
-export interface TokenTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export interface SubagentRun {
-  sessionId: string;
-  description: string | null;
-  /** "stopped": no result and the chat's turn is no longer running. */
-  status: "running" | "done" | "failed" | "stopped";
-  model: string | null;
-  startedAt: string;
-  endedAt: string;
-  tokens: TokenTotals;
-  toolCalls: number;
-  /** First line of the run's last reply. */
-  result: string | null;
-}
-
-export interface ChatStats {
-  /** The chat's own turns, every session in its continuation chain. */
-  main: TokenTotals;
-  turns: number;
-  lastTurn: TokenTotals | null;
-  subagents: SubagentRun[];
-}
+import type { SubagentRun, TokenTotals, TranscriptStats } from "./rpc-contract.js";
 
 type Entry = TranscriptEntry;
 
@@ -73,7 +45,7 @@ export async function readChatStats(
   cwd: string,
   sessionId: string,
   running: boolean,
-): Promise<ChatStats> {
+): Promise<TranscriptStats> {
   const dir = path.dirname(transcriptPath(home, cwd, sessionId));
   const main = zero();
   let turns = 0;

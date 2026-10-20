@@ -8,11 +8,7 @@ import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extractDescription } from "./frontmatter.js";
 import { labweaverPath } from "./labweaver-dir.js";
-
-export interface SkillSummary {
-  name:        string;
-  description: string;       // empty string when frontmatter has no description
-}
+import type { SkillSummary } from "./rpc-contract.js";
 
 export async function listUserSkills(home: string): Promise<SkillSummary[]> {
   const skillsDir = labweaverPath(home, "skills");

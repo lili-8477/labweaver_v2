@@ -38,7 +38,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function loadChats() {
     try {
-      const result = await natsService.invoke('list_chats') as { success: boolean; chats: ChatInfo[] }
+      const result = await natsService.invoke('list_chats')
       if (result?.success) {
         chats.value = result.chats.sort((a, b) => {
           const da = a.last_activity_date || ''
@@ -53,7 +53,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function loadProjects() {
     try {
-      const result = await natsService.invoke('list_projects') as { success: boolean; projects: ProjectInfo[] }
+      const result = await natsService.invoke('list_projects')
       if (result?.success) projects.value = result.projects
     } catch (e) {
       console.warn('Failed to load projects:', e)
@@ -62,7 +62,7 @@ export const useChatStore = defineStore('chat', () => {
 
   /** Create a project folder under local_projects/; returns its dir. */
   async function createProject(name: string): Promise<string | null> {
-    const result = await natsService.invoke('create_project', { name }) as { success: boolean; project: ProjectInfo }
+    const result = await natsService.invoke('create_project', { name })
     if (!result?.success) return null
     await loadProjects()
     return result.project.dir
@@ -79,7 +79,7 @@ export const useChatStore = defineStore('chat', () => {
       chat_name: name || undefined,
       parent_chat_id: opts.parentChatId,
       project_dir: opts.projectDir,
-    }) as { success: boolean; chat_id: string }
+    })
     if (result?.success) {
       await loadChats()
       return result.chat_id
@@ -97,7 +97,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadItems(chatId: string) {
-    const result = await natsService.invoke('get_chat_items', { chat_id: chatId }) as { success: boolean; items: ChatItem[] }
+    const result = await natsService.invoke('get_chat_items', { chat_id: chatId })
     if (result?.success && activeChatId.value === chatId) items.value = result.items || []
   }
 
@@ -183,7 +183,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeChatId.value) return
     const chatId = activeChatId.value
     try {
-      const res = await natsService.invoke('stop_chat', { chat_id: chatId }) as { stopped?: boolean }
+      const res = await natsService.invoke('stop_chat', { chat_id: chatId })
       if (res?.stopped) return // the turn's chat_finished does the rest
     } catch { /* ignore */ }
     await loadItems(chatId)
@@ -199,7 +199,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function refreshAvailableModes() {
     try {
-      const res = await natsService.invoke('get_available_modes', {}) as { modes?: ChatMode[] }
+      const res = await natsService.invoke('get_available_modes')
       if (res?.modes) availableModes.value = res.modes
     } catch { /* ignore — keep last known value */ }
   }
@@ -227,15 +227,10 @@ export const useChatStore = defineStore('chat', () => {
         // Sent as a hint for chats with no DB binding yet — the backend only
         // uses it as the last-resort lookup after chat_id paths miss.
         project_name: activeChat.value?.name,
-      }) as {
-        success?: boolean; exists?: boolean;
-        progress?: HarnessProgress | null;
-        project_name?: string | null;
-        project_dir?: string | null;
-      }
+      })
       if (res?.exists) {
-        harnessProgress.value = res.progress ?? null
-        harnessProject.value = res.project_name ?? null
+        harnessProgress.value = res.progress
+        harnessProject.value = res.project_name
       } else {
         harnessProgress.value = null
         harnessProject.value = null

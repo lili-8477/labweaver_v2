@@ -237,10 +237,7 @@ async function toggleDir(path: string) {
     loadingDirs.value.add(path)
     loadingDirs.value = new Set(loadingDirs.value)
     try {
-      const result = await natsService.proxyToolset('list_files', {
-        sub_dir: path,
-        recursive: false,
-      }, 'file_manager') as { success: boolean; files: Array<{ name: string; type: string; size?: number }> }
+      const result = await natsService.callToolset('file_manager', 'list_files', { sub_dir: path })
 
       if (result?.success && Array.isArray(result.files)) {
         const children: FileEntry[] = result.files

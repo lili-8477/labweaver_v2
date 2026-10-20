@@ -106,7 +106,7 @@ watch(() => chat.activeChat && [chat.activeChat.id, chat.activeChat.project_dir]
   if (!active) return
   const next = new Set(folded.value)
   next.delete(groupKey(active.project_dir || NONE))
-  for (let id = active.parent_chat_id; id; id = chat.chats.find(c => c.id === id)?.parent_chat_id) {
+  for (let id = active.parent_chat_id; id; id = chat.chats.find(c => c.id === id)?.parent_chat_id ?? null) {
     next.delete(id)
   }
   if (next.size !== folded.value.size) folded.value = next

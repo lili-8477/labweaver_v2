@@ -2,26 +2,15 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { natsService } from '@/services/nats'
 import type {
-  Notebook, NotebookCell, NotebookInfo,
-  CellOutput, VariableInfo, NotebookStreamMessage,
+  Notebook,
+  CellOutput, CellType, VariableInfo, NotebookStreamMessage,
   KernelStatus, ClipboardCell,
 } from '@/types'
 
-type CellType = 'code' | 'markdown' | 'raw'
-
 /**
- * Notebook store. Backend contract (see LabWeaver/Pantheon
- * `pantheon.toolsets.notebook.IntegratedNotebookToolSet`):
- *
- *   read_notebook(notebook_path, validate)
- *   create_notebook(notebook_path, language)
- *   add_cell(notebook_path, cell_type, content, cell_id, position, execute)
- *   update_cell(notebook_path, cell_id, content, old_content, execute)
- *   delete_cell(notebook_path, cell_id)
- *   move_cell(notebook_path, cell_id, below_cell_id)
- *   execute_cell(notebook_path, cell_id)
- *   manage_kernel(notebook_path, action, kernel_spec?)
- *     action ∈ restart | interrupt | status | variables | shutdown | delete | switch
+ * Notebook store. The adapter's notebook toolset (NotebookMethods in the RPC
+ * contract, adapter/src/rpc-contract.ts) reads and edits the .ipynb and runs
+ * cells on a per-notebook kernel.
  *
  * Responses include `kernel_session_id` (once a kernel context has been
  * created). The frontend stores this ID and subscribes to the matching
@@ -108,17 +97,11 @@ export const useNotebookStore = defineStore('notebook', () => {
       kernelStatus.value = 'unknown'
     }
     try {
-      const result = (await natsService.proxyToolset(
-        'read_notebook',
-        { notebook_path: path, validate: false },
-        'notebook',
-      )) as NotebookInfo | Record<string, unknown>
-
-      const nb = (result as NotebookInfo)?.notebook || (result as Record<string, unknown>)
-      if (nb && (nb as Notebook).cells) {
-        notebook.value = nb as Notebook
+      const result = await natsService.callToolset('notebook', 'read_notebook', { notebook_path: path })
+      if (result?.notebook?.cells) {
+        notebook.value = result.notebook
         filePath.value = path
-        version.value = (result as NotebookInfo)?.version || 0
+        version.value = result.version
         selectedCellId.value = notebook.value.cells[0]?.id ?? null
 
         // Ask the backend for an active kernel session (if any) so we can
@@ -134,16 +117,10 @@ export const useNotebookStore = defineStore('notebook', () => {
     }
   }
 
-  async function createNotebook(path: string, language = 'python') {
-    const result = (await natsService.proxyToolset(
-      'create_notebook',
-      { notebook_path: path, language },
-      'notebook',
-    )) as Record<string, unknown>
+  async function createNotebook(path: string, language: 'python' | 'r' = 'python') {
+    const result = await natsService.callToolset('notebook', 'create_notebook', { notebook_path: path, language })
     captureKernelSessionId(result)
-    if (result?.success !== false) {
-      await openNotebook(path)
-    }
+    await openNotebook(path)
     return result
   }
 
@@ -201,24 +178,16 @@ export const useNotebookStore = defineStore('notebook', () => {
     if (!filePath.value) return
     const position = resolvePosition(positionArg)
 
-    const result = (await natsService.proxyToolset(
-      'add_cell',
-      {
-        notebook_path: filePath.value,
-        cell_type: cellType,
-        content: source,
-        position,
-        execute: false,
-      },
-      'notebook',
-    )) as { success: boolean; cell_id: string; kernel_session_id?: string }
+    const result = await natsService.callToolset('notebook', 'add_cell', {
+      notebook_path: filePath.value,
+      cell_type: cellType,
+      content: source,
+      position,
+    })
 
     captureKernelSessionId(result)
-
-    if (result?.success !== false) {
-      await refreshNotebook()
-      if (result?.cell_id) selectedCellId.value = result.cell_id
-    }
+    await refreshNotebook()
+    selectedCellId.value = result.cell_id
     return result
   }
 
@@ -239,16 +208,11 @@ export const useNotebookStore = defineStore('notebook', () => {
     if (cell) cell.source = source
     saving.value = true
     try {
-      const result = (await natsService.proxyToolset(
-        'update_cell',
-        {
-          notebook_path: filePath.value,
-          cell_id: cellId,
-          content: source,
-          execute: false,
-        },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'update_cell', {
+        notebook_path: filePath.value,
+        cell_id: cellId,
+        content: source,
+      })
       captureKernelSessionId(result)
     } finally {
       saving.value = false
@@ -258,11 +222,7 @@ export const useNotebookStore = defineStore('notebook', () => {
   async function deleteCell(cellId: string) {
     if (!filePath.value) return
     const idx = cells.value.findIndex((c) => c.id === cellId)
-    const result = (await natsService.proxyToolset(
-      'delete_cell',
-      { notebook_path: filePath.value, cell_id: cellId },
-      'notebook',
-    )) as Record<string, unknown>
+    const result = await natsService.callToolset('notebook', 'delete_cell', { notebook_path: filePath.value, cell_id: cellId })
     captureKernelSessionId(result)
     await refreshNotebook()
     if (cells.value.length) {
@@ -293,11 +253,9 @@ export const useNotebookStore = defineStore('notebook', () => {
     }
 
     try {
-      const result = (await natsService.proxyToolset(
-        'move_cell',
-        { notebook_path: filePath.value, cell_id: cellId, below_cell_id: belowCellId },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'move_cell', {
+        notebook_path: filePath.value, cell_id: cellId, below_cell_id: belowCellId,
+      })
       captureKernelSessionId(result)
       await refreshNotebook()
     } catch (e) {
@@ -359,25 +317,20 @@ export const useNotebookStore = defineStore('notebook', () => {
     }
 
     try {
-      const result = (await natsService.proxyToolset(
-        'execute_cell',
-        { notebook_path: filePath.value, cell_id: cellId },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'execute_cell', { notebook_path: filePath.value, cell_id: cellId })
 
       // Capture kernel_session_id so IOPub streaming is wired for subsequent runs.
       captureKernelSessionId(result)
 
       if (result && result.success === false) {
-        lastExecutionError.value = (result.error as string) || 'Cell execution failed'
+        lastExecutionError.value = result.error || 'Cell execution failed'
       }
 
       if (notebook.value) {
         const target = notebook.value.cells.find((c) => c.id === cellId)
+        // Outputs arrive on the IOPub stream; the reply carries the count.
         if (target && result) {
-          target.outputs = (result.outputs as CellOutput[]) || target.outputs
-          target.execution_count =
-            (result.execution_count as number) || target.execution_count
+          target.execution_count = result.execution_count || target.execution_count
         }
       }
     } catch (e) {
@@ -430,11 +383,7 @@ export const useNotebookStore = defineStore('notebook', () => {
   async function interruptKernel() {
     if (!filePath.value) return
     try {
-      const result = (await natsService.proxyToolset(
-        'manage_kernel',
-        { notebook_path: filePath.value, action: 'interrupt' },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'manage_kernel', { notebook_path: filePath.value, action: 'interrupt' })
       captureKernelSessionId(result)
     } catch (e) {
       console.warn('interrupt failed:', e)
@@ -445,11 +394,7 @@ export const useNotebookStore = defineStore('notebook', () => {
     if (!filePath.value) return
     try {
       kernelStatus.value = 'starting'
-      const result = (await natsService.proxyToolset(
-        'manage_kernel',
-        { notebook_path: filePath.value, action: 'restart' },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'manage_kernel', { notebook_path: filePath.value, action: 'restart' })
       captureKernelSessionId(result)
       variables.value = {}
       kernelStatus.value = 'idle'
@@ -462,13 +407,9 @@ export const useNotebookStore = defineStore('notebook', () => {
   async function refreshKernelStatus() {
     if (!filePath.value) return
     try {
-      const result = (await natsService.proxyToolset(
-        'manage_kernel',
-        { notebook_path: filePath.value, action: 'status' },
-        'notebook',
-      )) as Record<string, unknown>
+      const result = await natsService.callToolset('notebook', 'manage_kernel', { notebook_path: filePath.value, action: 'status' })
       captureKernelSessionId(result)
-      const status = result?.kernel_status as string | undefined
+      const status = result?.kernel_status
       if (status) kernelStatus.value = status as KernelStatus
     } catch {
       // No active kernel yet — will be created lazily on first execute_cell.
@@ -548,39 +489,14 @@ export const useNotebookStore = defineStore('notebook', () => {
     const path = filePath.value
     if (!path) return
     try {
-      const result = (await natsService.proxyToolset(
-        'manage_kernel',
-        { notebook_path: path, action: 'variables' },
-        'notebook',
-      )) as {
-        success: boolean
-        variables?: Record<
-          string,
-          {
-            name?: string
-            type?: string
-            // labweaver adapter shape
-            repr?: string
-            shape?: string | null
-            // pantheon backend shape
-            size?: string
-            value?: string
-          }
-        >
-      }
+      const result = await natsService.callToolset('notebook', 'manage_kernel', { notebook_path: path, action: 'variables' })
       // Drop late responses for a notebook the user has already switched away from.
       if (filePath.value !== path) return
       captureKernelSessionId(result)
       if (result?.success !== false && result?.variables) {
         const out: Record<string, VariableInfo> = {}
-        for (const [key, info] of Object.entries(result.variables)) {
-          const name = info.name || key
-          out[name] = {
-            name,
-            type: info.type ?? '',
-            size: info.size ?? info.shape ?? undefined,
-            value: info.value ?? info.repr,
-          }
+        for (const [name, info] of Object.entries(result.variables)) {
+          out[name] = { name, type: info.type, size: info.shape ?? undefined, value: info.repr }
         }
         variables.value = out
       }

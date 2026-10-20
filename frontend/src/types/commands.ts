@@ -1,4 +1,1 @@
-export interface CommandSummary {
-  name:        string;
-  description: string;
-}
+export type { CommandSummary } from '@rpc-contract'

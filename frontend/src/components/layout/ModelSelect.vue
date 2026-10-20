@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { natsService } from '@/services/nats'
+import type { ModelOption } from '@rpc-contract'
 
 // Options come from the adapter's provider registry ("provider/model" refs).
-interface ModelOption { ref: string; label: string; provider: string; available: boolean }
 
 const models = ref<ModelOption[]>([])
 const current = ref<string>('')
@@ -13,8 +13,8 @@ const error = ref<string>('')
 async function loadCurrent() {
   try {
     const [list, cur] = await Promise.all([
-      natsService.invoke('list_models') as Promise<{ success: boolean; models: ModelOption[] }>,
-      natsService.invoke('get_model') as Promise<{ success: boolean; model: string }>,
+      natsService.invoke('list_models'),
+      natsService.invoke('get_model'),
     ])
     if (list?.success) models.value = list.models
     if (cur?.success) current.value = cur.model
@@ -28,7 +28,7 @@ async function onChange(e: Event) {
   saving.value = true
   error.value = ''
   try {
-    const res = await natsService.invoke('set_model', { model }) as { success: boolean; model: string }
+    const res = await natsService.invoke('set_model', { model })
     if (res?.success) current.value = res.model
   } catch (err) {
     error.value = (err as Error).message

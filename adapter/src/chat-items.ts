@@ -9,22 +9,7 @@
 
 import { stripSessionContext } from "./session-context.js";
 import type { TranscriptEntry } from "./transcript/read.js";
-
-export type ChatItem =
-  | { kind: "user"; id: string; text: string }
-  | { kind: "text"; id: string; text: string }
-  | {
-      kind: "tool";
-      id: string;
-      name: string;
-      input: unknown;
-      /** Absent until the result arrives; capped at MAX_TOOL_OUTPUT_CHARS. */
-      output?: string;
-      isError?: boolean;
-      /** ISO timestamps of the call and of its result. */
-      startedAt: string;
-      endedAt?: string;
-    };
+import type { ChatItem } from "./rpc-contract.js";
 
 /** Tool output kept per item: enough to read in the timeline, small enough
  *  that a long chat's items fit one NATS reply. The transcript keeps it all. */

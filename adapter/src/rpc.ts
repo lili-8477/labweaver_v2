@@ -1,5 +1,6 @@
-// RPC dispatch: maps frontend method names to handlers. The frontend contract
-// is pinned — see pantheon-frontend/src/stores/chat.ts for the list of calls.
+// RPC dispatch: one handler per method of the RPC contract (rpc-contract.ts),
+// which types each handler's params and result; the memory_* ops are forwarded
+// through the memory contract (memory-rpc.ts).
 
 import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -7,11 +8,11 @@ import * as path from "node:path";
 import { labweaverPath } from "./labweaver-dir.js";
 import { ChatsRepo } from "./chats-repo.js";
 import { ChatTurns } from "./chat-turn.js";
-import { CHAT_MODES, MODE_COMMANDS, type ChatMode } from "./modes.js";
-import { ChpcBridge, type OpenRequest } from "./chpc-bridge-rpc.js";
+import { CHAT_MODES, MODE_COMMANDS } from "./modes.js";
+import { ChpcBridge } from "./chpc-bridge-rpc.js";
 import type { FleetMonitor } from "./fleet-status.js";
 import { FileManager } from "./fs-rpc.js";
-import { projectItems, type ChatItem } from "./chat-items.js";
+import { projectItems } from "./chat-items.js";
 import { readTranscript } from "./transcript/read.js";
 import { createProject, listProjects } from "./projects.js";
 import { readChatStats } from "./chat-stats.js";
@@ -35,6 +36,12 @@ import {
 import { readTeamBoard } from "./dsh/team-board.js";
 import type { StreamEvent } from "./types.js";
 import { parseProgress } from "../dsh-plugins/progress.js";
+import type { UiOp } from "../../hub/indexer/src/memory-contract.js";
+import type { ChatItem, ChatMode, OpenRequest, RpcMethod, RpcParams, RpcResult } from "./rpc-contract.js";
+
+/** The methods the router answers itself; the memory_* UI ops are forwarded. */
+type AdapterMethod = Exclude<RpcMethod, UiOp>;
+type Handlers = { [M in AdapterMethod]: (params: RpcParams<M>) => Promise<RpcResult<M>> };
 
 export interface RpcDeps {
   serviceId: string;
@@ -211,406 +218,390 @@ export class RpcRouter {
       if (!this.deps.memory) throw new Error("memory api not configured");
       return this.deps.memory.call(method, params);
     }
-    switch (method) {
-      case "get_endpoint":
-        return { success: true, service_id: this.deps.serviceId };
+    if (!Object.hasOwn(this.handlers, method)) throw new Error(`unknown method: ${method}`);
+    const handler = this.handlers[method as AdapterMethod] as (p: unknown) => Promise<unknown>;
+    return handler(params);
+  }
 
-      case "get_model":
-        return { success: true, model: await this.currentModel() };
+  /** One handler per method of the RPC contract (rpc-contract.ts); the memory_* ops go through MemoryForwarder. */
+  private readonly handlers: Handlers = {
+    get_endpoint: async () => {
+      return { success: true, service_id: this.deps.serviceId };
+    },
 
-      case "list_models":
-        return { success: true, models: listModelOptions(this.deps.providers) };
+    get_model: async () => {
+      return { success: true, model: await this.currentModel() };
+    },
 
-      case "set_model": {
-        const model = params.model as string;
-        if (!model || typeof model !== "string") throw new Error("model required");
-        if (!findModel(this.deps.providers, model)) throw new Error(`unknown model: ${model}`);
-        const cur = await this.readSettings();
-        cur.model = model;
-        await this.writeSettings(cur);
-        return { success: true, model };
-      }
+    list_models: async () => {
+      return { success: true, models: listModelOptions(this.deps.providers) };
+    },
 
-      case "list_chats": {
-        const chats = (await this.chats.list()).map((c) => {
-          const turn = this.turns.activeTurn(c.id);
-          return { ...c, running: turn !== null, auto_running: turn?.auto ?? false };
-        });
-        return { success: true, chats };
-      }
+    set_model: async (params) => {
+      const model = params.model;
+      if (!model || typeof model !== "string") throw new Error("model required");
+      if (!findModel(this.deps.providers, model)) throw new Error(`unknown model: ${model}`);
+      const cur = await this.readSettings();
+      cur.model = model;
+      await this.writeSettings(cur);
+      return { success: true, model };
+    },
 
-      case "create_chat": {
-        const name = (params.chat_name as string | undefined) ?? "New chat";
-        const parentId = (params.parent_chat_id as string | undefined)?.trim();
-        const chatId = crypto.randomUUID();
-        if (parentId) {
-          if (!(await this.chats.createChild(chatId, name, parentId))) {
-            throw new Error(`parent chat not found: ${parentId}`);
-          }
-        } else {
-          await this.chats.create(chatId, name, this.projectDirParam(params.project_dir));
+    list_chats: async () => {
+      const chats = (await this.chats.list()).map((c) => {
+        const turn = this.turns.activeTurn(c.id);
+        return { ...c, running: turn !== null, auto_running: turn?.auto ?? false };
+      });
+      return { success: true, chats };
+    },
+
+    create_chat: async (params) => {
+      const name = params.chat_name ?? "New chat";
+      const parentId = params.parent_chat_id?.trim();
+      const chatId = crypto.randomUUID();
+      if (parentId) {
+        if (!(await this.chats.createChild(chatId, name, parentId))) {
+          throw new Error(`parent chat not found: ${parentId}`);
         }
-        return { success: true, chat_id: chatId };
+      } else {
+        await this.chats.create(chatId, name, this.projectDirParam(params.project_dir));
       }
+      return { success: true, chat_id: chatId };
+    },
 
-      case "list_projects":
-        return { success: true, projects: await listProjects(this.deps.workspaceRoot) };
+    list_projects: async () => {
+      return { success: true, projects: await listProjects(this.deps.workspaceRoot) };
+    },
 
-      case "create_project": {
-        const name = (params.name as string | undefined)?.trim();
-        if (!name) throw new Error("name required");
-        return { success: true, project: await createProject(this.deps.workspaceRoot, name) };
+    create_project: async (params) => {
+      const name = (params.name as string | undefined)?.trim();
+      if (!name) throw new Error("name required");
+      return { success: true, project: await createProject(this.deps.workspaceRoot, name) };
+    },
+
+    delete_chat: async (params) => {
+      const chatId = params.chat_id;
+      this.turns.stop(chatId);
+      await this.chats.delete(chatId);
+      return { success: true };
+    },
+
+    update_chat_name: async (params) => {
+      const chatId = params.chat_id;
+      const name = params.chat_name;
+      await this.chats.updateName(chatId, name);
+      return { success: true };
+    },
+
+    get_chat_items: async (params) => {
+      const chatId = params.chat_id;
+      const chat = await this.chats.read(chatId);
+      // Use the real engine session UUID if we have one, else fall back to chat_id.
+      const sessionUuid = chat?.session_id ?? chatId;
+      const { entries } = await readTranscript(this.deps.home, this.deps.defaultProjectCwd, sessionUuid);
+      return { success: true, items: projectItems(entries) };
+    },
+
+    get_chat_stats: async (params) => {
+      const chatId = params.chat_id;
+      const chat = await this.chats.read(chatId);
+      const sessionId = chat?.session_id ?? chatId;
+      const stats = await readChatStats(
+        this.deps.home,
+        this.deps.defaultProjectCwd,
+        sessionId,
+        this.turns.activeTurn(chatId) !== null,
+      );
+      const team = await readTeamBoard(this.deps.home, sessionId);
+      return { success: true, ...stats, team };
+    },
+
+    get_available_modes: async () => {
+      // A mode is available when its command is on disk (plain chat always is).
+      const modes: ChatMode[] = [];
+      for (const mode of CHAT_MODES) {
+        const cmd = MODE_COMMANDS[mode];
+        const file = cmd && labweaverPath(this.deps.home, "commands", `${cmd}.md`);
+        if (!file || await fs.stat(file).then(() => true, () => false)) modes.push(mode);
       }
+      return { success: true, modes };
+    },
 
-      case "delete_chat": {
-        const chatId = params.chat_id as string;
-        this.turns.stop(chatId);
-        await this.chats.delete(chatId);
-        return { success: true };
-      }
+    set_chat_mode: async (params) => {
+      const chatId = params.chat_id?.trim();
+      const mode = params.mode;
+      if (!chatId) throw new Error("chat_id required");
+      if (!CHAT_MODES.includes(mode)) throw new Error(`mode must be one of ${CHAT_MODES.join(", ")}`);
+      await this.chats.setMode(chatId, mode);
+      return { success: true, mode };
+    },
 
-      case "update_chat_name": {
-        const chatId = params.chat_id as string;
-        const name = params.chat_name as string;
-        await this.chats.updateName(chatId, name);
-        return { success: true };
-      }
+    get_harness_progress: async (params) => {
+      // Resolution order — first hit wins, no cross-session fallback:
+      //   1. chat_id → chats.project_dir            (explicit, persisted binding)
+      //   2. chat_id → local_projects/<chat.name>/  (legacy: drop-created
+      //      chats from before the project_dir column existed still have
+      //      name === dir, so we read by name. If found, persist as
+      //      project_dir so the next call hits path #1.)
+      //   3. chat_id → scan message history for local_projects/<slug>/
+      //      mentions. Catches typed-prompt chats whose name doesn't
+      //      match the bootstrap-picked slug (e.g. chat "Run PBMC3k…"
+      //      bound implicitly to local_projects/pbmc-smoke/). Persists
+      //      the inferred binding too.
+      //   4. project_name param → local_projects/<name>/  (manual override
+      //      from the UI, e.g. before a chat is selected).
+      //
+      // We deliberately removed the old "most-recently-modified within 6h"
+      // global fallback. It let chat A see chat B's plan whenever B's run
+      // was the most recent activity in the workspace — the exact
+      // cross-session leak the user wanted gone.
+      const projectsRoot = path.join(this.deps.workspaceRoot, "local_projects");
 
-      case "get_chat_items": {
-        const chatId = params.chat_id as string;
-        const chat = await this.chats.read(chatId);
-        // Use the real engine session UUID if we have one, else fall back to chat_id.
-        const sessionUuid = chat?.session_id ?? chatId;
-        const { entries } = await readTranscript(this.deps.home, this.deps.defaultProjectCwd, sessionUuid);
-        return { success: true, items: projectItems(entries) };
-      }
+      const tryPath = async (p: string): Promise<string | null> => {
+        try { return await fs.readFile(p, "utf8"); }
+        catch { return null; }
+      };
 
-      case "get_chat_stats": {
-        const chatId = params.chat_id as string;
-        const chat = await this.chats.read(chatId);
-        const sessionId = chat?.session_id ?? chatId;
-        const stats = await readChatStats(
-          this.deps.home,
-          this.deps.defaultProjectCwd,
-          sessionId,
-          this.turns.activeTurn(chatId) !== null,
-        );
-        const team = await readTeamBoard(this.deps.home, sessionId);
-        return { success: true, ...stats, team };
-      }
+      // A project binding follows the write rule (workspace-path.ts):
+      // no traversal, no harness or secret dirs.
+      const projectAbs = (rel: string): string | null => {
+        try { return workspacePath(this.deps.workspaceRoot, rel, "write"); }
+        catch { return null; }
+      };
 
-      case "get_available_modes": {
-        // A mode is available when its command is on disk (plain chat always is).
-        const modes: ChatMode[] = [];
-        for (const mode of CHAT_MODES) {
-          const cmd = MODE_COMMANDS[mode];
-          const file = cmd && labweaverPath(this.deps.home, "commands", `${cmd}.md`);
-          if (!file || await fs.stat(file).then(() => true, () => false)) modes.push(mode);
-        }
-        return { success: true, modes };
-      }
+      const chatIdParam = params.chat_id?.trim();
+      const projectNameParam = params.project_name?.trim();
 
-      case "set_chat_mode": {
-        const chatId = (params.chat_id as string)?.trim();
-        const mode = params.mode as ChatMode;
-        if (!chatId) throw new Error("chat_id required");
-        if (!CHAT_MODES.includes(mode)) throw new Error(`mode must be one of ${CHAT_MODES.join(", ")}`);
-        await this.chats.setMode(chatId, mode);
-        return { success: true, mode };
-      }
+      let raw: string | null = null;
+      let matchedDir: string | null = null;     // workspace-relative
+      let matchedDisplay: string | null = null; // last path segment for the UI
 
-      case "get_harness_progress": {
-        // Resolution order — first hit wins, no cross-session fallback:
-        //   1. chat_id → chats.project_dir            (explicit, persisted binding)
-        //   2. chat_id → local_projects/<chat.name>/  (legacy: drop-created
-        //      chats from before the project_dir column existed still have
-        //      name === dir, so we read by name. If found, persist as
-        //      project_dir so the next call hits path #1.)
-        //   3. chat_id → scan message history for local_projects/<slug>/
-        //      mentions. Catches typed-prompt chats whose name doesn't
-        //      match the bootstrap-picked slug (e.g. chat "Run PBMC3k…"
-        //      bound implicitly to local_projects/pbmc-smoke/). Persists
-        //      the inferred binding too.
-        //   4. project_name param → local_projects/<name>/  (manual override
-        //      from the UI, e.g. before a chat is selected).
-        //
-        // We deliberately removed the old "most-recently-modified within 6h"
-        // global fallback. It let chat A see chat B's plan whenever B's run
-        // was the most recent activity in the workspace — the exact
-        // cross-session leak the user wanted gone.
-        const projectsRoot = path.join(this.deps.workspaceRoot, "local_projects");
-
-        const tryPath = async (p: string): Promise<string | null> => {
-          try { return await fs.readFile(p, "utf8"); }
-          catch { return null; }
-        };
-
-        // A project binding follows the write rule (workspace-path.ts):
-        // no traversal, no harness or secret dirs.
-        const projectAbs = (rel: string): string | null => {
-          try { return workspacePath(this.deps.workspaceRoot, rel, "write"); }
-          catch { return null; }
-        };
-
-        const chatIdParam = (params.chat_id as string | undefined)?.trim();
-        const projectNameParam = (params.project_name as string | undefined)?.trim();
-
-        let raw: string | null = null;
-        let matchedDir: string | null = null;     // workspace-relative
-        let matchedDisplay: string | null = null; // last path segment for the UI
-
-        // Path #1: explicit binding.
-        let chatRow = chatIdParam ? await this.chats.read(chatIdParam) : null;
-        if (chatRow?.project_dir) {
-          const abs = projectAbs(chatRow.project_dir);
-          if (abs) {
-            raw = await tryPath(path.join(abs, "progress.md"));
-            if (raw != null) {
-              matchedDir = chatRow.project_dir;
-              matchedDisplay = path.basename(chatRow.project_dir);
-            }
-          }
-        }
-
-        // Path #2: legacy name-match for chats with no explicit binding.
-        // Once found, persist so the agent's cwd picks it up too.
-        if (raw == null && chatRow && !chatRow.project_dir) {
-          const name = chatRow.name?.trim();
-          if (name && !name.includes("/") && !name.startsWith(".") && name !== "New chat") {
-            const rel = `local_projects/${name}`;
-            const abs = projectAbs(rel);
-            if (abs) {
-              raw = await tryPath(path.join(abs, "progress.md"));
-              if (raw != null) {
-                matchedDir = rel;
-                matchedDisplay = name;
-                // Fire-and-forget: backfill the binding so subsequent calls
-                // (and the chat turn) use the explicit path.
-                this.chats.setProjectDir(chatRow.chat_id, rel).catch((e) => {
-                  console.warn(`[rpc] backfill project_dir for ${chatRow!.chat_id}:`, e);
-                });
-              }
-            }
+      // Path #1: explicit binding.
+      let chatRow = chatIdParam ? await this.chats.read(chatIdParam) : null;
+      if (chatRow?.project_dir) {
+        const abs = projectAbs(chatRow.project_dir);
+        if (abs) {
+          raw = await tryPath(path.join(abs, "progress.md"));
+          if (raw != null) {
+            matchedDir = chatRow.project_dir;
+            matchedDisplay = path.basename(chatRow.project_dir);
           }
         }
+      }
 
-        // Path #3: history-scan inference. The agent (especially
-        // tick-bootstrap) routinely echoes the absolute project path back
-        // to the user — "Created project at /workspace/local_projects/foo".
-        // For chats with no explicit binding and no name match, count
-        // local_projects/<slug>/ mentions across the session JSONL and
-        // bind to the most-mentioned slug whose progress.md exists.
-        //
-        // The scan is expensive (file read + regex over all messages) but
-        // only runs ONCE per chat — once we persist via setProjectDir,
-        // path #1 catches it forever after. We cap at 500 messages so a
-        // pathologically long chat doesn't tie up the RPC thread.
-        if (raw == null && chatRow && !chatRow.project_dir) {
-          const inferred = await inferProjectDirFromHistory(
-            this.deps.home,
-            this.deps.defaultProjectCwd,
-            this.deps.workspaceRoot,
-            chatRow.session_id ?? chatRow.chat_id,
-          );
-          if (inferred) {
-            raw = await tryPath(path.join(projectsRoot, inferred, "progress.md"));
-            if (raw != null) {
-              matchedDir = `local_projects/${inferred}`;
-              matchedDisplay = inferred;
-              this.chats.setProjectDir(chatRow.chat_id, matchedDir).catch((e) => {
-                console.warn(`[rpc] backfill (history-inferred) project_dir for ${chatRow!.chat_id}:`, e);
-              });
-            }
-          }
-        }
-
-        // Path #4: manual project_name (no chat context, e.g. a future
-        // "browse plans" view). Pure name lookup, no binding side-effects.
-        if (raw == null && projectNameParam &&
-            !projectNameParam.includes("/") && !projectNameParam.startsWith(".")) {
-          const rel = `local_projects/${projectNameParam}`;
+      // Path #2: legacy name-match for chats with no explicit binding.
+      // Once found, persist so the agent's cwd picks it up too.
+      if (raw == null && chatRow && !chatRow.project_dir) {
+        const name = chatRow.name?.trim();
+        if (name && !name.includes("/") && !name.startsWith(".") && name !== "New chat") {
+          const rel = `local_projects/${name}`;
           const abs = projectAbs(rel);
           if (abs) {
             raw = await tryPath(path.join(abs, "progress.md"));
             if (raw != null) {
               matchedDir = rel;
-              matchedDisplay = projectNameParam;
+              matchedDisplay = name;
+              // Fire-and-forget: backfill the binding so subsequent calls
+              // (and the chat turn) use the explicit path.
+              this.chats.setProjectDir(chatRow.chat_id, rel).catch((e) => {
+                console.warn(`[rpc] backfill project_dir for ${chatRow!.chat_id}:`, e);
+              });
             }
           }
         }
-
-        if (raw == null) {
-          return { success: true, exists: false, progress: null, project_name: null, project_dir: null };
-        }
-        return {
-          success: true,
-          exists: true,
-          progress: parseProgress(raw),
-          project_name: matchedDisplay,
-          project_dir: matchedDir,
-        };
       }
 
-      case "set_chat_project_dir": {
-        // Workspace-relative path or empty string to unbind. Validated here
-        // so a malformed value never reaches the DB or the agent's cwd.
-        const chatId = (params.chat_id as string)?.trim();
-        if (!chatId) throw new Error("chat_id required");
-        const projectDir = this.projectDirParam(params.project_dir);
-        await this.chats.setProjectDir(chatId, projectDir);
-        return { success: true, project_dir: projectDir };
-      }
-
-      case "stop_chat": {
-        const chatId = params.chat_id as string;
-        const stopped = this.turns.stop(chatId);
-        return { success: true, stopped };
-      }
-
-      case "chat": {
-        const chatId = params.chat_id as string;
-        const messageArr = params.message as Array<{ role: string; content: string }>;
-        // Acknowledged once the turn is accepted; its end arrives on the
-        // stream as chat_finished, so long Auto runs outlive any RPC timeout.
-        await this.turns.start(chatId, extractPrompt(messageArr));
-        return { success: true };
-      }
-
-      case "proxy_toolset": {
-        const methodName = params.method_name as string;
-        const toolsetName = params.toolset_name as string | undefined;
-        const args = (params.args as Record<string, unknown>) ?? {};
-        if (toolsetName === "file_manager" || !toolsetName) {
-          return this.files.dispatch(methodName, args);
-        }
-        if (toolsetName === "notebook") {
-          return this.notebooks.dispatch(methodName, args);
-        }
-        throw new Error(`unknown toolset: ${toolsetName}`);
-      }
-
-      case "share_submit": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const res = await this.deps.share.submit(
-          params as Parameters<ShareRpcClient["submit"]>[0],
+      // Path #3: history-scan inference. The agent (especially
+      // tick-bootstrap) routinely echoes the absolute project path back
+      // to the user — "Created project at /workspace/local_projects/foo".
+      // For chats with no explicit binding and no name match, count
+      // local_projects/<slug>/ mentions across the session JSONL and
+      // bind to the most-mentioned slug whose progress.md exists.
+      //
+      // The scan is expensive (file read + regex over all messages) but
+      // only runs ONCE per chat — once we persist via setProjectDir,
+      // path #1 catches it forever after. We cap at 500 messages so a
+      // pathologically long chat doesn't tie up the RPC thread.
+      if (raw == null && chatRow && !chatRow.project_dir) {
+        const inferred = await inferProjectDirFromHistory(
+          this.deps.home,
+          this.deps.defaultProjectCwd,
+          this.deps.workspaceRoot,
+          chatRow.session_id ?? chatRow.chat_id,
         );
-        return { success: true, ...(res as object) };
-      }
-
-      case "share_list": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const res = await this.deps.share.list(
-          params as Parameters<ShareRpcClient["list"]>[0],
-        );
-        return { success: true, ...(res as object) };
-      }
-
-      case "share_get": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const res = await this.deps.share.get(params.share_id as string);
-        return { success: true, share: res };
-      }
-
-      case "share_decide": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const { share_id, ...body } = params as { share_id: string; decision: "approve" | "reject"; comment?: string };
-        const res = await this.deps.share.decide(share_id, body);
-        return { success: true, ...(res as object) };
-      }
-
-      case "share_withdraw": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const res = await this.deps.share.withdraw(params.share_id as string);
-        return { success: true, ...(res as object) };
-      }
-
-      case "share_capabilities": {
-        if (!this.deps.share) throw new Error("share api not configured");
-        const res = await this.deps.share.capabilities();
-        return { success: true, ...(res as object) };
-      }
-
-      case "skills_list": {
-        const skills = await listUserSkills(this.deps.home);
-        return { success: true, skills };
-      }
-
-      case "skill_get_manifest": {
-        const name = params.name as string;
-        const manifest = await readUserSkillManifest(this.deps.home, name);
-        return { success: true, manifest };
-      }
-
-      case "org_skills_list": {
-        const skills = await listOrgSkills(this.deps.workspaceRoot);
-        return { success: true, skills };
-      }
-
-      case "commands_list": {
-        const commands = await listUserCommands(this.deps.home);
-        return { success: true, commands };
-      }
-
-      case "dsh_client_modules": {
-        const modules = await listClientModules(acpProfileDir(this.deps.home));
-        return { success: true, modules };
-      }
-
-      case "h5ad_introspect": {
-        const p = params.path as string;
-        if (!p || typeof p !== "string") throw new Error("path required");
-        const res = await this.h5ad.introspect(p);
-        return { success: true, ...res };
-      }
-
-      case "h5ad_plot": {
-        const p = params.path as string;
-        const kind = params.kind as "qc" | "embedding" | "spatial";
-        if (!p || typeof p !== "string") throw new Error("path required");
-        if (!kind) throw new Error("kind required");
-        const plotParams = (params.params as Record<string, unknown>) ?? {};
-        const res = await this.h5ad.plot(p, kind, plotParams);
-        return { success: true, ...res };
-      }
-
-      case "chpc_bridge_status": {
-        const status = await this.chpc.status();
-        return { success: true, status };
-      }
-
-      case "chpc_bridge_open": {
-        const password = params.password as string | undefined;
-        const duo = params.duo as OpenRequest["duo"] | undefined;
-        const requestId = params.requestId as string | undefined;
-        if (!password || typeof password !== "string") throw new Error("password required");
-        if (!requestId || typeof requestId !== "string") throw new Error("requestId required");
-        if (!duo || (duo.kind !== "push" && duo.kind !== "passcode")) {
-          throw new Error("duo.kind must be 'push' or 'passcode'");
+        if (inferred) {
+          raw = await tryPath(path.join(projectsRoot, inferred, "progress.md"));
+          if (raw != null) {
+            matchedDir = `local_projects/${inferred}`;
+            matchedDisplay = inferred;
+            this.chats.setProjectDir(chatRow.chat_id, matchedDir).catch((e) => {
+              console.warn(`[rpc] backfill (history-inferred) project_dir for ${chatRow!.chat_id}:`, e);
+            });
+          }
         }
-        if (duo.kind === "passcode" && (!duo.code || typeof duo.code !== "string")) {
-          throw new Error("duo.code required when duo.kind === 'passcode'");
+      }
+
+      // Path #4: manual project_name (no chat context, e.g. a future
+      // "browse plans" view). Pure name lookup, no binding side-effects.
+      if (raw == null && projectNameParam &&
+          !projectNameParam.includes("/") && !projectNameParam.startsWith(".")) {
+        const rel = `local_projects/${projectNameParam}`;
+        const abs = projectAbs(rel);
+        if (abs) {
+          raw = await tryPath(path.join(abs, "progress.md"));
+          if (raw != null) {
+            matchedDir = rel;
+            matchedDisplay = projectNameParam;
+          }
         }
-        // Fire-and-forget — open() returns immediately, status arrives via stream.
-        const res = await this.chpc.open({ password, duo, requestId });
-        return { success: true, ...res };
       }
 
-      case "chpc_bridge_close": {
-        const res = await this.chpc.close();
-        return { success: true, ...res };
+      if (raw == null) {
+        return { success: true, exists: false, progress: null, project_name: null, project_dir: null };
       }
+      return {
+        success: true,
+        exists: true,
+        progress: parseProgress(raw),
+        project_name: matchedDisplay,
+        project_dir: matchedDir,
+      };
+    },
 
-      case "get_role":
-        return { success: true, manager: !!this.deps.fleet };
+    set_chat_project_dir: async (params) => {
+      // Workspace-relative path or empty string to unbind. Validated here
+      // so a malformed value never reaches the DB or the agent's cwd.
+      const chatId = params.chat_id?.trim();
+      if (!chatId) throw new Error("chat_id required");
+      const projectDir = this.projectDirParam(params.project_dir);
+      await this.chats.setProjectDir(chatId, projectDir);
+      return { success: true, project_dir: projectDir };
+    },
 
-      case "fleet_status": {
-        if (!this.deps.fleet) throw new Error("fleet_status is only available in the manager container");
-        return { success: true, containers: await this.deps.fleet.list() };
+    stop_chat: async (params) => {
+      const chatId = params.chat_id;
+      const stopped = this.turns.stop(chatId);
+      return { success: true, stopped };
+    },
+
+    chat: async (params) => {
+      const chatId = params.chat_id;
+      const messageArr = params.message;
+      // Acknowledged once the turn is accepted; its end arrives on the
+      // stream as chat_finished, so long Auto runs outlive any RPC timeout.
+      await this.turns.start(chatId, extractPrompt(messageArr));
+      return { success: true };
+    },
+
+    proxy_toolset: async (params) => {
+      const args = (params.args ?? {}) as Record<string, unknown>;
+      if (params.toolset_name === "file_manager") return this.files.dispatch(params.method_name, args);
+      if (params.toolset_name === "notebook") return this.notebooks.dispatch(params.method_name, args);
+      throw new Error(`unknown toolset: ${String((params as { toolset_name: unknown }).toolset_name)}`);
+    },
+
+    share_submit: async (params) => {
+      return { success: true, ...(await this.share().submit(params)) };
+    },
+
+    share_list: async (params) => {
+      return { success: true, ...(await this.share().list(params)) };
+    },
+
+    share_get: async (params) => {
+      return { success: true, share: await this.share().get(params.share_id) };
+    },
+
+    share_decide: async ({ share_id, ...body }) => {
+      return { success: true, ...(await this.share().decide(share_id, body)) };
+    },
+
+    share_withdraw: async (params) => {
+      return { success: true, ...(await this.share().withdraw(params.share_id)) };
+    },
+
+    share_capabilities: async () => {
+      return { success: true, ...(await this.share().capabilities()) };
+    },
+
+    skills_list: async () => {
+      const skills = await listUserSkills(this.deps.home);
+      return { success: true, skills };
+    },
+
+    skill_get_manifest: async (params) => {
+      return { success: true, manifest: await readUserSkillManifest(this.deps.home, params.name) };
+    },
+
+    org_skills_list: async () => {
+      const skills = await listOrgSkills(this.deps.workspaceRoot);
+      return { success: true, skills };
+    },
+
+    commands_list: async () => {
+      const commands = await listUserCommands(this.deps.home);
+      return { success: true, commands };
+    },
+
+    dsh_client_modules: async () => {
+      const modules = await listClientModules(acpProfileDir(this.deps.home));
+      return { success: true, modules };
+    },
+
+    h5ad_introspect: async (params) => {
+      if (!params.path || typeof params.path !== "string") throw new Error("path required");
+      return { success: true, ...(await this.h5ad.introspect(params.path)) };
+    },
+
+    h5ad_plot: async (params) => {
+      if (!params.path || typeof params.path !== "string") throw new Error("path required");
+      if (!params.kind) throw new Error("kind required");
+      return { success: true, ...(await this.h5ad.plot(params.path, params.kind, params.params ?? {})) };
+    },
+
+    chpc_bridge_status: async () => {
+      const status = await this.chpc.status();
+      return { success: true, status };
+    },
+
+    chpc_bridge_open: async (params) => {
+      const password = params.password as string | undefined;
+      const duo = params.duo as OpenRequest["duo"] | undefined;
+      const requestId = params.requestId as string | undefined;
+      if (!password || typeof password !== "string") throw new Error("password required");
+      if (!requestId || typeof requestId !== "string") throw new Error("requestId required");
+      if (!duo || (duo.kind !== "push" && duo.kind !== "passcode")) {
+        throw new Error("duo.kind must be 'push' or 'passcode'");
       }
+      if (duo.kind === "passcode" && (!duo.code || typeof duo.code !== "string")) {
+        throw new Error("duo.code required when duo.kind === 'passcode'");
+      }
+      // Fire-and-forget — open() returns immediately, status arrives via stream.
+      const res = await this.chpc.open({ password, duo, requestId });
+      return { success: true, ...res };
+    },
 
-      default:
-        throw new Error(`unknown method: ${method}`);
-    }
+    chpc_bridge_close: async () => {
+      const res = await this.chpc.close();
+      return { success: true, ...res };
+    },
+
+    get_role: async () => {
+      return { success: true, manager: !!this.deps.fleet };
+    },
+
+    fleet_status: async () => {
+      if (!this.deps.fleet) throw new Error("fleet_status is only available in the manager container");
+      return { success: true, containers: await this.deps.fleet.list() };
+    },
+
+
+  };
+
+  /** The share-api client, when MEMORY_API_URL is configured. */
+  private share(): ShareRpcClient {
+    if (!this.deps.share) throw new Error("share api not configured");
+    return this.deps.share;
   }
 
   /** Validate a workspace-relative project dir param; "" or absent → null.

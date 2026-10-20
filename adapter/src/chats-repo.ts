@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import type { ChatMode } from "./modes.js";
+import type { ChatInfo, ChatMode } from "./rpc-contract.js";
 
 export interface ChatRow {
   chat_id: string;
@@ -19,18 +19,8 @@ export interface ChatRow {
   deleted_at: string | null;
 }
 
-export interface ChatInfo {
-  id: string;
-  name: string;
-  last_activity_date: string;
-  project_name: string;
-  /** Same as ChatRow.project_dir — included so the UI can show the binding
-   *  without a second round-trip. */
-  project_dir: string | null;
-  mode: ChatMode;
-  active_agent: string | null;
-  parent_chat_id: string | null;
-}
+/** A chat as listed (RPC contract ChatInfo) before the router adds its turn state. */
+export type ChatListing = Omit<ChatInfo, "running" | "auto_running">;
 
 /**
  * All chat CRUD for one tenant. Username is injected at construction and
@@ -90,7 +80,7 @@ export class ChatsRepo {
     };
   }
 
-  async list(): Promise<ChatInfo[]> {
+  async list(): Promise<ChatListing[]> {
     const r = await this.pool.query(
       `SELECT
          c.chat_id        AS id,

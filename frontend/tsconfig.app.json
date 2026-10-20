@@ -5,7 +5,8 @@
     "types": ["vite/client"],
     "paths": {
       "@/*": ["./src/*"],
-      "@memory-contract": ["../hub/indexer/src/memory-contract.ts"]
+      "@memory-contract": ["../hub/indexer/src/memory-contract.ts"],
+      "@rpc-contract": ["../adapter/src/rpc-contract.ts"]
     },
     "noUnusedLocals": false,
     "noUnusedParameters": false,

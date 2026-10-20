@@ -1,6 +1,6 @@
 // Wire types shared with the frontend (frontend/src/types/index.ts).
 
-import type { ChatItem } from "./chat-items.js";
+import type { ChatItem } from "./rpc-contract.js";
 
 export interface NATSMessage {
   method: string;

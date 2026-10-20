@@ -28,10 +28,7 @@ export const useFileStore = defineStore('files', () => {
   async function loadTree(subDir?: string) {
     loading.value = true
     try {
-      const result = await natsService.proxyToolset('list_files', {
-        sub_dir: subDir || null,
-        recursive: false,
-      }, 'file_manager') as { success: boolean; files: Array<{ name: string; type: string; size?: number }> }
+      const result = await natsService.callToolset('file_manager', 'list_files', { sub_dir: subDir || null })
 
       if (result?.success && Array.isArray(result.files)) {
         const entries: FileEntry[] = result.files
@@ -39,7 +36,7 @@ export const useFileStore = defineStore('files', () => {
           .map(f => ({
             name: f.name,
             path: subDir ? `${subDir}/${f.name}` : f.name,
-            type: (f.type === 'directory' ? 'directory' : 'file') as 'file' | 'directory',
+            type: f.type,
             size: f.size,
           }))
           .sort((a, b) => {
@@ -61,13 +58,8 @@ export const useFileStore = defineStore('files', () => {
 
   async function readFile(filePath: string) {
     try {
-      const result = await natsService.proxyToolset('read_file', {
-        file_path: filePath,
-      }, 'file_manager') as {
-        success: boolean; content: string;
-        encoding?: 'utf8' | 'base64'; mime_type?: string; size?: number
-      }
-      if (result?.success !== false) {
+      const result = await natsService.callToolset('file_manager', 'read_file', { file_path: filePath })
+      if (result?.success) {
         const ext = filePath.split('.').pop()?.toLowerCase() || ''
         const langMap: Record<string, string> = {
           py: 'python', js: 'javascript', ts: 'typescript',
@@ -77,10 +69,10 @@ export const useFileStore = defineStore('files', () => {
         }
         openFile.value = {
           path: filePath,
-          content: typeof result === 'string' ? result : (result?.content || ''),
+          content: result.content,
           language: langMap[ext] || 'plaintext',
-          encoding: result.encoding ?? 'utf8',
-          mimeType: result.mime_type ?? 'text/plain',
+          encoding: result.encoding,
+          mimeType: result.mime_type,
           size: result.size,
         }
         return openFile.value
@@ -92,44 +84,26 @@ export const useFileStore = defineStore('files', () => {
   }
 
   async function writeFile(filePath: string, content: string) {
-    return await natsService.proxyToolset('write_file', {
-      file_path: filePath,
-      content,
-      overwrite: true,
-    }, 'file_manager')
+    return await natsService.callToolset('file_manager', 'write_file', { file_path: filePath, content })
   }
 
   async function createFile(filePath: string, content = '') {
-    return await natsService.proxyToolset('write_file', {
-      file_path: filePath,
-      content,
-    }, 'file_manager')
+    return await natsService.callToolset('file_manager', 'write_file', { file_path: filePath, content })
   }
 
   async function createDirectory(path: string) {
-    return await natsService.proxyToolset('manage_path', {
-      operation: 'create_dir',
-      path,
-    }, 'file_manager')
+    return await natsService.callToolset('file_manager', 'manage_path', { operation: 'create_dir', path })
   }
 
   async function deletePath(path: string) {
-    return await natsService.proxyToolset('manage_path', {
-      operation: 'delete',
-      path,
-      recursive: true,
-    }, 'file_manager')
+    return await natsService.callToolset('file_manager', 'manage_path', { operation: 'delete', path, recursive: true })
   }
 
   async function movePath(from: string, to: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      const res = (await natsService.proxyToolset('manage_path', {
-        operation: 'move',
-        from,
-        to,
-      }, 'file_manager')) as { success?: boolean; error?: string }
+      const res = await natsService.callToolset('file_manager', 'manage_path', { operation: 'move', from, to })
       if (res?.success) return { ok: true }
-      return { ok: false, error: res?.error ?? 'move failed' }
+      return { ok: false, error: 'move failed' }
     } catch (e) {
       const msg = (e as Error)?.message ?? String(e)
       return { ok: false, error: msg }

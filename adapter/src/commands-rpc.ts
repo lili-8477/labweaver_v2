@@ -5,11 +5,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { labweaverPath } from "./labweaver-dir.js";
 import { extractDescription } from "./frontmatter.js";
-
-export interface CommandSummary {
-  name:        string;
-  description: string;       // empty string when frontmatter has no description
-}
+import type { CommandSummary } from "./rpc-contract.js";
 
 export async function listUserCommands(home: string): Promise<CommandSummary[]> {
   const dir = labweaverPath(home, "commands");
