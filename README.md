@@ -137,7 +137,9 @@ OLLAMA_API_KEY=xxxx ./scripts/add-user.sh alice sk-xxxxxxxx
 
 The final command prints the user's `service_id`: a random 64-hex secret,
 recorded in `hub/users.md` (gitignored, mode 600). It is the user's access
-key — share it only with that user. `recreate-user.sh` reuses it and
+key — share it only with that user. `recreate-user.sh` reuses it (and
+rebuilds the container from the image, hub hosts and data mounts add-user
+saved in `hub/workspaces/<user>/container.env`) and
 `remove-user.sh` retires it; `hub/scripts/service-id.sh get <user>` looks it
 up. Open
 `http://localhost:8088/` (or whatever nginx binds), enter
