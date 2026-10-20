@@ -8,6 +8,14 @@
 #   docker build -f image/Dockerfile.overlay \
 #     --build-arg BASE=<existing-image:tag> -t labweaver:dsh-dev .
 #
+# The /venv chown below copies ~7 GB and takes about 20 minutes. Do it once
+# into a base and build from that, so later builds skip it whatever the
+# build cache holds:
+#
+#   printf 'ARG BASE\nFROM ${BASE}\nUSER root\nRUN chown -R node:node /venv\n' |
+#     docker build --build-arg BASE=<existing-image:tag> -t labweaver:dsh-base -
+#   docker build -f image/Dockerfile.overlay --build-arg BASE=labweaver:dsh-base ...
+#
 # Only the layers this branch changed are replaced: Node 22 (dsh needs
 # >= 22.19), the adapter bundle + dependencies, the labweaver-memory MCP
 # server, the entrypoint, and /venv ownership.
