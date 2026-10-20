@@ -180,11 +180,12 @@ run_user_container() {
     local spec
     for spec in "${DATA_MOUNTS[@]+"${DATA_MOUNTS[@]}"}"; do mounts+=(-v "$spec"); done
 
-    # --gpus all fails hard without nvidia-container-toolkit, so detect it.
+    # --gpus all fails hard without nvidia-container-toolkit or a loaded
+    # driver, so detect both.
     local gpu=()
-    if [[ "${GPU:-auto}" != "0" ]] && command -v nvidia-ctk >/dev/null 2>&1; then
+    if [[ "${GPU:-auto}" != "0" ]] && command -v nvidia-ctk >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
         gpu=(--gpus all)
-        echo "  [gpu] --gpus all (detected nvidia-container-toolkit)"
+        echo "  [gpu] --gpus all (detected nvidia-container-toolkit and driver)"
     fi
 
     docker run -d \
