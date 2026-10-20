@@ -103,8 +103,11 @@ services:
       WORKSPACES_ROOT: /workspaces
       MAX_CONCURRENT_FILES: "4"
       LOG_LEVEL: debug
+      RECORDINGS_ROOT: /recordings
     volumes:
       - ./hub/workspaces:/workspaces:ro
+      # Glasses recordings (/api/glasses/); GLASSES_PROXY_SECRET is in hub/.env.
+      - ./hub/recordings:/recordings
     depends_on:
       postgres:
         condition: service_healthy

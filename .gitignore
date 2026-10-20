@@ -8,6 +8,7 @@ hub/workspaces/shared/projects/
 hub/users.md
 hub/service-routes.map
 hub/postgres-data/
+hub/recordings/
 hub/.env
 .worktrees/
 

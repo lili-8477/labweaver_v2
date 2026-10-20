@@ -45,6 +45,13 @@ services:
       # $lw_user in the location block; `.env` etc. are mode 0600 so
       # nginx (unprivileged) can't even read them as a secondary safety net.
       - ./workspaces:/downloads:ro
+      # Rendered with envsubst at start; carries GLASSES_PROXY_SECRET.
+      - ./nginx-templates:/etc/nginx/templates:ro
+      # Glasses downloads (the /_glasses_files/ internal location).
+      - ./recordings:/recordings:ro
+    environment:
+      # Only this key, not env_file: nginx needs none of the other secrets.
+      GLASSES_PROXY_SECRET: ${GLASSES_PROXY_SECRET:?set GLASSES_PROXY_SECRET in hub/.env}
     depends_on:
       nats:
         condition: service_healthy
@@ -119,8 +126,12 @@ services:
       SHARE_CLEANUP_INTERVAL_HOURS: "24"
       SHARE_AUTO_CLOSE_IDLE_DAYS: "30"
       SHARE_AUTO_CLOSE_INTERVAL_HOURS: "24"
+      RECORDINGS_ROOT: /recordings
     volumes:
       - ./workspaces:/workspaces
+      # Glasses recordings (/api/glasses/). Kept outside workspaces so the
+      # agent in a user's container cannot edit or delete the source media.
+      - ./recordings:/recordings
     depends_on:
       postgres:
         condition: service_healthy
