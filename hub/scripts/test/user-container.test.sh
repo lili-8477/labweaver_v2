@@ -61,6 +61,14 @@ diff "$T/added" "$T/last-run" || fail "recreate's docker run differs from add's"
 cmp -s "$WS/.labweaver/hooks/posttool_jobid.sh" "$HUB/skeleton/harness/hooks/posttool_jobid.sh" || fail "recreate left a stale hook"
 grep -qx "labweaver-alice" "$T/names" && ! grep -q -- "-old" "$T/names" || fail "old container not removed"
 
+# A skeleton update reaches copies the user has not edited, and only those.
+echo "updated" >> "$HUB/skeleton/harness/commands/tick.md"
+echo "updated" >> "$HUB/skeleton/harness/commands/memory.md"
+"$HUB/scripts/recreate-user.sh" alice >/dev/null
+[[ "$(cat "$WS/.labweaver/commands/tick.md")" == mine ]] || fail "a skeleton update overwrote a user's command"
+cmp -s "$WS/.labweaver/commands/memory.md" "$HUB/skeleton/harness/commands/memory.md" || fail "a skeleton update missed an unedited command"
+cp "$T/last-run" "$T/added"
+
 # A new image sticks for later recreates.
 IMAGE=img:2 "$HUB/scripts/recreate-user.sh" alice >/dev/null
 "$HUB/scripts/recreate-user.sh" alice >/dev/null

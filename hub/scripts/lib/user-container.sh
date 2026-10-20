@@ -100,6 +100,37 @@ SSHCFG
     chmod 600 "$cfg"
 }
 
+# Copy skeleton files (glob patterns relative to $2) into workspace $1's labweaver
+# folder, replacing a copy only while the user has not edited it: the hash of
+# each installed copy is kept in .labweaver/.skeleton.sha256, and a copy whose
+# content still matches it is the hub's to update. A copy that matches neither
+# that hash nor the new skeleton is the user's and stays. Copies installed
+# before the manifest existed count as edited until they match the skeleton.
+install_unless_edited() {
+    local ws="$1" skel="$2" rel src dst new cur installed
+    local manifest="${ws}/.labweaver/.skeleton.sha256" next rels
+    shift 2
+    rels="$(cd "$skel" && for p in "$@"; do compgen -G "$p" || true; done)"
+    next="$(mktemp)"
+    for rel in $rels; do
+        src="${skel}/${rel}" dst="${ws}/.labweaver/${rel}"
+        [[ -f "$src" ]] || continue
+        new="$(sha256sum < "$src" | cut -d' ' -f1)"
+        installed="$(awk -v f="$rel" '$2 == f { print $1 }' "$manifest" 2>/dev/null || true)"
+        if [[ -f "$dst" ]]; then
+            cur="$(sha256sum < "$dst" | cut -d' ' -f1)"
+            if [[ "$cur" != "$new" && "$cur" != "$installed" ]]; then
+                [[ -n "$installed" ]] && echo "$installed $rel" >> "$next"
+                continue   # edited by the user
+            fi
+        fi
+        mkdir -p "$(dirname "$dst")"
+        cp -f "$src" "$dst"
+        echo "$new $rel" >> "$next"
+    done
+    mv "$next" "$manifest"
+}
+
 # Everything on the host the container bind-mounts, created if missing and
 # refreshed where the hub owns it. First-time-only inputs: CHPC_UNID,
 # API_KEY and OLLAMA_API_KEY (used only when the file they seed is absent).
@@ -125,11 +156,11 @@ prepare_workspace() {
 JSON
 
     # The self-driving tick harness (dormant unless a chat is switched to
-    # Auto). Commands/agents: cp -n, so user customizations survive. Hooks:
-    # cp -f — harness-managed code that must track the skeleton.
+    # Auto). Commands/agents follow the skeleton until the user edits them
+    # (install_unless_edited). Hooks: cp -f — harness-managed code that must
+    # track the skeleton.
     if [[ -d "$skel" ]]; then
-        cp -n "${skel}/commands/"*.md "${ws}/.labweaver/commands/" 2>/dev/null || true
-        cp -n "${skel}/agents/"tick-*.md "${ws}/.labweaver/agents/" 2>/dev/null || true
+        install_unless_edited "$ws" "$skel" 'commands/*.md' 'agents/tick-*.md'
         cp -f "${skel}/hooks/"*.sh "${ws}/.labweaver/hooks/" 2>/dev/null || true
         chmod +x "${ws}/.labweaver/hooks/"*.sh 2>/dev/null || true
         # In place, preserving the inode: settings.json is bind-mounted.
