@@ -34,6 +34,7 @@ import {
 } from "./providers/registry.js";
 import { readTeamBoard } from "./dsh/team-board.js";
 import type { StreamEvent } from "./types.js";
+import { parseProgress } from "../dsh-plugins/progress.js";
 
 export interface RpcDeps {
   serviceId: string;
@@ -444,7 +445,7 @@ export class RpcRouter {
         return {
           success: true,
           exists: true,
-          progress: parseProgressMd(raw),
+          progress: parseProgress(raw),
           project_name: matchedDisplay,
           project_dir: matchedDir,
         };
@@ -637,35 +638,6 @@ const MEDIA_TYPE_BY_EXT: Record<string, ImageRef["mediaType"]> = {
   ".webp": "image/webp",
 };
 
-// ─── progress.md parsing ───────────────────────────────────────────────
-// The tick harness keeps all per-project state in a single markdown file. The
-// frontend wants a parsed view for its self-driving checklist, but we don't
-// want a full markdown library here — the structure is rigid enough that line
-// scanning is sufficient. Tolerant on input: if a section is missing or the
-// format drifts, we degrade to "no steps" rather than throwing.
-
-export interface ProgressStep {
-  /** First word after the box (and the optional `(reviewed)` marker). */
-  name: string;
-  /** Rest of the line up to ` | ` (which separates description from metrics). */
-  description: string;
-  done: boolean;
-  reviewed: boolean;
-}
-
-export interface ParsedProgress {
-  pipeline: string | null;
-  steps: ProgressStep[];
-  complete: boolean;
-  /** Count of unchecked `☐` lines under `## Review feedback`. */
-  pendingFeedback: number;
-  /** Index of the next ☐ step (or null when nothing is pending). The
-   *  orchestrator dispatches this one next, so the UI can highlight it. */
-  nextStepIndex: number | null;
-}
-
-const STEP_LINE_RE = /^-\s*([☑☐])\s*(?:\(reviewed\)\s*)?(\S+)(?:\s+(.*))?$/u;
-
 // Match a local_projects/<slug> reference in message content. Slug rules
 // mirror tick-bootstrap's slugifier (lowercase kebab + dataset accessions)
 // plus a defensive cap on length so we don't capture pathological junk.
@@ -724,66 +696,6 @@ async function inferProjectDirFromHistory(
     if (ok) return slug;
   }
   return null;
-}
-
-export function parseProgressMd(raw: string): ParsedProgress {
-  // Walk the file once, tracking which top-level section we're in. Plan and
-  // Review feedback are the only sections with parseable structure.
-  let section: string | null = null;
-  let pipeline: string | null = null;
-  const steps: ProgressStep[] = [];
-  let pendingFeedback = 0;
-  let complete = false;
-
-  for (const line of raw.split(/\r?\n/)) {
-    const headerMatch = /^##\s+(.+?)\s*$/.exec(line);
-    if (headerMatch) {
-      const heading = (headerMatch[1] ?? "").toLowerCase();
-      if (heading.startsWith("status:")) {
-        if (/complete/i.test(line)) complete = true;
-        section = null;
-        continue;
-      }
-      // First word: plan / sample(s) / pipeline / review / ...
-      section = heading.split(/\s+/)[0] ?? null;
-      continue;
-    }
-
-    if (section === "pipeline" && line.trim() && !pipeline) {
-      pipeline = line.trim();
-      continue;
-    }
-
-    if (section === "plan") {
-      const m = STEP_LINE_RE.exec(line);
-      if (!m) continue;
-      const box = m[1] ?? "";
-      const name = m[2] ?? "";
-      const restRaw = (m[3] ?? "").trim();
-      // Strip metrics suffix (` | metric=value ...`) from the human-readable
-      // description so the checklist stays one line.
-      const description = (restRaw.split(/\s*\|\s*/, 1)[0] ?? "").trim();
-      steps.push({
-        name,
-        description,
-        done: box === "☑",
-        reviewed: /\(reviewed\)/.test(line),
-      });
-    }
-
-    if (section === "review" && /^-\s*☐/.test(line)) {
-      pendingFeedback++;
-    }
-  }
-
-  const nextStepIndex = steps.findIndex(s => !s.done);
-  return {
-    pipeline,
-    steps,
-    complete,
-    pendingFeedback,
-    nextStepIndex: nextStepIndex === -1 ? null : nextStepIndex,
-  };
 }
 
 const IMAGE_LINE_RE = /^\[image:\s*([^\]]+)\]\s*$/;

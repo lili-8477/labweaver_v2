@@ -40,8 +40,10 @@ export interface HarnessProgress {
   steps: HarnessStep[]
   complete: boolean
   pendingFeedback: number
-  /** Index of the next ☐ step; null when nothing is pending. */
+  /** The plan step the agent works on next (the tick router's choice); null when it is not a plan step. */
   nextStepIndex: number | null
+  /** What runs next: tick-executor, tick-reviewer, …; null when complete. */
+  nextAgent: string | null
 }
 
 // ============================================================

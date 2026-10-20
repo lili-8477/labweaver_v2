@@ -134,12 +134,12 @@ watch(() => props.chatId, (id) => loadCollapsed(id))
           <span class="step-name">{{ s.name }}</span>
           <span v-if="s.description" class="step-desc">{{ s.description }}</span>
           <span v-if="s.reviewed" class="step-badge reviewed-badge">reviewed</span>
-          <span v-else-if="active && i === progress.nextStepIndex" class="step-badge next-badge">next</span>
+          <span v-else-if="active && i === progress.nextStepIndex" class="step-badge next-badge">{{ progress.nextAgent === 'tick-reviewer' ? 'checking' : 'next' }}</span>
         </li>
       </ol>
 
       <div v-if="progress && progress.pendingFeedback > 0 && active" class="feedback-note">
-        ⚠ {{ progress.pendingFeedback }} unaddressed review note{{ progress.pendingFeedback === 1 ? '' : 's' }} — executor will handle on the next tick.
+        ⚠ {{ progress.pendingFeedback }} unaddressed review note{{ progress.pendingFeedback === 1 ? '' : 's' }} — the agent addresses these first.
       </div>
       <div v-else-if="progress && progress.pendingFeedback > 0" class="feedback-note feedback-stopped">
         ⚠ {{ progress.pendingFeedback }} unaddressed review note{{ progress.pendingFeedback === 1 ? '' : 's' }} pending — resume self-driving to address.

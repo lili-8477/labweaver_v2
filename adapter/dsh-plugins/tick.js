@@ -6,8 +6,8 @@
 // session with ~/.labweaver/auto/<session id>, which holds the project directory
 // (empty until tick-bootstrap writes it; see src/harness.ts). Each time that
 // turn is about to stop, this plugin reads the project's progress.md, decides
-// the next step in code (nextStep below — routing is a pure function of
-// progress.md, so no model call is spent on it), and steers the agent with one
+// the next step in code (nextStep in progress.js — routing is a pure function
+// of progress.md, so no model call is spent on it), and steers the agent with one
 // short instruction: do the step itself, or, for the reviewer, dispatch it as a
 // subagent so the review runs in a clean context. It stops when the project is complete, the user
 // pauses or switches the chat out of auto mode, MAX_ROUNDS is hit, or the same step comes up
@@ -17,6 +17,9 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { LABWEAVER_HOME } from "./labweaver-dir.js";
+import { nextStep } from "./progress.js";
+
+export { nextStep };
 
 export const name = "tick";
 
@@ -29,32 +32,6 @@ const SUBAGENTS = new Set(["tick-reviewer"]);
 
 function read(path) {
   try { return readFileSync(path, "utf8"); } catch { return null; }
-}
-
-/** Lines of a `## <title>` section, or null when the section is absent. */
-function section(md, title) {
-  const m = md.match(new RegExp(`^## ${title}(?:[ \\t][^\\n]*)?\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
-  return m ? m[1].split("\n").map((l) => l.trim()).filter(Boolean) : null;
-}
-
-/**
- * The tick priority: which subagent runs next and on what, given progress.md
- * (null when the project does not exist yet). Returns { agent, work }, or
- * { complete: true } when every step is reviewed and the retrospective is done.
- */
-export function nextStep(md) {
-  if (md == null) return { agent: "tick-bootstrap", work: "the user's task message that started this auto-mode run (quote it verbatim)" };
-  if (/^## Status: complete/m.test(md)) return { complete: true };
-  const plan = section(md, "Plan") ?? [];
-  if (plan.length === 0) return { agent: "tick-planner", work: "instantiate the plan from the pipeline template" };
-  const feedback = (section(md, "Review feedback") ?? []).find((l) => l.startsWith("☐"));
-  if (feedback) return { agent: "tick-executor", work: feedback };
-  const unreviewed = plan.find((l) => l.includes("☑") && !l.includes("(reviewed)"));
-  if (unreviewed) return { agent: "tick-reviewer", work: unreviewed };
-  const todo = plan.find((l) => l.includes("☐"));
-  if (todo) return { agent: "tick-executor", work: todo };
-  if (!/^## Retrospective: done/m.test(md)) return { agent: "tick-retrospective", work: "the finished project" };
-  return { complete: true };
 }
 
 function instruction(round, file, dir, step) {
